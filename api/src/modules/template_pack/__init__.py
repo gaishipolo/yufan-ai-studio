@@ -37,11 +37,17 @@ from core.ports.library_references import (
     LibraryReferenceSource,
     bind_library_reference_sources,
 )
-from modules.template_pack.library_references import SpecDemoCases, SpecFixedAssets
+from modules.template_pack.case_router import router as case_router
+from modules.template_pack.library_references import (
+    CaseSnapshots,
+    SpecDemoCases,
+    SpecFixedAssets,
+)
 from modules.template_pack.spec_router import router as spec_router
 
 router = APIRouter()
 router.include_router(spec_router)
+router.include_router(case_router)
 
 # 资产「彻底删除」前问「还有谁在用」。已发布版本里 `binding=fixed` 的槽位
 # 直接咬着 asset id，删了这张图 = 该版本再也编不出原文（编号对不上素材）。
@@ -58,6 +64,13 @@ LIBRARY_REFERENCE_SOURCES = (
         checker=SpecDemoCases(),
         location="modules/template_pack/spec_service.py:publish（draft.demoAssetId）",
         description="模板草稿里指向的展示案例；软删模板恢复后仍算引用",
+    ),
+    # 案例快照：模板案例里存着配置副本，固定槽位照样咬着那张图。
+    LibraryReferenceSource(
+        name="template_cases.config",
+        checker=CaseSnapshots(),
+        location="modules/template_pack/models.py:TemplateCase.config",
+        description="模板案例快照里固定槽位与展示案例指向的 v2 资产；下架/软删后仍算引用",
     ),
 )
 bind_library_reference_sources("template_pack", LIBRARY_REFERENCE_SOURCES)
@@ -83,6 +96,18 @@ module = ModuleSpec(
         PermissionSpec(
             "template_pack:publish",
             "发布或停用模板封装",
+            group="内容生产",
+            pages=("page:template-specs",),
+        ),
+        PermissionSpec(
+            "template_pack:case:read",
+            "查看模板案例库并复用案例",
+            group="内容生产",
+            pages=("page:template-specs",),
+        ),
+        PermissionSpec(
+            "template_pack:case:write",
+            "发布或管理模板案例（编辑 / 下架 / 删除）",
             group="内容生产",
             pages=("page:template-specs",),
         ),

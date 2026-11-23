@@ -151,6 +151,10 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             # 少了这一条，非超管进模板库会拿到 403——而超管自测发现不了。
             # 「封装」（create / publish）不在编辑角色里：那是素材专员的活。
             "template_pack:read",
+            # 模板案例（一份可复用的模板配置快照）：编辑能**看**案例库。
+            # 只给读不给写 —— 发布案例是把配置对外共享，那是素材专员的活；
+            # 而「复用案例」会新建模板草稿，受 `template_pack:create` 管，编辑同样没有。
+            "template_pack:case:read",
             # 「案例」是模板封装的展示素材：编辑要能挑一条放进案例池（写）。
             "library:case:read",
             "library:case:write",
@@ -217,6 +221,11 @@ BUILTIN_ROLES: tuple[BuiltinRole, ...] = (
             "template_pack:read",
             "template_pack:create",
             "template_pack:publish",
+            # 模板案例：素材专员是「封装」的主动方，发布案例与管理案例
+            # （编辑 / 下架 / 删除）都归他。少了写码，封装页的「发布为案例」
+            # 会报 403 —— 与上面 `template_pack:create` 同理。
+            "template_pack:case:read",
+            "template_pack:case:write",
             # 素材专员是「封装」的主动方：展示案例要能写、能看案例池。
             # 不加这两个码的话，封装页的「设为案例」对他只会报 403。
             "library:case:read",

@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **136** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **144** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -100,6 +100,8 @@ Authorization: Bearer <accessToken>
 | `task:read:all` | 查看并管理他人任务 | 列表 scope=all / 详情 / 删除的跨用户判定依据；不含重试 |
 | `task:retry:any` | 重试他人任务 | 会消耗额度：重试他人任务前额外校验此权限 |
 | `task:update` | 编辑/重试自己的任务 |  |
+| `template_pack:case:read` | 查看模板案例库并复用案例 |  |
+| `template_pack:case:write` | 发布或管理模板案例（编辑 / 下架 / 删除） |  |
 | `template_pack:create` | 创建或保存模板封装草稿 |  |
 | `template_pack:publish` | 发布或停用模板封装 |  |
 | `template_pack:read` | 查看模板封装 |  |
@@ -165,7 +167,7 @@ Authorization: Bearer <accessToken>
 | `page:storyboards` | 分镜模板库 | 关联接口：storyboard:read |
 | `page:studio` | 生成工作台 | 关联接口：catalog:read, image:create, task:create |
 | `page:task-center` | 任务中心 | 关联接口：image:read, model_driver:read, task:create, task:delete, task:read, task:read:all, task:retry:any, task:update |
-| `page:template-specs` | 模板封装 | 关联接口：library:case:read, library:case:write, library:read, template_pack:create, template_pack:publish, template_pack:read |
+| `page:template-specs` | 模板封装 | 关联接口：library:case:read, library:case:write, library:read, template_pack:case:read, template_pack:case:write, template_pack:create, template_pack:publish, template_pack:read |
 | `page:templates` | 模板库 | 关联接口：template_pack:read |
 | `page:usage` | 用量看板 | 按区间查看生成次数、已产出时长 / 张数、趋势与构成 |
 | `page:user-access` | 用户与权限 | 关联接口：identity:create, identity:delete, identity:group:create, identity:group:delete, identity:group:member:manage, identity:group:permission:manage, identity:group:read, identity:group:update, identity:read, identity:role:manage, identity:team:manage, identity:update, identity:user:permission:manage |
@@ -257,7 +259,7 @@ Authorization: Bearer <accessToken>
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 47 | 见下方 `4.9` |
 | 模型驱动 | 9 | 见下方 `4.10` |
-| 模板封装 | 12 | 见下方 `4.11` |
+| 模板封装 | 20 | 见下方 `4.11` |
 | 用量看板 | 2 | 见下方 `4.12` |
 
 ### 4.1 身份（42 个）
@@ -3239,10 +3241,18 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.11 模板封装（12 个）
+### 4.11 模板封装（20 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
+| `GET` | `/api/v1/template-cases` | 案例列表（library=公共案例库 / mine=我发布的 / trash=回收站） | 🔒 |
+| `POST` | `/api/v1/template-cases` | 把模板发布为案例（快照当前草稿） | 🔒 |
+| `GET` | `/api/v1/template-cases/{case_id}` | 案例详情（含可复用的配置快照） | 🔒 |
+| `PATCH` | `/api/v1/template-cases/{case_id}` | 编辑案例（名称/描述/分类） | 🔒 |
+| `DELETE` | `/api/v1/template-cases/{case_id}` | 删除案例（软删，进回收站） | 🔒 |
+| `POST` | `/api/v1/template-cases/{case_id}/offline` | 下架案例（不可复用，可重新上架） | 🔒 |
+| `POST` | `/api/v1/template-cases/{case_id}/online` | 重新上架案例 | 🔒 |
+| `POST` | `/api/v1/template-cases/{case_id}/restore` | 从回收站恢复案例 | 🔒 |
 | `POST` | `/api/v1/template-specs` | 保存草稿（同内容幂等，revision 冲突 409） | 🔒 |
 | `GET` | `/api/v1/template-specs` | 本人可见的规格列表 | 🔒 |
 | `GET` | `/api/v1/template-specs/limits` | 编辑页要显示的上限（存草稿 / 可发布） | 🔒 |
@@ -3255,6 +3265,250 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `POST` | `/api/v1/template-specs/{key}/disable` | 下架（历史版本保留） | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/publish` | 发布：把当前草稿冻结成新版本 | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/restore` | 从回收站恢复 | 🔒 |
+
+#### `GET /api/v1/template-cases`
+
+**案例列表（library=公共案例库 / mine=我发布的 / trash=回收站）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `scope` | query | `"library" | "mine" | "trash"` | 否 |  |
+| `status` | query | `string` | 否 |  |
+| `category` | query | `string` | 否 |  |
+| `keyword` | query | `string` | 否 |  |
+| `page` | query | `number` | 否 |  |
+| `pageSize` | query | `number` | 否 |  |
+
+**响应** `ApiResponse<TemplateCaseListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplateCaseOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `categories` | `string[]` | 否 |  |
+
+#### `POST /api/v1/template-cases`
+
+**把模板发布为案例（快照当前草稿）**
+
+**请求体** `TemplateCaseCreateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `specKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `category` | `string` | 否 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `GET /api/v1/template-cases/{case_id}`
+
+**案例详情（含可复用的配置快照）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `PATCH /api/v1/template-cases/{case_id}`
+
+**编辑案例（名称/描述/分类）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**请求体** `TemplateCaseUpdateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `description` | `string \| null` | 否 |  |
+| `category` | `string \| null` | 否 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `DELETE /api/v1/template-cases/{case_id}`
+
+**删除案例（软删，进回收站）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `POST /api/v1/template-cases/{case_id}/offline`
+
+**下架案例（不可复用，可重新上架）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `POST /api/v1/template-cases/{case_id}/online`
+
+**重新上架案例**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+#### `POST /api/v1/template-cases/{case_id}/restore`
+
+**从回收站恢复案例**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `case_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<TemplateCaseOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
 
 #### `POST /api/v1/template-specs`
 
@@ -5242,6 +5496,55 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 ### `TaskStatusFilter`（枚举）
 
 取值：`all`、`queued`、`running`、`completed`、`failed`
+
+### `TemplateCaseCreateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `specKey` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 否 |  |
+| `category` | `string` | 否 |  |
+
+### `TemplateCaseListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `TemplateCaseOut[]` | 否 |  |
+| `total` | `number` | 否 |  |
+| `categories` | `string[]` | 否 |  |
+
+### `TemplateCaseOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `category` | `string` | 是 |  |
+| `status` | `"published" \| "offline"` | 是 |  |
+| `specId` | `string` | 是 |  |
+| `specKey` | `string` | 是 |  |
+| `specName` | `string` | 是 |  |
+| `specVersion` | `number` | 是 |  |
+| `sourceMissing` | `boolean` | 否 |  |
+| `config` | `Record<string, unknown>` | 否 |  |
+| `ownerId` | `string` | 是 |  |
+| `ownerName` | `string` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `offlineAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+
+### `TemplateCaseUpdateIn`
+
+编辑案例。只改案例自己的字段，不碰模板。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string \| null` | 否 |  |
+| `description` | `string \| null` | 否 |  |
+| `category` | `string \| null` | 否 |  |
 
 ### `TemplateSpecIn`
 

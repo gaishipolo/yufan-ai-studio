@@ -43,7 +43,9 @@ from sqlalchemy.orm import Mapped, mapped_column
 from db.base import Base, TimestampMixin, UUIDMixin, utcnow
 
 __all__ = [
+    "CASE_STATUSES",
     "SPEC_STATUSES",
+    "TemplateCase",
     "TemplateSpec",
     "TemplateSpecSlot",
     "TemplateSpecVersion",
@@ -51,6 +53,10 @@ __all__ = [
 
 #: 规格生命周期。`disabled` 是"下架"，不是删除：历史版本与已生成任务照旧可查。
 SPEC_STATUSES = ("draft", "published", "disabled")
+
+#: 案例生命周期。`offline` 是"下架"，不是删除：下架后案例不出现在复用选择器里，
+#: 但管理界面仍然看得到、也能重新上架。
+CASE_STATUSES = ("published", "offline")
 
 
 class TemplateSpec(Base, UUIDMixin, TimestampMixin):
@@ -193,3 +199,78 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #: 空 = 编译期报错（可选槽位且被引用时，发布闸门就会拦）。
     empty_text: Mapped[str] = mapped_column(String(2000), default="", nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
+
+
+class TemplateCase(Base, UUIDMixin, TimestampMixin):
+    """模板案例（`template_cases`）：把一份模板发布成**可复用**的案例。
+
+    ## 和素材库「案例池」不是一回事
+
+    素材库那边也有「案例」（`library_assets.purpose = case`）：那是**一条素材**
+    （图片/视频）被标出来当模板卡片的封面与悬停视频 —— 它决定卡片长什么样。
+
+    这里的案例是**一份模板配置**：名称 + 描述 + 分类 + 关联的模板 + 配置快照，
+    别人可以拿它当起点复制一份新模板。两个概念都叫「案例」，但一个是素材，
+    一个是配置快照，权限码也分开（`library:case:*` / `template_pack:case:*`）。
+
+    ## 案例与模板的关联关系
+
+    **N:1** —— 多个案例可以来自同一个模板；每个案例恰好关联一个模板。
+
+    案例里存的是**发布那一刻的模板配置快照**（`config`），不是活引用：
+
+    - 模板之后改了什么，**已发布的案例不受影响** —— 复用者拿到的一定是当初那份；
+    - 反过来，案例被删 / 被改，也不会碰到模板本体。
+
+    `spec_id` / `spec_key` / `spec_version` 只是**回溯线索**（"它来自哪个模板的哪一版"），
+    不参与复用逻辑；`spec_key` 在模板改名后依然指向同一个模板（key 才是身份）。
+
+    模板被软删时案例**不跟着删**：案例带着自己的快照照样能复用，只是界面上要
+    标一句"来源模板已删除"（`sourceMissing`）。
+
+    ## 状态机
+
+    ```
+    published（已发布，可被复用）
+      └── offline（下架：不可复用，但可重新上架；管理界面里看得到）
+    ```
+
+    删除是**软删**（`deleted_at`），不是物理删除 —— 与模板一致（`template_specs`
+    也是软删 + 回收站）。案例没有别的表引用，删了不会留下悬空引用。
+    """
+
+    __tablename__ = "template_cases"
+    __table_args__ = (
+        Index("ix_template_cases_owner_status", "owner_id", "status"),
+        Index("ix_template_cases_category", "category"),
+    )
+
+    #: 案例名。**独立于模板名**：同一个模板可以发布成多个案例
+    #: （「赛博朋克广告片」「赛博朋克短剧」共用一份配置）。
+    name: Mapped[str] = mapped_column(String(160), nullable=False)
+    description: Mapped[str] = mapped_column(Text, default="", nullable=False)
+    #: 分类。空串 = 未分类（前端归到「未分类」）。
+    category: Mapped[str] = mapped_column(String(64), default="", nullable=False)
+    #: 来源模板（回溯用，不建外键 —— 全项目惯例）。
+    spec_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    #: 来源模板的 key。模板改名不影响它。
+    spec_key: Mapped[str] = mapped_column(String(80), nullable=False)
+    #: 发布案例时来源模板的版本号；0 = 模板从未发版过（用的是草稿）。
+    spec_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+    #: 模板配置的快照（camelCase，与 `TemplateSpecIn` 同形）。
+    config: Mapped[dict[str, Any]] = mapped_column(JSON, default=dict, nullable=False)
+    #: `published` | `offline`
+    status: Mapped[str] = mapped_column(String(16), default="published", nullable=False, index=True)
+    #: 发布者。
+    owner_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    published_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 最近一次下架时间；重新上架时清空。
+    offline_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )
+    #: 软删时间。非空 = 在回收站里，列表与复用选择器都看不到它。
+    deleted_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
+    )

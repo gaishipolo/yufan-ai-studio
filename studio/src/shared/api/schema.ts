@@ -1667,6 +1667,49 @@ export interface TaskStats {
   failed?: number;
 }
 
+/** TemplateCaseCreateIn */
+export interface TemplateCaseCreateIn {
+  specKey: string;
+  name: string;
+  description?: string;
+  category?: string;
+}
+
+/** TemplateCaseListOut */
+export interface TemplateCaseListOut {
+  items?: TemplateCaseOut[];
+  total?: number;
+  categories?: string[];
+}
+
+/** TemplateCaseOut */
+export interface TemplateCaseOut {
+  id: string;
+  name: string;
+  description: string;
+  category: string;
+  status: "published" | "offline";
+  specId: string;
+  specKey: string;
+  specName: string;
+  specVersion: number;
+  sourceMissing?: boolean;
+  config?: Record<string, unknown>;
+  ownerId: string;
+  ownerName: string;
+  publishedAt?: string | null;
+  offlineAt?: string | null;
+  createdAt: string;
+  updatedAt: string;
+}
+
+/** 编辑案例。只改案例自己的字段，不碰模板。 */
+export interface TemplateCaseUpdateIn {
+  name?: string | null;
+  description?: string | null;
+  category?: string | null;
+}
+
 /** 一份规格（草稿的整份内容）。`key` 是幂等边界，发布后不可改名。 */
 export interface TemplateSpecIn {
   key: string;
@@ -2380,6 +2423,22 @@ export interface EndpointData {
   "POST /api/v1/tasks/{task_id}/favorite": core__response__ApiResponse_TaskOut___2;
   /** 重试任务 */
   "POST /api/v1/tasks/{task_id}/retry": TaskRetryOut;
+  /** 案例列表（library=公共案例库 / mine=我发布的 / trash=回收站） */
+  "GET /api/v1/template-cases": TemplateCaseListOut;
+  /** 把模板发布为案例（快照当前草稿） */
+  "POST /api/v1/template-cases": TemplateCaseOut;
+  /** 删除案例（软删，进回收站） */
+  "DELETE /api/v1/template-cases/{case_id}": TemplateCaseOut;
+  /** 案例详情（含可复用的配置快照） */
+  "GET /api/v1/template-cases/{case_id}": TemplateCaseOut;
+  /** 编辑案例（名称/描述/分类） */
+  "PATCH /api/v1/template-cases/{case_id}": TemplateCaseOut;
+  /** 下架案例（不可复用，可重新上架） */
+  "POST /api/v1/template-cases/{case_id}/offline": TemplateCaseOut;
+  /** 重新上架案例 */
+  "POST /api/v1/template-cases/{case_id}/online": TemplateCaseOut;
+  /** 从回收站恢复案例 */
+  "POST /api/v1/template-cases/{case_id}/restore": TemplateCaseOut;
   /** 本人可见的规格列表 */
   "GET /api/v1/template-specs": TemplateSpecListOut;
   /** 保存草稿（同内容幂等，revision 冲突 409） */
