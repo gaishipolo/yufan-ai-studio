@@ -50,6 +50,10 @@ _JWT_ALGORITHMS = frozenset(
 # 用绝对路径做默认值，保证「从哪个目录启动都读到同一份数据」。
 _VAR_DIR = Path(__file__).resolve().parents[2] / "var"
 
+# 墙钟里至少要问几次供应商。低于这个数 → 结果还没回来，任务就被墙钟掐死了
+# （问三次还不回来，基本可以认定这条链路出问题了）。
+_MIN_AFFORDABLE_POLLS = 3
+
 # `.env` 的位置可被 `SETTINGS_ENV_FILE` 覆盖，测试用它指向一个不存在的文件：
 # 否则测试结果取决于开发者本机 `.env`——把 `STORAGE_DRIVER` 切成 s3、或者填了
 # `S3_*` 凭据之后，「本机绿、CI 红」（或反过来）就一定会发生。
@@ -529,6 +533,20 @@ class Settings(BaseSettings):
                 f"= {budget:.0f} 秒，撑不到 GENERATION_TIMEOUT_SEC="
                 f"{self.generation_timeout_sec} 秒。请调大轮询次数，"
                 f"或显式调小超时时间（两者语义不同，不要只改一个）"
+            )
+        # 反向的失配也要挡住：间隔大到「墙钟只够问几次」时，任务会在结果回来
+        # 之前就被墙钟掐死，而配置看上去完全正常 —— 900 次 × 600 秒 ≫ 1800 秒，
+        # 上面的守卫照样放行，但 1800 秒只够问 3 次。
+        affordable = int(
+            self.generation_timeout_sec / max(self.generation_poll_interval_sec, 0.001)
+        )
+        if affordable < _MIN_AFFORDABLE_POLLS:
+            raise ValueError(
+                f"轮询间隔过慢：GENERATION_TIMEOUT_SEC={self.generation_timeout_sec} 秒 "
+                f"按 GENERATION_POLL_INTERVAL_SEC={self.generation_poll_interval_sec} "
+                f"只够问 {affordable} 次（至少要 {_MIN_AFFORDABLE_POLLS} 次）。"
+                f"间隔一大，墙钟会先于结果回来把任务掐死。请调小间隔，"
+                f"或显式调大超时时间"
             )
         return self
 

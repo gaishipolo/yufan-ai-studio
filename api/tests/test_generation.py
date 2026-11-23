@@ -503,10 +503,139 @@ def test_driver_can_slow_down_polling() -> None:
     class _Plain:
         pass
 
-    assert GenerationRunner._poll_interval(_Slow()) == 10.0
-    assert GenerationRunner._poll_interval(_Plain()) == settings.generation_poll_interval_sec
+    assert GenerationRunner._pacing(None, _Slow()) == 10.0
+    assert GenerationRunner._pacing(None, _Plain()) == settings.generation_poll_interval_sec
     assert GenerationRunner._backoff(0, base=10.0) == 10.0
     assert GenerationRunner._backoff(2, base=10.0) == 30.0, "退避仍封顶 30 秒"
+
+
+def test_pacing_takes_the_slowest_declaration() -> None:
+    """节奏由三方共同决定：全局兜底 + 业务链路声明 + 驱动声明，**取最慢**。
+
+    为什么取最慢：间隔小 = 请求频繁 = 上游限流（Agnes 2 秒一问就被 429 挡回来）。
+    上游的承受力是瓶颈，业务与驱动都无权替它把节奏调快 —— 想更快也要先问过
+    上游，而「问过」这件事没法在配置里证明，只能靠更保守的默认值。
+    """
+    from core.config import settings
+
+    class _SlowDriver:
+        poll_interval_sec = 10.0
+
+    class _FastDriver:
+        poll_interval_sec = 0.5
+
+    class _SlowPipeline:
+        poll_interval_sec = 30.0
+
+    base = settings.generation_poll_interval_sec
+    assert GenerationRunner._pacing(None, None) == base
+    # 驱动声明更慢 → 采 driver's
+    assert GenerationRunner._pacing(None, _SlowDriver()) == 10.0
+    # 驱动声明比全局还快 → 无效（上游承受力不由调用方决定），仍用全局
+    assert GenerationRunner._pacing(None, _FastDriver()) == base
+    # 业务链路声明更慢 → 采业务的
+    assert GenerationRunner._pacing(_SlowPipeline(), None) == 30.0
+    # 两边都声明 → 取最慢的
+    assert GenerationRunner._pacing(_SlowPipeline(), _SlowDriver()) == 30.0
+
+
+def test_invalid_pacing_declaration_is_treated_as_absent() -> None:
+    """声明写错时按「没声明」处理。
+
+    写成 0 → 轮询变忙等，把上游打挂；写成 `True` → 1 秒一次，同样是限流。
+    两种都不能生效：声明错了要退回全局值，而不是退回一个更凶的值。
+    """
+    from core.config import settings
+
+    class _Zero:
+        poll_interval_sec = 0
+
+    class _Negative:
+        poll_interval_sec = -5.0
+
+    class _Bool:
+        poll_interval_sec = True
+
+    class _NotANumber:
+        poll_interval_sec = "10"
+
+    base = settings.generation_poll_interval_sec
+    for provider in (_Zero(), _Negative(), _Bool(), _NotANumber()):
+        assert GenerationRunner._pacing(None, provider) == base
+
+
+def test_pipeline_can_declare_its_own_pacing() -> None:
+    """业务链路也能声明节奏 —— 驱动的声明是**供应商级**的。
+
+    一家供应商的所有业务共享一个节奏，而「这条链路本来就慢」是业务事实
+    （替换链的上游就是慢）。没有业务声明点，就得为了一个业务去改驱动 ——
+    代价是那家供应商的所有业务一起变慢。
+    """
+    from core.config import settings
+    from generation.pipeline import poll_interval_of
+
+    class _SlowPipeline:
+        poll_interval_sec = 30.0
+
+    class _BrokenPipeline:
+        poll_interval_sec = 0
+
+    assert poll_interval_of(_SlowPipeline()) == 30.0
+    assert poll_interval_of(_BrokenPipeline()) is None
+    assert poll_interval_of(None) is None
+    assert GenerationRunner._pacing(_SlowPipeline(), None) == 30.0
+    # 没声明的业务链路 → 退回全局
+    assert GenerationRunner._pacing(object(), None) == settings.generation_poll_interval_sec
+
+
+def test_effective_max_polls_follows_the_real_pacing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """次数上限按**这条链路的真实节奏**折算，不是照抄配置。
+
+    慢链路（10 秒一跳）下 `GENERATION_MAX_POLLS=900` 永远到不了 —— 墙钟先到。
+    日志里写「已轮询 180 次」而配置写着 900，排障只能反推（2026-11-19 那次
+    花了半小时）。折算后上限就是真实的那个数。
+
+    折算**不会**改变实际结果：折算值就是墙钟能容纳的次数，它总是先于墙钟
+    到达 —— 原本能跑完的任务说明既没到墙钟也没到次数，收紧上限不会误伤。
+    """
+    from core.config import settings
+
+    monkeypatch.setattr(settings, "generation_timeout_sec", 1800)
+    monkeypatch.setattr(settings, "generation_max_polls", 900)
+    # 默认节奏 2 秒 → 墙钟恰好装下 900 次 → 与配置一致
+    assert GenerationRunner._effective_max_polls(2.0) == 900
+    # 10 秒一跳 → 墙钟只装得下 180 次
+    assert GenerationRunner._effective_max_polls(10.0) == 180
+    # 间隔比配置上限还紧 → 部署级的闸仍然生效
+    monkeypatch.setattr(settings, "generation_max_polls", 50)
+    assert GenerationRunner._effective_max_polls(2.0) == 50
+
+
+def test_timeout_message_carries_the_effective_limit() -> None:
+    """超时时报「已轮询 N/M 次」：让人一眼看出是次数到顶，不是漏判。"""
+    from datetime import UTC, datetime, timedelta
+
+    from generation.spec import GenerationRecord
+
+    record = GenerationRecord(
+        id="rec-1",
+        kind="video",
+        model="m",
+        prompt="p",
+        status="running",
+        owner_id="u",
+        progress=42,
+        created_at=datetime.now(tz=UTC) - timedelta(seconds=300),
+    )
+    message = GenerationRunner._timeout_message(record, 180, reason="轮询次数", limit=180)
+    assert "180/180" in message
+    assert "轮询次数" in message
+    assert "42%" in message
+    assert "5 分钟" in message
+    # 不给上限时（墙钟判据）保持旧文案形状
+    assert "已轮询 12 次" in GenerationRunner._timeout_message(record, 12, reason="墙钟")
 
 
 def test_submit_prepare_failure_is_not_blamed_on_billing(
@@ -1317,3 +1446,174 @@ def test_poll_job_timeout_covers_persist_and_finish() -> None:
 class _StubPipeline:
     def __init__(self, persist) -> None:
         self.persist_output = persist
+
+
+def test_slow_poll_interval_fails_fast_at_startup() -> None:
+    """间隔大到「墙钟只够问几次」时，启动就该失败。
+
+    原来的守卫只挡「预算不足」（次数 × 间隔 < 超时 × 0.8），不挡反向的失配：
+    900 次 × 600 秒 ≫ 1800 秒，守卫照样放行，但 1800 秒只够问 3 次 ——
+    任务会在结果回来之前被墙钟掐死，而配置看上去完全正常。
+    """
+    from core.config import Settings
+
+    with pytest.raises(ValueError, match="轮询间隔过慢"):
+        Settings(
+            generation_poll_interval_sec=700,
+            generation_max_polls=900,
+            generation_timeout_sec=1800,
+        )
+    # 恰好够 3 次（下界）不算失配
+    Settings(
+        generation_poll_interval_sec=600,
+        generation_max_polls=900,
+        generation_timeout_sec=1800,
+    )
+    # 默认配置（2 秒一跳、1800 秒墙钟）不该被这条守卫拦下
+    Settings(
+        generation_poll_interval_sec=2,
+        generation_max_polls=900,
+        generation_timeout_sec=1800,
+    )
+
+
+class _SlowChainStore:
+    async def load(self, record_id: str) -> GenerationRecord:
+        return GenerationRecord(
+            id=record_id,
+            kind="test-slow-chain",
+            model="seedance-2.5",
+            prompt="p",
+            status="running",
+            owner_id="u_001",
+            external_id="ext-slow-1",
+            progress=10,
+        )
+
+    async def mark_submitting(self, record_id: str) -> bool:
+        return True
+
+    async def mark_submitted(self, record_id: str, external_id: str) -> bool:
+        return True
+
+    async def clear_submit_attempt(self, record_id: str) -> bool:
+        return True
+
+    async def mark_progress(self, record_id: str, progress: int) -> bool:
+        return True
+
+    async def mark_succeeded(self, record_id: str, **kwargs: object) -> bool:
+        return True
+
+    async def mark_failed(self, record_id: str, error: str) -> bool:
+        return True
+
+
+class _SlowChainPipeline:
+    """一条**业务上**就慢的链路：上游本身慢，与供应商无关。
+
+    驱动声明的是「这家供应商能承受的节奏」，业务声明的是「这条链路本来就慢」。
+    两者都慢时取最慢的。
+    """
+
+    kind = "test-slow-chain"
+    capability = Capability.VIDEO
+    poll_interval_sec = 30.0
+
+    def store(self, session: object) -> _SlowChainStore:
+        return _SlowChainStore()
+
+    async def build_request(self, record: GenerationRecord) -> GenerationRequest:
+        return GenerationRequest(
+            capability=Capability.VIDEO, model=record.model, prompt=record.prompt
+        )
+
+
+class _SlowChainProvider:
+    name = "test-slow"
+    capabilities = frozenset({Capability.VIDEO})
+    models = ()
+
+    async def submit(self, request: GenerationRequest) -> str:
+        return "ext-slow-1"
+
+    async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:
+        return GenerationProgress(
+            external_id=external_id, state=GenerationState.RUNNING, progress=20
+        )
+
+    async def cancel(self, external_id: str) -> None:
+        return None
+
+
+class _SlowChainRouter:
+    def provider_for(self, model: str, *, allow_fallback: bool = True) -> object:
+        return _SlowChainProvider()
+
+
+def test_next_poll_follows_the_chain_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """业务链路声明的节奏真的落到「下一跳等多久」上。
+
+    这是 C1 的落点：以前首跳与后续跳都硬编码全局间隔 —— 一家慢供应商只能靠调慢
+    全局配置来表达，结果所有业务的进度条一起变慢（缺口清单 C1 的原话）。
+    """
+    from generation import runner as runner_module
+
+    scheduled: list[float] = []
+
+    async def fake_schedule(
+        self: GenerationRunner, kind: str, record_id: str, *, polls: int = 0, delay: float = 0
+    ) -> None:
+        scheduled.append(delay)
+
+    register_pipeline(_SlowChainPipeline)
+    monkeypatch.setattr(runner_module, "get_model_router", _SlowChainRouter)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_schedule_poll", fake_schedule)
+
+    async def scenario() -> None:
+        await GenerationRunner(MemoryJobQueue()).handle_poll(
+            Job(
+                name=JOB_POLL,
+                payload={
+                    "kind": _SlowChainPipeline.kind,
+                    "record_id": "r1",
+                    "polls": 1,
+                },
+                max_attempts=1,
+            )
+        )
+
+    asyncio.run(scenario())
+
+    assert scheduled == [30.0], "业务声明的 30 秒必须落到下一跳的延迟上"
+
+
+def test_first_poll_follows_the_chain_pacing(monkeypatch: pytest.MonkeyPatch) -> None:
+    """首跳也按这条链路的节奏 —— 以前硬编码全局间隔。
+
+    慢供应商 2 秒就问一次纯属浪费，还可能撞上上游的查询频率限制（429）。
+    """
+    from generation import runner as runner_module
+
+    scheduled: list[float] = []
+
+    async def fake_schedule(
+        self: GenerationRunner, kind: str, record_id: str, *, polls: int = 0, delay: float = 0
+    ) -> None:
+        scheduled.append(delay)
+
+    register_pipeline(_SlowChainPipeline)
+    monkeypatch.setattr(runner_module, "get_model_router", _SlowChainRouter)
+    monkeypatch.setattr(runner_module.GenerationRunner, "_schedule_poll", fake_schedule)
+
+    async def scenario() -> None:
+        await GenerationRunner(MemoryJobQueue()).handle_submit(
+            Job(
+                name=JOB_SUBMIT,
+                payload={"kind": _SlowChainPipeline.kind, "record_id": "r1"},
+            )
+        )
+
+    asyncio.run(scenario())
+
+    assert scheduled == [30.0], "首跳也要按链路节奏"

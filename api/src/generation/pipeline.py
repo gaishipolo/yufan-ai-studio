@@ -127,6 +127,25 @@ class Persistable(Protocol):
 
 
 @runtime_checkable
+class PollPacingDeclared(Protocol):
+    """可选能力：这条链路两次轮询之间**至少**间隔多久（秒）。
+
+    与驱动的 `PollPacing` 是**两级**声明，不是同一件事的两份：
+
+    - 驱动声明的是「**我这家供应商**能承受的查询节奏」（供应商级 —— 一家供应商
+      的所有业务共享一个节奏）。
+    - 业务链路声明的是「**这条链路**本来就慢」（业务级 —— 替换链的上游就是慢）。
+
+    没有业务声明点，就只能为了一个业务去改驱动：改一家供应商的节奏，代价是它
+    所有业务一起变慢。
+
+    取值语义见 `runner.GenerationRunner._pacing`：**取最慢的那个**。
+    """
+
+    poll_interval_sec: float
+
+
+@runtime_checkable
 class ArchiveRequestable(Protocol):
     """可选能力：把一条成功的记录翻译成「入草稿箱」的请求。
 
@@ -161,6 +180,21 @@ def strict_model(pipeline: GenerationPipeline) -> bool:
     一处实现（见 `generation.runner._provider_for`）。
     """
     return bool(pipeline.strict_model) if isinstance(pipeline, StrictModelDeclared) else False
+
+
+def poll_interval_of(pipeline: GenerationPipeline | None) -> float | None:
+    """该流水线声明的轮询间隔；没声明（或声明不合法）返回 `None`。
+
+    不合法 = 非数值、`True`/`False`、≤ 0。声明写错时**按没声明处理**：
+    宁可回退全局值，也不能让一个写错的 `0` 把轮询变成忙等、把 `True` 变成
+    1 秒一次的上游限流。
+    """
+    if pipeline is None or not isinstance(pipeline, PollPacingDeclared):
+        return None
+    value = pipeline.poll_interval_sec
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or value <= 0:
+        return None
+    return float(value)
 
 
 def fail_on_model_gone(pipeline: GenerationPipeline) -> bool:

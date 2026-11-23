@@ -54,6 +54,7 @@ from generation.pipeline import (
     Persistable,
     fail_on_model_gone,
     get_pipeline,
+    poll_interval_of,
     strict_model,
 )
 from generation.spec import GenerationRecord
@@ -511,9 +512,16 @@ class GenerationRunner:
                     )
                     return
 
-        await self._schedule_poll(
-            kind, record_id, polls=0, delay=settings.generation_poll_interval_sec
-        )
+        # 首跳也按这条链路的节奏：慢供应商 2 秒就问一次纯属浪费，还可能撞上
+        # 上游的查询频率限制。供应商解析不出来时回退到「全局 + 业务声明」。
+        try:
+            interval = self._pacing(pipeline, _provider_for(pipeline, record.model))
+        except Exception:  # noqa: BLE001 - 算不出节奏不能挡住已提交的记录
+            logger.warning(
+                "首跳节奏解析失败，按默认节奏 kind=%s id=%s", kind, record_id
+            )
+            interval = self._pacing(pipeline, None)
+        await self._schedule_poll(kind, record_id, polls=0, delay=interval)
 
     # ------------------------------------------------------------------ 轮询
     async def handle_poll(self, job: Job) -> None:
@@ -523,6 +531,10 @@ class GenerationRunner:
         factory = get_session_factory()
         next_delay: float | None = None
         queued_wait = False
+        # 这条链路的**基础节奏**（供应商还没解析出来时的口径）：全局兜底 +
+        # 业务链路声明。用于两处「供应商解析不了也必须有值」的地方 —— 次数上限
+        # 的折算与退避底（模型下线、路由异常时都要继续往下走）。
+        base_interval = self._pacing(pipeline, None)
 
         try:
             # 这一跳的预算只覆盖「问一次供应商」。
@@ -579,16 +591,30 @@ class GenerationRunner:
                             )
                         return
 
-                    if polls >= settings.generation_max_polls:
+                    # 次数上限按这条链路的节奏折算（墙钟能容纳几次就是几次），
+                    # 而不是照抄配置里的 `GENERATION_MAX_POLLS`：慢链路下配置
+                    # 的 900 次永远到不了，写进日志会让人以为「才轮了 180 次就
+                    # 超时了，是不是漏判了」（2026-11-19 排障那半小时的由来）。
+                    #
+                    # 这里用 `base_interval`（还没解析供应商，口径是「全局 + 业务
+                    # 声明」）而不是真实节奏：真实节奏只会**更慢**，折算值只会
+                    # **更大** —— 而更大的次数上限意味着墙钟一定先到，判定结果
+                    # 不变（原本能跑完的任务不会提前失败）。把供应商解析提到
+                    # 判定之前会改变「模型已下线」与「次数用尽」的先后顺序，
+                    # 那是语义变更，不该由这个优化捎带。
+                    max_polls = self._effective_max_polls(base_interval)
+                    if polls >= max_polls:
                         # 事件里的 error 与落库文案必须一致：接上通知渠道后，
                         # 用户收到的说法不能和任务详情页不一样（R4-10）
-                        message = self._timeout_message(record, polls, reason="轮询次数")
+                        message = self._timeout_message(
+                            record, polls, reason="轮询次数", limit=max_polls
+                        )
                         logger.warning(
                             "轮询次数用尽 kind=%s id=%s polls=%d max=%d elapsed=%.0fs progress=%d",
                             kind,
                             record_id,
                             polls,
-                            settings.generation_max_polls,
+                            max_polls,
                             self._elapsed_seconds(record),
                             record.progress,
                         )
@@ -603,13 +629,14 @@ class GenerationRunner:
                             )
                         return
 
-                    interval = settings.generation_poll_interval_sec
+                    interval = base_interval
                     try:
                         provider = _provider_for(pipeline, record.model)
-                        # 轮询节奏可以由驱动收紧：Agnes 视频的查询接口对频率敏感
-                        # （2 秒一问会被 429「查询过于频繁」挡回来），驱动声明
-                        # `poll_interval_sec` 后，这一条链路按它的节奏问。
-                        interval = self._poll_interval(provider)
+                        # 轮询节奏由三方共同决定，取最慢：全局兜底 + 业务链路声明
+                        # + 驱动声明。Agnes 视频的查询接口对频率敏感（2 秒一问会被
+                        # 429「查询过于频繁」挡回来），驱动声明 `poll_interval_sec`
+                        # 后，这条链路按它的节奏问。
+                        interval = self._pacing(pipeline, provider)
                     except ModelUnavailable as exc:
                         # 模型已下线：这条历史记录**不可能再有结果**。
                         # 当场判失败，别把它当成瞬时故障退避重试——退避会让它
@@ -629,7 +656,7 @@ class GenerationRunner:
                                 polls,
                                 exc,
                             )
-                            next_delay = self._backoff(polls)
+                            next_delay = self._backoff(polls, base=base_interval)
                         else:
                             message = str(exc)[:_MAX_ERROR_LEN]
                             logger.warning(
@@ -674,7 +701,9 @@ class GenerationRunner:
                             # （见下方 `succeeded` 分支）。
                             succeeded = (record, result)
                         elif state == GenerationState.FAILED:
-                            if result.retryable and polls + 1 < settings.generation_max_polls:
+                            if result.retryable and polls + 1 < self._effective_max_polls(
+                                interval
+                            ):
                                 next_delay = self._backoff(polls, base=interval)
                             else:
                                 if not await store.mark_failed(
@@ -803,7 +832,7 @@ class GenerationRunner:
                 "轮询执行异常（继续下一轮）kind=%s id=%s polls=%d", kind, record_id, polls
             )
             if next_delay is None:
-                next_delay = self._backoff(polls)
+                next_delay = self._backoff(polls, base=base_interval)
 
         if next_delay is not None:
             next_polls = polls if queued_wait else polls + 1
@@ -1139,16 +1168,28 @@ class GenerationRunner:
         return cls._elapsed_seconds(record) > settings.generation_timeout_sec
 
     @classmethod
-    def _timeout_message(cls, record: GenerationRecord, polls: int, *, reason: str) -> str:
+    def _timeout_message(
+        cls,
+        record: GenerationRecord,
+        polls: int,
+        *,
+        reason: str,
+        limit: int | None = None,
+    ) -> str:
         """超时文案必须带判据。
 
         「生成超时，请重试」这一句同时覆盖「墙钟到」与「次数到」，而两者的处置
         完全不同：前者是上游太慢（该等 / 该换队列），后者是本地轮询节奏失控
         （2026-11-19 的 900 次预算在 5.7 分钟内烧完就属于后者）。不带数字时，
         排障只能靠 `/metrics` 反推 —— 那次花了半小时才确认是次数先到，不是墙钟。
+
+        `limit` 是次数上限（已按这条链路的节奏折算）。写出来有两个用处：一是
+        让人一眼看出「到了上限」而不是「才 180 次就超时了，是不是漏判」；二是
+        折算后的上限本身就是排障信息 —— 它直接反映这条链路的真实节奏。
         """
+        counted = f"{polls}/{limit} 次" if limit is not None else f"{polls} 次"
         return (
-            f"生成超时，请重试（{reason}判据；已轮询 {polls} 次、"
+            f"生成超时，请重试（{reason}判据；已轮询 {counted}、"
             f"耗时 {cls._elapsed_seconds(record) / 60:.0f} 分钟、"
             f"最后进度 {record.progress}%）"
         )[:_MAX_ERROR_LEN]
@@ -1281,18 +1322,74 @@ class GenerationRunner:
         return False
 
     @staticmethod
-    def _poll_interval(provider: ModelProvider) -> float:
-        """这条链路两次轮询之间等多久。
+    def _pacing(
+        pipeline: GenerationPipeline | None,
+        provider: ModelProvider | None = None,
+    ) -> float:
+        """这条链路两次轮询之间等多久。**取所有声明里最慢的那个**。
 
-        默认 `GENERATION_POLL_INTERVAL_SEC`（2 秒，够密，延迟投递不占 worker 槽位）；
-        驱动可以声明 `poll_interval_sec` 收紧——上游对查询频率敏感时（Agnes 视频
-        2 秒一问就回 429「查询过于频繁」），按它的节奏问比挨完 429 再退避划算。
+        三处可能声明：
+
+        - 全局 `GENERATION_POLL_INTERVAL_SEC`（兜底，2 秒）
+        - 业务链路（`generation.pipeline.PollPacingDeclared`）
+        - 供应商驱动（`infra.ai.base.PollPacing`）
+
+        ## 为什么取最慢
+
+        间隔小 = 请求频繁 = 上游限流（Agnes 2 秒一问就被 429「查询过于频繁」
+        挡回来）。宁可慢，也不要让任何一方把节奏调快 —— 上游的承受力是瓶颈，
+        业务与驱动都无权替它决定。
+
+        ## 为什么业务链路也要能声明
+
+        驱动是**供应商级**的（一家供应商的所有业务共享一个节奏），而「这条链路
+        慢」是业务事实（替换链的上游本来就慢）。没有业务声明点，就得为了一个
+        业务去改驱动 —— 代价是那家供应商的所有业务一起变慢。
+
+        `provider` 传 `None` 时只取「全局 + 业务声明」：供应商还没解析出来
+        （模型已下线）或解析失败时，用得到的是这个口径。
         """
-        declared = provider.poll_interval_sec if isinstance(provider, PollPacing) else None
-        # 仍然校验取值：驱动把间隔写成 0 或负数时不能把轮询变成忙等。
-        if isinstance(declared, (int, float)) and declared > 0:
-            return float(declared)
-        return settings.generation_poll_interval_sec
+        candidates: list[float] = []
+        base = float(settings.generation_poll_interval_sec)
+        if base > 0:
+            candidates.append(base)
+        declared = poll_interval_of(pipeline)
+        if declared is not None:
+            candidates.append(declared)
+        if provider is not None and isinstance(provider, PollPacing):
+            value = provider.poll_interval_sec
+            # 仍然校验取值：驱动把间隔写成 0 或负数时不能把轮询变成忙等。
+            if isinstance(value, (int, float)) and not isinstance(value, bool) and value > 0:
+                candidates.append(float(value))
+        return max(candidates) if candidates else 1.0
+
+    @classmethod
+    def _effective_max_polls(cls, interval: float) -> int:
+        """这条链路**实际**能轮询的次数上限（两个上限取小）。
+
+        - 部署级的硬闸：`GENERATION_MAX_POLLS`
+        - 墙钟预算按这条链路的节奏能容纳的次数：`TIMEOUT / 间隔`
+
+        ## 为什么要有第二个
+
+        慢供应商（10 秒一跳）下 `MAX_POLLS=900` 永远用不到 —— 墙钟 1800 秒先到。
+        日志里写「已轮询 180 次」而配置写着 900，排障只能反推（2026-11-19 那次
+        花了半小时才确认是次数先到、不是墙钟）。
+
+        ## 为什么不会改变实际结果
+
+        第二个上限 = 墙钟能容纳的次数，所以它总是**先于**墙钟到达的那个判据；
+        把次数上限收紧到它，不会让原本能跑完的任务提前失败 —— 原本能跑完就说明
+        没到墙钟，也就没到次数。
+
+        ## 为什么不打折
+
+        系数与 `_timed_out` **同口径**（1.0，不乘 0.8）。墙钟判据用的是满额
+        预算，次数折算再打个折就等于给同一份预算两个口径：墙钟 1800 秒能装
+        900 次 2 秒的轮询，而打折后次数上限只有 720 → 任务提前 6 分钟被判失败。
+        """
+        budget = int(settings.generation_timeout_sec / max(interval, 0.001))
+        return max(1, min(settings.generation_max_polls, budget))
 
     @staticmethod
     def _backoff(polls: int, *, base: float | None = None) -> float:
