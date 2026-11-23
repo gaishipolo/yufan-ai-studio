@@ -110,6 +110,85 @@ describe('LibraryDetail · 改名不被刷新冲掉', () => {
   });
 });
 
+describe('LibraryDetail · 打标失败要拉回服务端真值', () => {
+  it('打标被拒后重新拉一次详情，而不是回填本地旧快照', async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn().mockResolvedValue({
+      data: { ...IMAGE, tags: [{ id: 't1', name: '产品' }] },
+    });
+    detailMock.mockReturnValue({ data: IMAGE, error: null, isPending: false, refetch });
+    /* 后端说标签被删了（它变成有子级的分组、或已被删掉） */
+    patchMock.mockImplementation(
+      (_vars: unknown, handlers?: { onError?: (error: Error, variables: unknown) => void }) => {
+        handlers?.onError?.(new Error('标签已被删除'), {
+          id: 'a1',
+          body: { tagIds: ['t2'] },
+        });
+      },
+    );
+
+    render(
+      <LibraryDetail
+        assetId="a1"
+        tags={[
+          { id: 't1', name: '产品', childCount: 0, createdAt: '2026-11-10T02:00:00Z' },
+          { id: 't2', name: '坏标签', childCount: 0, createdAt: '2026-11-10T02:00:00Z' },
+        ]}
+        viewer={{ id: 'u1', canDeleteAny: false }}
+        canUpdate
+        onClose={vi.fn()}
+        onAction={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '编辑标签' }));
+    await user.click(screen.getByRole('checkbox', { name: '坏标签' }));
+
+    expect(patchMock).toHaveBeenCalled();
+    /* 关键：失败后必须**重新拉一次**服务端。回填本地 `asset` 等于回到旧快照，
+       坏标签照样留在本地，下一次保存还会把它提交上去。 */
+    expect(refetch).toHaveBeenCalled();
+  });
+
+  it('拉不到服务端数据时保持原样，不清空成「没有标签」', async () => {
+    const user = userEvent.setup();
+    const refetch = vi.fn().mockResolvedValue(undefined);
+    detailMock.mockReturnValue({ data: IMAGE, error: null, isPending: false, refetch });
+    patchMock.mockImplementation(
+      (_vars: unknown, handlers?: { onError?: (error: Error, variables: unknown) => void }) => {
+        handlers?.onError?.(new Error('标签已被删除'), {
+          id: 'a1',
+          body: { tagIds: ['t2'] },
+        });
+      },
+    );
+
+    render(
+      <LibraryDetail
+        assetId="a1"
+        tags={[
+          { id: 't1', name: '产品', childCount: 0, createdAt: '2026-11-10T02:00:00Z' },
+          { id: 't2', name: '坏标签', childCount: 0, createdAt: '2026-11-10T02:00:00Z' },
+        ]}
+        viewer={{ id: 'u1', canDeleteAny: false }}
+        canUpdate
+        onClose={vi.fn()}
+        onAction={vi.fn()}
+      />,
+    );
+
+    await user.click(screen.getByRole('button', { name: '编辑标签' }));
+    await user.click(screen.getByRole('checkbox', { name: '坏标签' }));
+
+    expect(refetch).toHaveBeenCalled();
+    /* 本地还留着服务端的那个标签：没有数据就别动界面 */
+    expect(screen.getByRole('button', { name: '编辑标签' })).toHaveAttribute(
+      'title',
+      '产品',
+    );
+  });
+});
+
 describe('LibraryDetail · 复制全文', () => {
   it('正文还没读出来时按钮禁用，不复制空串却说「已复制全文」', () => {
     textMock.mockReturnValue({ data: undefined, isPending: true, isError: false });

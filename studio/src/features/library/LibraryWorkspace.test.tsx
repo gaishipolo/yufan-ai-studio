@@ -105,6 +105,7 @@ beforeEach(() => {
 describe('LibraryWorkspace · 批量删除要确认', () => {
   it('点「移入回收站」先弹确认，确认后才发批量请求', async () => {
     const user = userEvent.setup();
+    listMock.mockReturnValue(listOf([{ ...ASSET, stateVersion: 5 }]));
     renderWorkspace();
 
     await user.click(screen.getByRole('button', { name: '全选本页' }));
@@ -120,7 +121,14 @@ describe('LibraryWorkspace · 批量删除要确认', () => {
     await user.click(screen.getByRole('button', { name: '批量移入回收站' }));
 
     expect(bulkMock).toHaveBeenCalledWith(
-      { ids: ['a1'], action: 'delete', payload: { reason: '' } },
+      {
+        ids: ['a1'],
+        action: 'delete',
+        payload: { reason: '' },
+        /* 批量写必须带版本：后端据此做乐观锁，缺了就 400
+           （REVIEW_2026-11-23 重要#5 / 一般#6） */
+        expectedVersions: { a1: 5 },
+      },
       expect.anything(),
     );
   });

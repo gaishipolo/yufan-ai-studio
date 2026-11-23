@@ -486,6 +486,18 @@ export function LibraryWorkspace() {
     }
   }
 
+  /**
+   * 选中项的资产版本：批量写必须带上它，后端据此做乐观锁。
+   *
+   * 不带的话后端只能按「不校验」处理——A 打开列表后 B 改了名，A 批量改名会把
+   * B 的修改冲掉且没有任何提示（REVIEW_2026-11-23 重要#5 / 一般#6）。
+   * 版本取自当前列表数据：列表旧了，后端会逐条报「已被修改」，刷新后重试即可。
+   */
+  function versionsOf(ids: string[]): Record<string, number> {
+    const known = new Map(items.map((asset) => [asset.id, asset.stateVersion ?? 0]));
+    return Object.fromEntries(ids.map((id) => [id, known.get(id) ?? 0]));
+  }
+
   function runBulk(kindOfAction: BulkKind, payload?: { tagIds?: string[] }) {
     const ids = [...selected];
     if (!ids.length) return;
@@ -537,7 +549,7 @@ export function LibraryWorkspace() {
         reasonLabel: '驳回原因',
         onConfirm: (reason) => {
           bulk.mutate(
-            { ids, action: 'rejectDraft', payload: { reason } },
+            { ids, action: 'rejectDraft', payload: { reason }, expectedVersions: versionsOf(ids) },
             {
               onSuccess: (result) => {
                 setConfirm(null);
@@ -587,6 +599,7 @@ export function LibraryWorkspace() {
             deletable.map((asset) => asset.id),
             'delete',
             { reason },
+            versionsOf(deletable.map((asset) => asset.id)),
           );
         },
       });
@@ -600,7 +613,7 @@ export function LibraryWorkspace() {
           ? 'approveDraft'
           : 'addTag';
 
-    applyBulk(ids, action, payload as Record<string, unknown> | undefined);
+    applyBulk(ids, action, payload as Record<string, unknown> | undefined, versionsOf(ids));
   }
 
   /** 批量写：逐条判定、逐条提交；成败混在一起时把失败明细带出来 */
