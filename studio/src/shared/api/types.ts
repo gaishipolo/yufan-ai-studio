@@ -72,6 +72,19 @@ export function isStateChanged(error: unknown): boolean {
 }
 
 /**
+ * 这次失败重试是否要求「可能已扣费的二次确认」。
+ *
+ * 后端对已带 `externalId` 的失败任务返回 `409 + details.confirmChargedRequired === true`，
+ * 前端据此把重试按钮切换为「已核对，仍要重提」并带上 `confirmCharged=true`；
+ * 不再靠正则匹配中文文案，避免提示语微调后确认开关悄然失效。
+ */
+export function isConfirmChargedRequired(error: unknown): boolean {
+  if (!(error instanceof ApiError)) return false;
+  const details = error.details as { confirmChargedRequired?: unknown; reason?: unknown } | null | undefined;
+  return details?.confirmChargedRequired === true || details?.reason === 'confirm_charged_required';
+}
+
+/**
  * 这次失败是不是「登录态失效」。
  *
  * 401 有专门的处理路径（拦截器清场 + 守卫跳登录页），

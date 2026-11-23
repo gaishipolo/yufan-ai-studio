@@ -92,6 +92,8 @@ class ModelSummary:
     max_references: int = 0
     #: 能不能跑替换链（按「原片 + 素材包」替换）。由驱动声明，不靠槽位组合推断。
     replacement: bool = False
+    #: 兼容历史模型 id 的别名，仅供目录解析，不另列条目。
+    aliases: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)

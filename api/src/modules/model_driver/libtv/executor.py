@@ -14,6 +14,7 @@ import re
 import subprocess
 import sys
 import uuid
+from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
@@ -34,7 +35,7 @@ from modules.model_driver.libtv.state import (
 )
 
 logger = get_logger(__name__)
-MODEL_ID = "libtv-wan3-replacement"
+MODEL_ID = "libtv-wan3.0"
 # 这些故障需要修复执行环境，再由「继续」恢复已有 task_id 的查询。
 EXECUTOR_BLOCKED = frozenset(
     {
@@ -168,6 +169,7 @@ async def submit_desubtitle(
             "duration": duration,
         }
     )
+    process: asyncio.subprocess.Process | None = None
     try:
         process = await asyncio.create_subprocess_exec(
             get_settings().node_binary,
@@ -176,8 +178,17 @@ async def submit_desubtitle(
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
-        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=300)
-    except (TimeoutError, OSError) as exc:
+        stdout, stderr = await asyncio.wait_for(process.communicate(), timeout=1500)
+    except (TimeoutError, asyncio.CancelledError) as exc:
+        if process is not None:
+            if process.returncode is None:
+                with suppress(ProcessLookupError):
+                    process.kill()
+            await process.communicate()
+        if isinstance(exc, asyncio.CancelledError):
+            raise
+        raise UpstreamError("去字幕执行器超时，已停止子进程") from exc
+    except OSError as exc:
         raise UpstreamError(f"去字幕执行器不可用：{exc}") from exc
 
     line = (stdout or b"").decode("utf-8", "replace").strip().splitlines()
@@ -189,6 +200,11 @@ async def submit_desubtitle(
             parsed = {}
     if process.returncode != 0 or parsed.get("error"):
         detail = parsed.get("error") or (stderr or b"").decode("utf-8", "replace").strip()[-200:]
+        # create 请求发出后的超时/无 task_id 或子进程异常退出未输出回执：
+        # 归为 UpstreamError（502），让 GenerationRunner._possibly_delivered 保留 submit_attempts，
+        # 避免自动重提导致重复扣费。
+        if parsed.get("code") == "SUBMISSION_UNKNOWN" or not parsed:
+            raise UpstreamError(f"去字幕提交结果未知：{detail}")
         raise BadRequest(f"去字幕未提交：{detail}")
     return parsed
 

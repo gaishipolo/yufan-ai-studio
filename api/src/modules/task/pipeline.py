@@ -8,23 +8,28 @@ from __future__ import annotations
 
 import asyncio
 import re
+import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.config import settings
 from core.exceptions import BadRequest
 from core.library_text import inject_text_refs
 from core.naming import generated_file_name
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
+from db.session import get_session_factory
 from generation.pipeline import register_pipeline
 from generation.spec import STATUS_QUEUED, STATUS_RUNNING, GenerationRecord
 from infra import get_model_router, get_storage
 from infra.ai.base import Capability, GenerationRequest, InlineReferencesCapable
 from infra.archive import get_archive_storage
 from infra.archive.runs import run_dir
+from infra.http import fetch_to_file, validate_public_url
+from infra.media_probe import MAX_BYTES
 from infra.reference_inline import MIME_BY_SUFFIX, inline_data_uris
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask, parse_params_json
@@ -312,7 +317,35 @@ class VideoGenerationPipeline:
         """
         match = _RUN_OUTPUT_URL.search(url)
         if match is None:
-            return url
+            if not url.startswith(("http://", "https://")):
+                return url
+            # 去字幕结果返回的是上游临时 CDN 地址（`item.result_url`），必须搬进
+            # 平台对象存储，避免外部链接过期或生产环境 `LIBRARY_INGEST_ALLOWED_HOSTS` 拦下入库；
+            # 其它模型的 `http(s)` 直链（Agnes）维持原样返回。
+            async with get_session_factory()() as session:
+                task = await session.get(VideoTask, record_id)
+            if task is None or task.variant != "subtitle_erased":
+                return url
+            raw_suffix = Path(url.split("?", 1)[0]).suffix.lower()
+            suffix = raw_suffix if raw_suffix in {".mp4", ".mov", ".webm"} else ".mp4"
+            content_type = {
+                ".mp4": "video/mp4",
+                ".mov": "video/quicktime",
+                ".webm": "video/webm",
+            }[suffix]
+            key = f"videos/{record_id}{suffix}"
+            with tempfile.TemporaryDirectory(prefix="task-persist-") as folder:
+                target = Path(folder) / f"output{suffix}"
+                await fetch_to_file(
+                    url,
+                    target,
+                    max_bytes=MAX_BYTES,
+                    retries=2,
+                    timeout=settings.generation_persist_timeout_sec,
+                    guard=validate_public_url,
+                )
+                await get_storage().put_file(key, target, content_type)
+            return key
 
         # `run_dir` 内部要读指针 JSON（`storage.exists` / `storage.read`），
         # 之后还要 `is_file()` —— 而 `ArchiveStorage` 的**全部方法都是同步的**

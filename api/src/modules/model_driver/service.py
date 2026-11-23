@@ -219,7 +219,12 @@ class ModelGenerationFacade:
             if job.external_id and not confirm_charged:
                 raise InvalidState(
                     f"该任务已提交到供应商（任务号 {job.external_id}），可能已产生费用："
-                    "请先用任务号核对；确认要重新生成时带 confirmCharged=true"
+                    "请先用任务号核对；确认要重新生成时带 confirmCharged=true",
+                    details={
+                        "reason": "confirm_charged_required",
+                        "confirmChargedRequired": True,
+                        "externalId": job.external_id,
+                    },
                 )
 
             # 清号之前先留凭证：记录上留一份，审计里留一份（审计会吞异常，
@@ -271,6 +276,7 @@ class ModelGenerationFacade:
                 description=spec.description,
                 max_references=spec.max_references,
                 replacement=spec.replacement,
+                aliases=spec.aliases,
             )
             for spec in get_model_router().public_models(wanted)
         )

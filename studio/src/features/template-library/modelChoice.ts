@@ -1,4 +1,4 @@
-import type { ModelSpec } from '@/entities/model/model/types';
+import { findModelSpec, type ModelSpec } from '@/entities/model/model/types';
 import { effectiveModelIds } from '@/features/template-specs/specDraft';
 import type { PayloadDefaults, SubmitKind } from './taskPayload';
 
@@ -47,8 +47,8 @@ export function resolveModelChoice(
 ): ModelChoice {
   const options = effectiveModelIds(fixedModel, allowedModels);
   const id = options.includes(chosen) ? chosen : options[0] ?? '';
-  const image = imageModels.find(item => item.id === id);
-  const video = videoModels.find(item => item.id === id);
+  const image = findModelSpec(imageModels, id);
+  const video = findModelSpec(videoModels, id);
   const model = image ?? video;
   const kind: SubmitKind = image ? 'image' : 'video';
   const defaults: PayloadDefaults =
@@ -73,6 +73,6 @@ export function modelChoiceOptions(
   const catalog = catalogOf(imageModels, videoModels);
   return ids.map(id => ({
     value: id,
-    label: catalog.find(item => item.id === id)?.label ?? id,
+    label: findModelSpec(catalog, id)?.label ?? id,
   }));
 }

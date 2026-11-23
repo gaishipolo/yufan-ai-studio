@@ -6,19 +6,24 @@ import {beforeEach, describe, expect, it, vi} from 'vitest';
 import type {TemplateSpecOut} from '@/shared/api/schema';
 import {SpecLibrary} from './SpecLibrary';
 
-const {compileMock, createTaskMock, generateImageMock, modelsMock, specState} = vi.hoisted(() => ({
+const {compileMock, createTaskMock, generateImageMock, modelsMock, specState, publishedState} = vi.hoisted(() => ({
   compileMock: vi.fn(),
   createTaskMock: vi.fn(),
   generateImageMock: vi.fn(),
   modelsMock: vi.fn(),
   /* 当前发布的规格。用例可以换掉它来测另一种槽位配置。 */
   specState: {current: null as unknown},
+  publishedState: {isError: false, error: null as unknown, refetch: vi.fn()},
 }));
 
 vi.mock('@/entities/template-spec/api/spec.queries', () => ({
   usePublishedSpecs: () => ({
-    data: {items: [specState.current], total: 1},
+    data: publishedState.isError ? undefined : {items: [specState.current], total: 1},
     isLoading: false,
+    isError: publishedState.isError,
+    error: publishedState.error,
+    isFetching: false,
+    refetch: publishedState.refetch,
   }),
   useSpecCompile: () => ({mutateAsync: compileMock, isPending: false}),
 }));
@@ -557,5 +562,31 @@ describe('模板库：右栏', () => {
     renderLibrary();
     await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
     expect(screen.queryByRole('link', {name: '改模板'})).toBeNull();
+  });
+
+  it('列表查询失败时展示错误态和重试按钮，而不是显示「还没有已发布的模板」', async () => {
+    publishedState.isError = true;
+    publishedState.error = new Error('后端不可达');
+    try {
+      renderLibrary();
+      expect(await screen.findByText('模板加载失败')).toBeInTheDocument();
+      expect(screen.queryByText('还没有已发布的模板')).toBeNull();
+    } finally {
+      publishedState.isError = false;
+      publishedState.error = null;
+    }
+  });
+
+  it('存量模板使用旧别名 libtv-wan3-replacement 时仍能按 aliases 匹配到目录模型', async () => {
+    modelsMock.mockReturnValue([
+      {
+        ...LIBTV,
+        id: 'libtv-wan3.0',
+        label: 'LibTV · Wan 3.0',
+        aliases: ['libtv-wan3-replacement'],
+      },
+    ]);
+    renderLibrary();
+    await waitFor(() => expect(screen.getAllByText('LibTV · Wan 3.0').length).toBeGreaterThan(0));
   });
 });

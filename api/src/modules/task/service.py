@@ -27,7 +27,13 @@ from core.ports.library_lookup import LibraryAssetKind
 from core.reference_limits import check_side_lengths
 from core.response import PageParams
 from generation.runner import get_runner
-from infra.ai.base import Capability, ModelSpec, ReferenceLimitsCapable
+from infra.ai.base import (
+    Capability,
+    ModelReferenceLimitsCapable,
+    ModelSpec,
+    ReferenceLimit,
+    ReferenceLimitsCapable,
+)
 from infra.ai.router import ModelRouter
 from infra.artifacts import artifact_urls
 from infra.queue.base import JobQueue
@@ -112,6 +118,14 @@ def _mb(size: int) -> str:
     return f"{size // (1024 * 1024)}MB"
 
 
+def _provider_limits(spec: ModelSpec, provider: Any) -> dict[str, ReferenceLimit]:
+    if isinstance(provider, ModelReferenceLimitsCapable):
+        return dict(provider.reference_limits_for(spec.id))
+    if isinstance(provider, ReferenceLimitsCapable):
+        return dict(provider.reference_limits)
+    return {}
+
+
 def _check_reference_limits(spec: ModelSpec, provider: Any, references: Sequence[Any]) -> None:
     """按供应商声明的参考素材限制校验（张数 / 图片边长 / 体积）。
 
@@ -127,9 +141,9 @@ def _check_reference_limits(spec: ModelSpec, provider: Any, references: Sequence
     体积会把「一张图」算成 0 字节，合计永远不超限 —— 那是假通过）。物化期
     读真实字节时还有一道。
     """
-    if not isinstance(provider, ReferenceLimitsCapable):
+    limits = _provider_limits(spec, provider)
+    if not limits:
         return
-    limits = provider.reference_limits
     counts: dict[str, int] = {}
     for ref in references:
         counts[ref.kind.value] = counts.get(ref.kind.value, 0) + 1
@@ -196,7 +210,7 @@ def _check_reference_durations(
     行、未探测完），这时拿不到可信的时长，判「超长」会误伤合法素材。物化期
     会重新探测真实字节，那时才判得准。
     """
-    limits = provider.reference_limits if isinstance(provider, ReferenceLimitsCapable) else {}
+    limits = _provider_limits(spec, provider)
     totals = {"video": 0.0, "audio": 0.0}
     for ref in references:
         kind = ref.kind.value
@@ -452,11 +466,20 @@ class TaskService:
         源视频直接记父任务的 `output_url`：成片在对象存储里是 key，
         驱动提交前会把它物化成临时文件再传上游（见 `_submit_desubtitle`）。
         """
+        # `POST /tasks/{id}/desubtitle` 返回完整 `TaskOut`（含 `prompt`），因此非作者
+        # 必须同时具备可读权限（`get_task` 守住 `task:read:all`）与替他人触发生成的
+        # 权限（`task:retry:any`）；与 `retry_task` 只返回精简 `TaskRetryOut` 的设计不同，
+        # 不能省掉 `get_task`。
         parent = await self.get_task(task_id, actor)
+        if parent.author_id != actor.id and not actor.has(PERM_RETRY_ANY):
+            raise Forbidden("无权为他人的任务创建去字幕版")
+        if parent.derived_from_task_id is not None or parent.variant != "original":
+            raise InvalidState("只能为原片创建去字幕版")
         if TaskStatus(parent.status) is not TaskStatus.COMPLETED:
             raise InvalidState("只有已完成的视频可以去字幕")
         if not parent.output_url:
             raise InvalidState("这条任务还没有成片，无法去字幕")
+        parent_id = parent.id
 
         existing = await self.session.scalar(
             select(VideoTask).where(
@@ -467,9 +490,13 @@ class TaskService:
         if existing is not None:
             return existing
 
+        await self._assert_in_flight_room(actor)
+
         width, height = _desubtitle_size(parent.aspect_ratio)
+        suffix = "（去字幕）"
+        base_title = (parent.title or DEFAULT_TITLE).strip()[: 200 - len(suffix)]
         task = VideoTask(
-            title=f"{parent.title}（去字幕）",
+            title=f"{base_title}{suffix}",
             prompt=parent.prompt,
             status=TaskStatus.QUEUED.value,
             model="LibTV · 智能去字幕",
@@ -489,20 +516,20 @@ class TaskService:
             reference_library_ids=[],
             text_json="[]",
             cover_url="",
-            author_id=actor.id,
-            author_name=actor.name,
+            author_id=parent.author_id,
+            author_name=parent.author_name,
             derived_from_task_id=parent.id,
             variant="subtitle_erased",
         )
-        await self.repo.add(task)
         try:
+            await self.repo.add(task)
             await self.session.commit()
         except IntegrityError:
             # 并发点到第二次：唯一索引兜底，回读已存在的那条
             await self.session.rollback()
             raced = await self.session.scalar(
                 select(VideoTask).where(
-                    VideoTask.derived_from_task_id == parent.id,
+                    VideoTask.derived_from_task_id == parent_id,
                     VideoTask.variant == "subtitle_erased",
                 )
             )
@@ -539,7 +566,12 @@ class TaskService:
         if previous_external_id and not confirm_charged:
             raise InvalidState(
                 f"该次生成已提交到供应商（任务号 {previous_external_id}），可能已产生费用："
-                "请先用任务号核对或找回结果；确认要重新生成时带 confirmCharged=true 重试"
+                "请先用任务号核对或找回结果；确认要重新生成时带 confirmCharged=true 重试",
+                details={
+                    "reason": "confirm_charged_required",
+                    "confirmChargedRequired": True,
+                    "externalId": previous_external_id,
+                },
             )
         history: list[str] = []
         if previous_external_id:
@@ -646,8 +678,13 @@ class TaskService:
         # 收藏行没有外键级联，任务删了不跟着清就会留下指向已删任务的孤儿行：
         # 它们不影响读（永远查不到对应任务），但会在「我收藏了哪些」的查询里
         # 一直占位，而且没人会再回来删它们。
-        await self.repo.purge_favorites([task.id for task in owned])
-        for task in owned:
+        derived = list((await self.session.scalars(
+            select(VideoTask).where(VideoTask.derived_from_task_id.in_(owned_ids))
+        )).all()) if owned_ids else []
+        # 父卡删除时同事务清理派生任务；返回值仍按用户请求的任务计数。
+        removing = {task.id: task for task in [*derived, *owned]}
+        await self.repo.purge_favorites(list(removing))
+        for task in removing.values():
             await self.session.delete(task)
         await self.session.commit()
         if skipped:
@@ -695,24 +732,30 @@ class TaskService:
 
     async def _subtitle_variant(self, task: VideoTask) -> TaskVariantOut | None:
         """这条任务的去字幕版（没有就 None），成片地址现签。"""
-        variant = await self.session.scalar(
+        return (await self.subtitle_variants([task.id])).get(task.id)
+
+    async def subtitle_variants(self, task_ids: Sequence[str]) -> dict[str, TaskVariantOut]:
+        """列表与详情共用一次批量查询、一次地址转换，避免逐卡查派生任务。"""
+        if not task_ids:
+            return {}
+        variants = (await self.session.scalars(
             select(VideoTask).where(
-                VideoTask.derived_from_task_id == task.id,
+                VideoTask.derived_from_task_id.in_(task_ids),
                 VideoTask.variant == "subtitle_erased",
             )
-        )
-        if variant is None:
-            return None
-        url = variant.output_url
-        if url:
-            url = (await artifact_urls([url]))[0] or url
-        return TaskVariantOut(
-            id=variant.id,
-            status=TaskStatus(variant.status),
-            progress=variant.progress,
-            output_url=url,
-            error_message=variant.error_message,
-        )
+        )).all()
+        urls = await artifact_urls([
+            item.output_url if item.status == TaskStatus.COMPLETED.value else None
+            for item in variants
+        ])
+        return {
+            item.derived_from_task_id: TaskVariantOut(
+                id=item.id, status=TaskStatus(item.status), progress=item.progress,
+                output_url=url or None, error_message=item.error_message,
+            )
+            for item, url in zip(variants, urls, strict=True)
+            if item.derived_from_task_id is not None
+        }
 
     async def present_many(
         self, tasks: Sequence[VideoTask], actor: CurrentUser
@@ -720,6 +763,9 @@ class TaskService:
         """批量版 `present`：封面一次签名、收藏一次查询，避免 24 条各来一遍。"""
         favorites = await self.repo.favorite_task_ids(actor.id, [task.id for task in tasks])
         outs = [self.to_out(task, favorited=task.id in favorites) for task in tasks]
+        variants = await self.subtitle_variants([task.id for task in tasks])
+        for out in outs:
+            out.subtitle_erase = variants.get(out.id)
         keys = [out.cover_url for out in outs]
         if not any(keys):
             return outs

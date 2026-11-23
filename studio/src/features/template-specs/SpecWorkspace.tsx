@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
 import { useModels } from '@/entities/model/api/model.queries';
+import { findModelSpec } from '@/entities/model/model/types';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import {
   authorParamControls,
@@ -43,6 +44,7 @@ import {
   Chip,
   ConfirmDialog,
   EmptyState,
+  ErrorState,
   FormField,
   Modal,
   Notice,
@@ -250,7 +252,7 @@ export function SpecWorkspace() {
   /* 当前模型里「由使用者选」的参数（计费模式）。作者不设它们 —— 写死等于
      替每个使用者决定要不要花积分。提交前会把草稿里残留的这类参数剔掉。 */
   const userSelectableKeys = useMemo(() => {
-    const model = models.find(item => item.id === draft?.model);
+    const model = findModelSpec(models, draft?.model);
     if (!model?.paramSchema) return [];
     return Object.entries(model.paramSchema)
       .filter(([, field]) => field?.userSelectable === true)
@@ -862,6 +864,7 @@ export function SpecWorkspace() {
     const trashed = view === 'trash';
     const rows = (trashed ? trash.data?.items : list.data?.items) ?? [];
     const loading = trashed ? trash.isLoading : list.isLoading;
+    const listQueryError = trashed ? (trash.isError ? trash.error : null) : (list.isError ? list.error : null);
     /* 三档：模板 / 案例库 / 回收站。
        案例库没有读权限时不摆这一档 —— 后端一定 403，摆出来点了只看到一个空页。 */
     const viewTabs: {value: 'list' | 'cases' | 'trash'; label: string}[] = [
@@ -926,6 +929,13 @@ export function SpecWorkspace() {
             {error && <Notice tone="error">{error}</Notice>}
             {loading ? (
               <p className="py-10 text-center text-xs text-ink-mute">正在读取…</p>
+            ) : listQueryError ? (
+              <ErrorState
+                title={trashed ? '回收站加载失败' : '模板列表加载失败'}
+                error={listQueryError}
+                onRetry={() => void (trashed ? trash.refetch() : list.refetch())}
+                retrying={trashed ? trash.isFetching : list.isFetching}
+              />
             ) : rows.length === 0 ? (
               /* 「新建模板」按钮就在上方，不用来一段话再说一遍怎么新建 */
               <EmptyState title={trashed ? '回收站是空的' : '还没有模板'} />
@@ -939,8 +949,7 @@ export function SpecWorkspace() {
                 key={item.id}
                 item={item}
                 modelLabel={
-                  models.find(entry => entry.id === (item.draft?.model || item.latest?.model))
-                    ?.label
+                  findModelSpec(models, item.draft?.model || item.latest?.model)?.label
                 }
                 busy={busy}
                 trashed={trashed}
@@ -1018,7 +1027,7 @@ export function SpecWorkspace() {
 
      只给「作者设的」参数 —— 标了 `userSelectable` 的（计费模式）由**使用模板的人**
      在模板库选，作者写死等于替每个使用者决定要不要花积分。 */
-  const paramControls = authorParamControls(models.find(item => item.id === draft.model));
+  const paramControls = authorParamControls(findModelSpec(models, draft.model));
   const paramOverrides: Record<string, ParamValue> = {};
   for (const [key, value] of Object.entries(draft.params ?? {})) {
     if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {

@@ -139,13 +139,6 @@ export const TaskCard = memo(function TaskCard({
                 {queueHint}
               </p>
             ) : null}
-            {/* 派生任务也挂在这张卡上：它在跑的时候，卡片要能看见进度，
-                否则用户点完「去字幕」关掉弹窗就再也找不到它去了哪 */}
-            {eraseRunning ? (
-              <p className="mt-1 truncate text-micro text-brand-deep">
-                去字幕 {erase?.progress ?? 0}%
-              </p>
-            ) : null}
           </>
         ) : (
           /* 规格已经搬到封面角标上，这一行只留「哪个模型」和「什么时候」 */
@@ -161,6 +154,16 @@ export const TaskCard = memo(function TaskCard({
             <span className="ml-auto shrink-0 truncate">{formatDateTime(task.createdAt)}</span>
           </div>
         )}
+        {eraseRunning ? (
+          <p className="mt-1 truncate text-micro text-brand-deep">
+            去字幕 {erase?.progress ?? 0}%
+          </p>
+        ) : null}
+        {erase?.status === 'failed' ? (
+          <p className="mt-1 truncate text-micro text-danger" title={erase.errorMessage ?? undefined}>
+            去字幕失败：{erase.errorMessage || '请打开详情重试'}
+          </p>
+        ) : null}
       </div>
     </article>
   );

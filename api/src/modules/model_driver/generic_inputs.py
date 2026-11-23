@@ -52,6 +52,11 @@ from infra.archive.base import write_json
 from infra.archive.runs import check_id, relative_key, runs_root
 from infra.media_probe import encode_text, inspect
 from infra.storage.base import StorageError
+from modules.model_driver.libtv.models import (
+    resolve_libtv_profile,
+    resolve_libtv_resolution,
+    validate_libtv_references,
+)
 
 __all__ = ["materialize"]
 
@@ -120,17 +125,43 @@ def _prompt_spec(
     request: GenerationRequest, references: Sequence[dict[str, str]]
 ) -> dict[str, Any]:
     params = request.params
+    profile = resolve_libtv_profile(request.model)
     raw_duration = params.get("durationSec", 5)
     try:
         duration = int(raw_duration)
     except (TypeError, ValueError) as exc:
         raise BadRequest("输出时长必须是整数秒") from exc
-    if isinstance(raw_duration, bool) or not 2 <= duration <= 30:
-        raise BadRequest("输出时长须为 2 至 30 秒的整数")
+    min_duration = profile.min_duration if profile is not None else 2
+    max_duration = profile.max_duration if profile is not None else 30
+    if isinstance(raw_duration, bool) or not min_duration <= duration <= max_duration:
+        raise BadRequest(f"输出时长须为 {min_duration} 至 {max_duration} 秒的整数")
     ratio = str(params.get("aspectRatio") or "9:16")
     if ratio not in _RATIOS:
         raise BadRequest(f"不支持的画幅 {ratio!r}")
-    return {"duration": duration, "aspect_ratio": ratio, "references": list(references)}
+    spec: dict[str, Any] = {
+        "duration": duration,
+        "aspect_ratio": ratio,
+        "references": list(references),
+    }
+    if profile is not None:
+        counts: dict[str, int] = {}
+        for item in references:
+            kind = item["type"]
+            counts[kind] = counts.get(kind, 0) + 1
+        validate_libtv_references(profile, counts)
+        spec["model"] = profile.id
+        spec["resolution"] = resolve_libtv_resolution(profile, params.get("resolution"))
+        for key in (
+            "enableSound",
+            "enablePortraitCheck",
+            "searchEnabled",
+            "search_enabled",
+            "autoCompliance",
+            "extendPrompt",
+        ):
+            if key in params and params[key] is not None:
+                spec[key] = params[key]
+    return spec
 
 
 def _write_inputs(
@@ -271,8 +302,8 @@ def _write_everything(
             "state_version": 1,
             "framework_status": "queued",
             "billing_mode": billing_mode,
-            "model": request.model,
-            "resolution": "720P",
+            "model": spec.get("model") or request.model,
+            "resolution": spec.get("resolution") or "720P",
             "duration": spec["duration"],
             "file_checksums": {item["file"]: item["sha256"] for item in entries},
             "prompt_sha256": hashlib.sha256(prompt_bytes).hexdigest(),

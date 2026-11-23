@@ -74,10 +74,22 @@ export interface ModelSpec {
     string,
     { maxCount?: number; minSide?: number; maxSide?: number }
   >;
+  /** 兼容历史模型 id 或旧展示名的别名列表，供匹配存量模板/任务 */
+  aliases?: string[];
   isDefault: boolean;
 }
 
 export interface ModelListResult {
   items: ModelSpec[];
   total: number;
+}
+
+/** 按 id 或历史别名查找模型（如 `libtv-wan3-replacement` → `libtv-wan3.0`）。 */
+export function findModelSpec(
+  models: readonly ModelSpec[],
+  idOrAlias: string | null | undefined,
+): ModelSpec | undefined {
+  const key = idOrAlias?.trim();
+  if (!key) return undefined;
+  return models.find((item) => item.id === key || item.aliases?.includes(key));
 }

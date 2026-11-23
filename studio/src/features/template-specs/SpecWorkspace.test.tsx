@@ -19,10 +19,11 @@ import { SpecWorkspace } from './SpecWorkspace';
  * **没有任何入口** —— 死胡同。
  */
 
-const { specs, trashedSpecs, mutations, canState } = vi.hoisted(() => ({
+const { specs, trashedSpecs, listState, mutations, canState } = vi.hoisted(() => ({
   canState: {caseWrite: true},
   specs: { current: [] as TemplateSpecOut[] },
   trashedSpecs: { current: [] as TemplateSpecOut[] },
+  listState: { isError: false, error: null as unknown, refetch: vi.fn() },
   mutations: {
     /* 入参就是提交体（`TemplateSpecIn`）：有用例要断言「提交上去的提示词 /
        槽位 / 容器名是什么」。只声明 `{prompt}` 的话，断言别的字段会直接类型报错，
@@ -47,10 +48,12 @@ vi.mock('@/entities/template-spec/api/spec.queries', () => ({
   /* 上限来自后端：两个数说的是不同的事（存草稿 / 能不能发布）。 */
   useSpecLimits: () => ({data: {promptMax: 20000, promptExecutionLimit: 7000}}),
   useSpecs: () => ({
-    data: { items: specs.current, total: specs.current.length, page: 1, pageSize: 100 },
+    data: listState.isError ? undefined : { items: specs.current, total: specs.current.length, page: 1, pageSize: 100 },
     isLoading: false,
-    isError: false,
-    error: null,
+    isError: listState.isError,
+    error: listState.error,
+    isFetching: false,
+    refetch: listState.refetch,
   }),
   useTrashedSpecs: () => ({
     data: {
@@ -1100,5 +1103,18 @@ describe('模板封装 · 删除前先问一句', () => {
 
     await waitFor(() => expect(mutations.remove).toHaveBeenCalledWith('spec-1'));
     expect(await screen.findByText('已移进回收站：商品图模板')).toBeInTheDocument();
+  });
+
+  it('列表查询失败时展示错误态，而不是显示「还没有模板」', async () => {
+    listState.isError = true;
+    listState.error = new Error('服务未启动');
+    try {
+      renderWorkspace([]);
+      expect(await screen.findByText('模板列表加载失败')).toBeInTheDocument();
+      expect(screen.queryByText('还没有模板')).toBeNull();
+    } finally {
+      listState.isError = false;
+      listState.error = null;
+    }
   });
 });

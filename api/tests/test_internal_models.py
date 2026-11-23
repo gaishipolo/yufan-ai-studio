@@ -139,7 +139,7 @@ def test_replacement_channel_models_are_public_and_declare_inputs() -> None:
 
     ensure_drivers_registered()
     specs = _replacement_specs()
-    assert len(specs) == 3, "替换模型数量变了，请同步核对这份守卫"
+    assert len(specs) == 6, "替换模型数量变了，请同步核对这份守卫"
     public = {
         item.id
         for item in CatalogService(get_model_router()).list_models(Capability.VIDEO).items

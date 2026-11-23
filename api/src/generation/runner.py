@@ -739,7 +739,12 @@ class GenerationRunner:
                 if succeeded is not None:
                     record, result = succeeded
                     try:
-                        output_url = await self._persist(kind, record_id, result.output_url)
+                        output_url = await self._persist(
+                            kind,
+                            record_id,
+                            result.output_url,
+                            persist_required=result.persist_required,
+                        )
                     except OutputNotPersisted as exc:
                         # 落盘失败且没有可用的直链兜底：**不能**标成功。
                         # 标成成功就是「已完成 + 播放 404 + 草稿箱空」三件事同时成立，
@@ -805,7 +810,14 @@ class GenerationRunner:
             await self._schedule_poll(kind, record_id, polls=next_polls, delay=next_delay)
 
     # ------------------------------------------------------------------ 内部
-    async def _persist(self, kind: str, record_id: str, url: str | None) -> str | None:
+    async def _persist(
+        self,
+        kind: str,
+        record_id: str,
+        url: str | None,
+        *,
+        persist_required: bool = False,
+    ) -> str | None:
         """把供应商产物落到自己的存储上（可选钩子 `pipeline.persist_output`）。
 
         没有这个钩子时原样返回 —— 视频那类「供应商直链长期有效」的能力不必落盘。
@@ -820,12 +832,11 @@ class GenerationRunner:
 
         ## 兜底分两种地址，不能一律「退回原地址」
 
-        原地址是公网 `https` 直链时，落盘失败退回它是**可用结果**：片子还在，
-        签名过期前能播。但本地执行器型供应商回的是相对路径
-        （`/api/v1/templates/replacement-runs/<run>/output`），这类地址**没有路由**
-        —— 退回去等于给用户一个 404 的「已完成」，同时入库拿它当对象 key 去存储里
-        找，必然 `GenerationSourceInvalid`，草稿箱空。所以相对地址落盘失败必须
-        **判失败**，让人凭任务号去核对，而不是假装成功。
+        原地址是公网 `https` 直链且未标 `persist_required` 时，落盘失败退回它是
+        **可用结果**：片子还在，签名过期前能播。但本地执行器型供应商回的是
+        相对路径，或去字幕这类供应商回的是会过期的临时 CDN 链接（`persist_required=True`），
+        退回去等于给用户一个即将失效/404 的「已完成」，同时入库在生产环境会被
+        白名单拦下。因此这两种情况落盘失败必须重试并最终**判失败**。
         """
         if not url:
             return url
@@ -834,9 +845,9 @@ class GenerationRunner:
             return url
         persist = pipeline.persist_output
 
-        durable = _is_public_url(url)
-        # 相对地址没有兜底，所以多试两次把对象存储的瞬时抖动挡掉；
-        # 公网直链一次就够（失败时退回直链本身就是可用结果）。
+        durable = _is_public_url(url) and not persist_required
+        # 相对地址与必须搬运的临时直链没有兜底，多试两次把存储/CDN 瞬时抖动挡掉；
+        # 耐久公网直链一次就够（失败时退回直链本身就是可用结果）。
         tries = 1 if durable else 3
         last: BaseException | None = None
         try:
@@ -868,11 +879,13 @@ class GenerationRunner:
             raise
         except Exception as exc:  # noqa: BLE001 - 失败分类见 docstring
             last = exc
-        if durable:
+        if durable and not isinstance(last, OutputNotPersisted):
             logger.error(
                 "产物落盘失败，退回供应商直链 kind=%s id=%s err=%s", kind, record_id, last
             )
             return url
+        if isinstance(last, OutputNotPersisted):
+            raise last
         logger.error("产物落盘失败且无可用直链 kind=%s id=%s err=%s", kind, record_id, last)
         raise OutputNotPersisted(
             "产物未落库：成片没能从运行工作区搬进对象存储，而原地址不是可长期访问的直链。"

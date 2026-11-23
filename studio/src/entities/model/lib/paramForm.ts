@@ -41,6 +41,7 @@ const FIELD_LABELS: Record<string, string> = {
   count: '数量',
   aspectRatio: '比例',
   durationSec: '时长',
+  resolution: '分辨率',
   quality: '质量',
   stylePreset: '风格',
   negativePrompt: '反向提示词',

@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest';
-import { isQueued, queueLabel, upstreamTaskId, type LibTvQueueItem } from './types';
+import {
+  inFlightLibtvIds,
+  isLibtvModelId,
+  isQueued,
+  queueLabel,
+  upstreamTaskId,
+  type LibTvQueueItem,
+} from './types';
 
 function item(patch: Partial<LibTvQueueItem> = {}): LibTvQueueItem {
   return {
@@ -61,5 +68,29 @@ describe('isQueued', () => {
     expect(isQueued(item({ queueReason: 'UNLIMITED_SERIAL' }))).toBe(true);
     expect(isQueued(item({ queueReason: 'UNLIMITED_SERIAL', status: 1 }))).toBe(false);
     expect(isQueued(item())).toBe(false);
+  });
+});
+
+describe('isLibtvModelId & inFlightLibtvIds', () => {
+  it('覆盖全部 LibTV 模型与历史别名，过滤非 LibTV 模型', () => {
+    expect(isLibtvModelId('libtv-wan3.0')).toBe(true);
+    expect(isLibtvModelId('libtv-wan3-replacement')).toBe(true);
+    expect(isLibtvModelId('libtv-seedance-2.5')).toBe(true);
+    expect(isLibtvModelId('libtv-seedance-2.5-flash')).toBe(true);
+    expect(isLibtvModelId('libtv-seedance-2.0')).toBe(true);
+    expect(isLibtvModelId('bailian-wan3-replacement')).toBe(false);
+    expect(isLibtvModelId(null)).toBe(false);
+
+    expect(
+      inFlightLibtvIds([
+        { status: 'running', modelId: 'libtv-seedance-2.5', externalId: 'r1:t1' },
+        { status: 'queued', modelId: 'libtv-seedance-2.5-flash', externalId: 'r2:t2' },
+        { status: 'running', modelId: 'libtv-seedance-2.0', externalId: 'r3:t3' },
+        { status: 'running', modelId: 'libtv-wan3.0', externalId: 'r4:t4' },
+        { status: 'running', modelId: 'libtv-wan3-replacement', externalId: 'r5:t5' },
+        { status: 'completed', modelId: 'libtv-seedance-2.5', externalId: 'r6:t6' },
+        { status: 'running', modelId: 'bailian-wan3-replacement', externalId: 'r7:t7' },
+      ]),
+    ).toEqual(['t1', 't2', 't3', 't4', 't5']);
   });
 });

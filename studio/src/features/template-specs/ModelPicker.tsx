@@ -3,7 +3,7 @@ import {Check, ChevronDown, GripVertical} from 'lucide-react';
 import {cn} from '@/shared/lib/cn';
 import {useDropPlacement} from '@/shared/hooks/useDropPlacement';
 import {MAX_ALLOWED_MODELS} from './specDraft';
-import type {ModelSpec} from '@/entities/model/model/types';
+import {findModelSpec, type ModelSpec} from '@/entities/model/model/types';
 
 /** 浮层大致高度：列表 + 内边距。下方不够就朝上展开。 */
 const POPOVER_MIN_SPACE = 250;
@@ -59,12 +59,15 @@ export function ModelPicker({models, value, onChange}: ModelPickerProps) {
     };
   }, [open]);
 
-  const labelOf = (id: string) => models.find(item => item.id === id)?.label ?? id;
+  const labelOf = (id: string) => findModelSpec(models, id)?.label ?? id;
 
   /* 已勾的排前面（按当前顺序），未勾的按目录顺序接在后面。
      用户展开列表时，「我选了什么、默认是谁」一眼看得见。 */
-  const selected = value.filter(id => models.some(item => item.id === id));
-  const rest = models.filter(item => !selected.includes(item.id));
+  const selected = value.filter(id => Boolean(findModelSpec(models, id)));
+  const selectedSpecs = new Set(
+    selected.map(id => findModelSpec(models, id)?.id).filter((id): id is string => Boolean(id)),
+  );
+  const rest = models.filter(item => !selectedSpecs.has(item.id));
   const rows = [
     ...selected.map(id => ({id, label: labelOf(id), picked: true})),
     ...rest.map(item => ({id: item.id, label: item.label, picked: false})),

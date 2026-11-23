@@ -20,7 +20,7 @@ from db.base import Base
 config = context.config
 
 if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+    fileConfig(config.config_file_name, disable_existing_loggers=False)
 
 settings = get_settings()
 config.set_main_option("sqlalchemy.url", settings.db_url)

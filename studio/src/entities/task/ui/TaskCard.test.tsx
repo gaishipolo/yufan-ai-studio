@@ -103,3 +103,18 @@ describe('TaskCard · 上游排队', () => {
     expect(screen.getByText('48%')).toBeInTheDocument();
   });
 });
+
+it('已完成父卡仍显示去字幕进度和失败原因', () => {
+  const task = {
+    id: 'parent', title: '成片', status: 'completed', model: '测试',
+    coverUrl: '', aspectRatio: '9:16', durationSec: 4, createdAt: '2026-11-20T00:00:00Z',
+    subtitleErase: { id: 'child', status: 'running', progress: 42 },
+  } as VideoTask;
+  const props = { selected: false, onToggleSelect: vi.fn(), onOpen: vi.fn() };
+  const view = render(<TaskCard task={task} {...props} />);
+  expect(screen.getByText('去字幕 42%')).toBeInTheDocument();
+  view.rerender(<TaskCard task={{ ...task, subtitleErase: {
+    id: 'child', status: 'failed', progress: 42, errorMessage: '审核失败',
+  } }} {...props} />);
+  expect(screen.getByText(/去字幕失败/)).toHaveAttribute('title', '审核失败');
+});

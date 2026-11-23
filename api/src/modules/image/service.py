@@ -357,7 +357,12 @@ class ImageService:
             raise InvalidState(
                 f"该次生成已提交到供应商（任务号 {previous_external_id}），可能已产生费用："
                 "请先用任务号核对或找回结果；确认要重新生成时带 "
-                "confirmCharged=true 重试"
+                "confirmCharged=true 重试",
+                details={
+                    "reason": "confirm_charged_required",
+                    "confirmChargedRequired": True,
+                    "externalId": previous_external_id,
+                },
             )
 
         # 清 external_id 之前先留凭证：记录上留一份（页面/DB 可查），

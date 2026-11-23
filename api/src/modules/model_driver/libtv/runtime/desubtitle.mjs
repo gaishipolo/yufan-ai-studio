@@ -94,9 +94,17 @@ try {
   const data = verification.data;
   const token = typeof data === 'string' ? data : (data?.requestToken ?? data?.token);
   if (!token) out({error: '拿不到 client-verification-token，未提交'}, 1);
-  const created = await post('/api/task/generation/create', {...body, riskControl: {requestToken: token}});
+  let created;
+  try {
+    created = await post('/api/task/generation/create', {...body, riskControl: {requestToken: token}});
+  } catch (error) {
+    out({
+      code: 'SUBMISSION_UNKNOWN',
+      error: `去字幕创建请求结果未知（可能已受理或扣费）：${String(error?.message ?? error)}`,
+    }, 1);
+  }
   const taskId = created.data?.taskId ?? created.data?.task_id;
-  if (!taskId) out({error: '上游没有返回 task_id'}, 1);
+  if (!taskId) out({code: 'SUBMISSION_UNKNOWN', error: '上游没有返回 task_id，提交结果未知'}, 1);
   out({taskId: String(taskId), power: created.data?.power ?? quote.data?.power ?? 0, sourceUrl});
 } catch (error) {
   out({error: String(error?.message ?? error)}, 1);

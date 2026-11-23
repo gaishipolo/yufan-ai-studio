@@ -62,6 +62,10 @@ class GenerationProgress:
     # 上游还没开始生成，只是在排队（免费队列名额/限流推迟）。框架据此**顺延墙钟预算**：
     # 排队不是我们的错，不该算进「生成超时」——否则排得越久越容易被判失败。
     queued: bool = False
+    # 某些供应商回传的是会过期的临时 CDN URL（例如去字幕上游 `result_url`），
+    # 虽然也是 https://，但**不能**当成可长期访问的直链兜底：必须搬进平台对象存储，
+    # 搬迁失败应重试并在耗尽后判失败，而不是把临时地址写进库。
+    persist_required: bool = False
 
     def __post_init__(self) -> None:
         """在 provider 边界把状态归一成枚举。
@@ -146,6 +150,9 @@ class ModelSpec:
     #
     # 判据只有这一处：`GET /models` 出参带 `replacement`，模板目录按它筛。
     replacement: bool = False
+    # 向后兼容的历史 id / 旧展示名（例如更名前的 `libtv-wan3-replacement`）。
+    # 只进 `ModelRouter` 的别名表，不作为独立条目出现在公开目录里。
+    aliases: tuple[str, ...] = ()
 
     def defaults(self) -> dict[str, Any]:
         return {
@@ -266,6 +273,13 @@ class ReferenceLimitsCapable(Protocol):
     """能声明参考素材硬性限制的供应商。键是素材类型（`image` / `audio`…）。"""
 
     reference_limits: Mapping[str, ReferenceLimit]
+
+
+@runtime_checkable
+class ModelReferenceLimitsCapable(Protocol):
+    """按模型声明参考素材硬性限制（同一供应商下多款模型上限不同时使用）。"""
+
+    def reference_limits_for(self, model_id: str) -> Mapping[str, ReferenceLimit]: ...
 
 
 @runtime_checkable

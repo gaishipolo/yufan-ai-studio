@@ -1,4 +1,5 @@
 // New workbench bridge. Pinned adapters are vendored in ./vendor (this repository).
+import {readFileSync} from 'node:fs';
 import {readFile, copyFile, stat} from 'node:fs/promises';
 import {pathToFileURL} from 'node:url';
 import path from 'node:path';
@@ -6,6 +7,102 @@ import {randomUUID, createHash} from 'node:crypto';
 
 export function freeQuote(value) {
   return typeof value === 'number' && Number.isFinite(value) && value === 0;
+}
+
+const MODEL_CATALOG = JSON.parse(
+  readFileSync(new URL('../models.json', import.meta.url), 'utf8'),
+);
+
+export const LIBTV_VIDEO_MODELS = Object.freeze(
+  Object.fromEntries(
+    MODEL_CATALOG.map(item => [
+      item.upstreamModel,
+      Object.freeze({
+        model: item.upstreamModel,
+        provider: item.upstreamProvider,
+        family: item.family,
+        resolutions: Object.freeze([...item.resolutions]),
+        defaultResolution: item.defaultResolution,
+        duration: Object.freeze({min: item.duration.min, max: item.duration.max}),
+        mixed2video: Object.freeze({...item.mixed2video}),
+      }),
+    ]),
+  ),
+);
+
+const MODEL_ALIASES = Object.freeze(
+  Object.fromEntries(
+    MODEL_CATALOG.flatMap(item =>
+      [item.id, item.label, ...(item.aliases ?? []), ...(item.bridgeAliases ?? [])]
+        .filter(Boolean)
+        .flatMap(key => [
+          [key, item.upstreamModel],
+          [String(key).toLowerCase().replace(/\s+/g, ''), item.upstreamModel],
+        ]),
+    ),
+  ),
+);
+
+export function resolveLibtvVideoModel(model = 'libtv-wan3.0') {
+  const raw = typeof model === 'string' && model.trim() ? model.trim() : 'libtv-wan3.0';
+  const canonical = MODEL_ALIASES[raw] ?? MODEL_ALIASES[raw.toLowerCase().replace(/\s+/g, '')];
+  if (!canonical) throw Error(`Unsupported LibTV video model: ${raw}`);
+  return LIBTV_VIDEO_MODELS[canonical];
+}
+
+export function resolveModelResolution(modelSpec, value) {
+  if (value === undefined || value === null || String(value).trim() === '') {
+    return modelSpec.defaultResolution;
+  }
+  const needle = String(value).trim().toLowerCase();
+  const matched = modelSpec.resolutions.find(item => item.toLowerCase() === needle);
+  if (!matched) throw Error(`Unsupported resolution "${value}" for ${modelSpec.model}`);
+  return matched;
+}
+
+function binarySwitch(value, field, fallback) {
+  if (value === undefined || value === null) return fallback;
+  if (value !== 0 && value !== 1) throw Error(`Invalid ${field}: expected 0 or 1`);
+  return value;
+}
+
+export function buildLibtvModelParams(modelSpec, spec = {}, meta = {}) {
+  const resolution = resolveModelResolution(modelSpec, spec.resolution ?? meta.resolution);
+  const enableSound = spec.enableSound ?? 'on';
+  if (!['on', 'off'].includes(enableSound)) throw Error(`Invalid enableSound: ${enableSound}`);
+  if (modelSpec.family === 'seedance') {
+    return {
+      resolution,
+      enableSound,
+      enablePortraitCheck: binarySwitch(spec.enablePortraitCheck, 'enablePortraitCheck', 1),
+      search_enabled: binarySwitch(spec.search_enabled ?? spec.searchEnabled, 'search_enabled', 1),
+      autoCompliance: binarySwitch(spec.autoCompliance, 'autoCompliance', 1),
+      portraitGridRetry: 0,
+      infiniteSwitch: 0,
+    };
+  }
+  return {
+    resolution,
+    enableSound,
+    extendPrompt: binarySwitch(spec.extendPrompt, 'extendPrompt', 0),
+    infiniteSwitch: 0,
+  };
+}
+
+export function validateLibtvRequest(request, {infiniteSwitch} = {}) {
+  const p = request?.params;
+  if (!p) throw Error('Unexpected request: missing params');
+  const modelSpec = LIBTV_VIDEO_MODELS[p.model];
+  if (!modelSpec || request.model !== modelSpec.model || request.provider !== modelSpec.provider
+    || request.taskType !== 'video' || !modelSpec.resolutions.includes(p.resolution)
+    || !Number.isInteger(p.duration) || p.duration < modelSpec.duration.min || p.duration > modelSpec.duration.max
+    || p.modeType !== 'mixed2video' || p.count !== 1) {
+    throw Error('Unexpected credit request');
+  }
+  if (infiniteSwitch !== undefined && p.infiniteSwitch !== infiniteSwitch) {
+    throw Error('Unexpected credit request');
+  }
+  return modelSpec;
 }
 
 export function canSubmit(meta) {
@@ -119,9 +216,8 @@ export async function main() {
     const {verifyMixedList} = await moduleAt('libtv/prompt-compiler.mjs');
     verifyMixedList(compiled, request.params.mixedList);
     const p = request.params;
-    if (compiled.prompt !== p.prompt || p.resolution !== '720P' || p.model !== 'wanx3.0'
-      || p.modeType !== 'mixed2video' || p.count !== 1 || p.infiniteSwitch !== 1)
-      throw Error('Unexpected credit request');
+    if (compiled.prompt !== p.prompt) throw Error('Unexpected credit request');
+    validateLibtvRequest(request, {infiniteSwitch: 1});
     /* `disableBenefitTags` 只在「账号当前有 0 积分权益」时才存在。活动到期后没有
        标签可关，此时按普通积分队列提交是正确行为 —— 以前这里硬校验，等于权益
        到期当天积分队列全线不可用（见 billing.mjs 的 accountCreditTags）。 */
@@ -241,13 +337,22 @@ export async function main() {
       media[ref.type].push({...info[ref.file], url:uploads[ref.file].url});
       if (compiled.bindings[index].id !== ref.id || compiled.bindings[index].type !== ref.type) throw Error('Reference order changed');
     }
-    let request = {params:{prompt:compiled.prompt, model:'wanx3.0', modeType:'mixed2video', count:1,
-      ratio:spec.aspect_ratio, resolution:'720P', duration:spec.duration, enableSound:'on', extendPrompt:0,
-      infiniteSwitch:0, textList:[], imageList:[], imageLabelList:[], videoList:[], audioList:[],
+    const modelSpec = resolveLibtvVideoModel(spec.model ?? meta.model ?? 'libtv-wan3.0');
+    const totalRefs = media.image.length + media.video.length + media.audio.length;
+    if (media.image.length > modelSpec.mixed2video.imageMax
+      || media.video.length > modelSpec.mixed2video.videoMax
+      || media.audio.length > modelSpec.mixed2video.audioMax
+      || totalRefs > modelSpec.mixed2video.totalMax) {
+      throw Error(`Reference count exceeds ${modelSpec.model} mixed2video limits`);
+    }
+    const modelParams = buildLibtvModelParams(modelSpec, spec, meta);
+    let request = {params:{prompt:compiled.prompt, model:modelSpec.model, modeType:'mixed2video', count:1,
+      ratio:spec.aspect_ratio, duration:spec.duration, ...modelParams,
+      textList:[], imageList:[], imageLabelList:[], videoList:[], audioList:[],
       imageListV2:media.image, videoListV2:media.video, audioListV2:media.audio, mixedList:mixed},
       metadata:{node_id:'v-6SIVysJx8O',
         project_id: (await currentCanvasProjectId()) ?? '52c9de0f1ad24432927236bd9e3413c9'},
-      provider:'Wan', model:'wanx3.0', taskType:'video', requestId:randomUUID().replaceAll('-','')};
+      provider:modelSpec.provider, model:modelSpec.model, taskType:'video', requestId:randomUUID().replaceAll('-','')};
     const credits = meta.billing_mode === 'credits';
     if (credits) {
       // 加速：关闭该账号当前的 0 积分权益标签，走正常积分队列。
