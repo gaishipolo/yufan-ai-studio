@@ -19,11 +19,13 @@ from modules.model_driver import (
 )
 from modules.model_driver.cli import register as register_cli
 from modules.model_driver.health import check as health_check
-from modules.model_driver.libtv import worker as libtv_worker  # noqa: F401  副作用：libtv.download
-from modules.model_driver.libtv.worker import JOB_DOWNLOAD as LIBTV_DOWNLOAD
 from modules.model_driver.models import KIND_MODEL_DRIVER
 from modules.model_driver.permissions import SPECS
-from modules.model_driver.registry import bootstrap, ensure_drivers_registered
+from modules.model_driver.registry import (
+    bootstrap,
+    ensure_drivers_registered,
+    job_names,
+)
 from modules.model_driver.router import router
 from modules.model_driver.service import ModelGenerationFacade
 
@@ -36,9 +38,9 @@ module = ModuleSpec(
     tags=["模型驱动"],
     description="单文件模型驱动开发与统一生成接口",
     permissions=SPECS,
-    # `libtv.download` 是驱动自己投的下载作业（见 `libtv/worker.py`）。
-    # 声明是义务：漏了这句会启动失败，而不是静默少一个 handler。
-    jobs=(LIBTV_DOWNLOAD,),
+    # 驱动自报的作业（如 `libtv.download`，见 `drivers/libtv.py` 的 EXTRA_JOBS）。
+    # 声明是义务：声明了却没注册 handler 会启动失败，而不是静默少一个 handler。
+    jobs=job_names(),
     periodic=("model_driver.workspace.gc",),
     recovery_kinds=(KIND_MODEL_DRIVER,),
     bootstrap=bootstrap,

@@ -7,6 +7,8 @@ import sys
 from pathlib import Path
 
 import pytest
+from pydantic import AliasChoices
+from pydantic.fields import FieldInfo
 from pydantic_settings import BaseSettings
 
 from core.config import Settings
@@ -184,16 +186,51 @@ def _driver_modules() -> tuple[str, ...]:
     )
 
 
+def _env_aliases(field: FieldInfo) -> tuple[str, ...]:
+    """字段声明的环境变量别名（`validation_alias`）。
+
+    别名是**同一个配置项的另一个名字**：例如 `LibTvSettings.node` 的别名是
+    `NODE_BINARY`（旧名）与 `LIBTV_NODE`（新名）。巡检默认只按「前缀 + 字段名」
+    生成键名，认不出别名 —— 于是别名会被当成「无法被任何 Settings 识别的键」，
+    `.env.example` 里一个合法键反而被判成拼写错误。
+
+    显式声明 `validation_alias` 时 pydantic 不再套 `env_prefix`，所以别名就是
+    环境变量名本身（`NODE_BINARY` 没有 `LIBTV_` 前缀）。
+    """
+    alias = field.validation_alias
+    if isinstance(alias, str):
+        return (alias,)
+    if isinstance(alias, AliasChoices):
+        return tuple(choice for choice in alias.choices if isinstance(choice, str))
+    return ()
+
+
 def _all_yaml_fields() -> list[tuple[str, str, object]]:
-    """(环境变量键名, 字段名, 默认值) —— 全局与驱动私有配置合并。"""
+    """(环境变量键名, 字段名, 默认值) —— 全局与驱动私有配置合并。
+
+    键名不止「前缀 + 字段名」一种形态：字段可以声明**别名**（同一配置项的
+    另一个环境变量名），别名同样是能生效的键，必须一并登记，否则巡检会把
+    合法的键判成「无法识别」。
+    """
     items: list[tuple[str, str, object]] = []
     for name, field in Settings.model_fields.items():
         items.append((name.upper(), name, field.default))
+        items.extend((alias, name, field.default) for alias in _env_aliases(field))
     for cls in _driver_settings():
         prefix = str(cls.model_config.get("env_prefix") or "")
         for name, field in cls.model_fields.items():
             items.append((f"{prefix}{name.upper()}", name, field.default))
-    return items
+            items.extend((alias, name, field.default) for alias in _env_aliases(field))
+    # 同一个键可能从两条路登记（别名前缀与「前缀+字段名」撞车，如 LIBTV_NODE）。
+    # 去重，保留首次出现。
+    seen: set[str] = set()
+    unique: list[tuple[str, str, object]] = []
+    for key, name, default in items:
+        if key in seen:
+            continue
+        seen.add(key)
+        unique.append((key, name, default))
+    return unique
 
 
 def test_every_setting_is_referenced() -> None:

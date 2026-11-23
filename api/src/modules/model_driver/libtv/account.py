@@ -48,7 +48,6 @@ from typing import Any
 
 import httpx
 
-from core.config import get_settings
 from core.exceptions import UpstreamError
 from core.logging import get_logger
 from modules.model_driver.libtv import executor
@@ -198,7 +197,7 @@ async def _fetch_headers(account: str, now: float) -> dict[str, str]:
     )
     try:
         process = await asyncio.create_subprocess_exec(
-            get_settings().node_binary,
+            executor.get_libtv_settings().node,
             "-e",
             script,
             stdout=asyncio.subprocess.PIPE,

@@ -1237,3 +1237,142 @@ def test_error_field_guard_catches_a_raw_exception(tmp_path: Path) -> None:
     )
     problems = _error_field_problems(sample)
     assert len(problems) == 2, f"自检失败：应该抓到 2 处，实际 {problems}"
+
+
+# --------------------------------------------------------------------------- #
+# 供应商隔离（阶段 2 / L2）
+# --------------------------------------------------------------------------- #
+
+#: 供应商名（小写匹配）。公共层的**代码**里出现任何一个 = 硬编码。
+#:
+#: 框架公共层不认识供应商：认识 = 加一个供应商就得改公共文件。
+#: 供应商自己（`drivers/`、`libtv/`）当然认识 —— 那是它的本分。
+#:
+#: `echo` 不在其中：它是通用英文词，当供应商名匹配必然误报；它是「零配置占位
+#: 驱动」，不构成耦合。
+VENDOR_NAME_PARTS: tuple[str, ...] = ("libtv", "bailian", "agnes", "grsai", "百炼")
+
+#: 供应商私有目录：这些目录里的代码**本来就该**认识供应商。
+VENDOR_PRIVATE_DIRS: tuple[str, ...] = (
+    "modules/model_driver/drivers",  # 各供应商的驱动实现
+    "modules/model_driver/libtv",  # LibTV 私有实现
+)
+
+#: 已知命中点的豁免：(文件, 供应商名) → 允许的**最多**条数。
+#:
+#: 清单制豁免，不是「这些文件随便写」：超过上限照样红（新增硬编码立刻暴露），
+#: 降到上限以下也不红（重构不该被守卫拦着）。
+#:
+#: **永久豁免**（是内容，不是耦合）：
+#:   - `image/seed.py`：演示数据里的模型名 —— 产品内容，不是接口耦合。
+#:   - `task/schema.py`：字段说明文案里举供应商的例子（设计文档 B5 同类：
+#:     文档式耦合，不是代码耦合）。
+#:   - `task/service.py`：对外展示的模型/服务名（如「LibTV · 智能去字幕」）。
+#:
+#: **临时豁免**（真耦合，带退出条件）：
+#:   - `model_driver/cli.py`：CLI 命令名与话术（退出条件：命令改为由驱动自报，
+#:     或随阶段 3 的 `registry.refresh()` 一起迁）。
+#:   - `model_driver/generic_inputs.py`：直接调供应商私有的引用解析函数
+#:     （退出条件：通用输入层不再认识供应商私有函数）。
+#:   - `model_driver/receipts.py`：历史回执没有 `provider` 字段时的默认归属
+#:     （退出条件：存量回执全部带 `provider` 后删掉这个兜底）。
+KNOWN_VENDOR_REFERENCES: dict[tuple[str, str], int] = {
+    ("modules/model_driver/cli.py", "libtv"): 12,
+    ("modules/model_driver/cli.py", "bailian"): 3,
+    ("modules/model_driver/generic_inputs.py", "libtv"): 3,
+    ("modules/model_driver/receipts.py", "bailian"): 1,
+    ("modules/image/seed.py", "agnes"): 2,
+    ("modules/task/schema.py", "libtv"): 2,
+    ("modules/task/service.py", "libtv"): 2,
+}
+
+
+def _vendor_hits(path: Path) -> list[tuple[str, int, str]]:
+    """(供应商名, 行号, 命中摘要) —— 代码级的供应商名出现点。
+
+    **注释与 docstring 不算**：注释里提到某个供应商是「文档式耦合」（设计文档
+    B5 明确豁免），docstring 里引用旧写法是在解释「为什么不该那么写」。
+    AST 天然不含注释，只要把 docstring 排除掉即可。
+    """
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    skip = _docstring_nodes(tree)
+    hits: list[tuple[str, int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Constant) and isinstance(node.value, str):
+            if id(node) in skip:
+                continue
+            text = node.value
+        elif isinstance(node, ast.Name):
+            text = node.id
+        elif isinstance(node, ast.Attribute):
+            text = node.attr
+        elif isinstance(node, ast.arg):
+            text = node.arg
+        elif isinstance(node, ast.keyword):
+            if not node.arg:
+                continue
+            text = node.arg
+        else:
+            continue
+        for vendor in VENDOR_NAME_PARTS:
+            if vendor.lower() in text.lower():
+                hits.append((vendor, node.lineno, text[:60]))
+                break
+    return hits
+
+
+def test_public_code_does_not_hardcode_vendor_names() -> None:
+    """公共层的代码里不许出现供应商名（阶段 2 / L2 的回归守卫）。
+
+    阶段 2 消掉的 B1–B4 就是这条守卫要钉住的东西：`__init__.py` 里写死的
+    作业名、`schema.py` / `router.py` 里写死的供应商端点与出参、
+    `core/config.py` 里带供应商别名的字段 —— 公共层一旦重新认识供应商，
+    「加一个供应商不用改公共文件」就废了。
+    """
+    problems: list[str] = []
+    scanned = 0
+    for path in sorted(_python_files(SRC)):
+        rel = path.relative_to(SRC).as_posix()
+        if any(rel.startswith(prefix) for prefix in VENDOR_PRIVATE_DIRS):
+            continue
+        scanned += 1
+        hits = _vendor_hits(path)
+        for vendor in sorted({hit[0] for hit in hits}):
+            vendor_hits = [hit for hit in hits if hit[0] == vendor]
+            limit = KNOWN_VENDOR_REFERENCES.get((rel, vendor), 0)
+            for _vendor, lineno, text in vendor_hits[limit:]:
+                problems.append(
+                    f"{rel}:{lineno}: 公共层出现供应商名 {vendor}（{text!r}）"
+                )
+
+    assert scanned >= 200, (
+        f"只扫到 {scanned} 个公共文件（预期 ≥200）：扫描口径坏了，这条守卫会永远绿"
+    )
+    assert not problems, (
+        "公共层硬编码了供应商名（框架不该认识供应商）：\n"
+        + "\n".join(f"  - {p}" for p in problems)
+    )
+
+
+def test_vendor_guard_catches_a_violation(tmp_path: Path) -> None:
+    """守卫自身的自检：故意违规的样例必须被抓出来。
+
+    口径退化的守卫最危险 —— 它会永远绿。「扫得到供应商名」这件事本身必须被
+    验证，否则上面那条守卫可能在扫空气。
+    """
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "'''模块 docstring 里提 libtv 也不算'''\n"
+        "NAME = 'libtv'\n"
+        "\n"
+        "\n"
+        "def build():\n"
+        "    '''函数 docstring 里提 libtv 也不算'''\n"
+        "    return LibTvSettings()\n"
+        "\n"
+        "\n"
+        "# 注释里提 libtv 不算（文档式耦合豁免）\n",
+        encoding="utf-8",
+    )
+    hits = _vendor_hits(sample)
+    assert len(hits) == 2, f"自检失败：应抓到 2 处（常量 + 名称），实际 {hits}"

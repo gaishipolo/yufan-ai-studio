@@ -44,15 +44,22 @@ _cache: dict[tuple[type, int, int, tuple[tuple[str, str], ...]], object] = {}
 _MAX_CACHE_ENTRIES = 32
 
 
-def _env_snapshot(env_prefix: str) -> tuple[tuple[str, str], ...]:
+def _env_snapshot(env_prefixes: tuple[str, ...]) -> tuple[tuple[str, str], ...]:
     """只取本供应商前缀的环境变量。
 
     排序保证指纹稳定 —— 否则 os.environ 的迭代顺序变化会误判为配置变更。
     取全量里与本供应商相关的部分：容器注入的 key 改了也要能感知到。
+
+    前缀可以有多个：供应商的参数偶尔带**旧名**（不带本供应商前缀），
+    那个名字也要进快照，否则改它不生效。
     """
-    upper = env_prefix.upper()
+    uppers = tuple(prefix.upper() for prefix in env_prefixes)
     return tuple(
-        sorted((k, v) for k, v in os.environ.items() if k.upper().startswith(upper))
+        sorted(
+            (k, v)
+            for k, v in os.environ.items()
+            if any(k.upper().startswith(u) for u in uppers)
+        )
     )
 
 
@@ -65,18 +72,25 @@ def _file_fingerprint() -> tuple[int, int]:
     return (stat.st_mtime_ns, stat.st_size)
 
 
-def vendor_settings(cls: type[T], *, env_prefix: str) -> Callable[[], T]:
+def vendor_settings(
+    cls: type[T], *, env_prefix: str | tuple[str, ...]
+) -> Callable[[], T]:
     """生成一个「按 mtime 指纹缓存」的 settings getter。
 
     用法（驱动侧）：
         get_grsai_settings = vendor_settings(GrsaiSettings, env_prefix="GRSAI")
+        # 参数带旧名时把旧名也列进来（改它要能立刻生效）：
+        get_libtv_settings = vendor_settings(
+            LibTvSettings, env_prefix=("LIBTV", "NODE_BINARY")
+        )
 
     返回的 getter 保持无参调用，与原 `@lru_cache` 版签名一致。
     """
+    prefixes = (env_prefix,) if isinstance(env_prefix, str) else tuple(env_prefix)
 
     def getter() -> T:
         mtime, size = _file_fingerprint()
-        env_snapshot = _env_snapshot(env_prefix)
+        env_snapshot = _env_snapshot(prefixes)
         key = (cls, mtime, size, env_snapshot)
         cached = _cache.get(key)
         if cached is not None:

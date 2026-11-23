@@ -34,6 +34,8 @@ from infra.queue.base import Job
 from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.libtv import account as libtv_account
 from modules.model_driver.libtv import executor, process
+from modules.model_driver.libtv import worker as libtv_worker
+from modules.model_driver.libtv.executor import LibTvSettings  # noqa: F401  暴露给配置巡检
 from modules.model_driver.libtv.models import (
     DEFAULT_LIBTV_MODEL_ID,
     LIBTV_PROFILES,
@@ -41,8 +43,19 @@ from modules.model_driver.libtv.models import (
     resolve_libtv_profile,
 )
 from modules.model_driver.libtv.reconcile import reconcile as reconcile_state
+from modules.model_driver.libtv.routes import router as libtv_routes
+from modules.model_driver.libtv.schema import (
+    LibTvAccountOut,
+    LibTvAssetOut,
+    LibTvBenefitOut,
+    LibTvConsumptionItemOut,
+    LibTvConsumptionOut,
+    LibTvProgressIn,
+    LibTvProgressOut,
+    LibTvQueueItemOut,
+)
 from modules.model_driver.libtv.state import LibTVState
-from modules.model_driver.spec import DriverMeta
+from modules.model_driver.spec import DriverMeta, JobSpec
 
 META = DriverMeta(
     label="LibTV",
@@ -54,6 +67,31 @@ META = DriverMeta(
 MODEL_ID = DEFAULT_LIBTV_MODEL_ID
 
 logger = get_logger(__name__)
+
+# --------------------------------------------------------------------- 自描述
+# 框架的公共层不认识 LibTV：路由、作业、出参都归供应商自己，公共层只负责
+# 收集与装配。registry 扫描 `drivers/` 时读这三个模块级常量，然后：
+#   - EXTRA_ROUTES  → 挂到模块 router 上（对外仍是 /model-driver/libtv/...）
+#   - EXTRA_JOBS    → 汇总成模块声明的作业清单（核对「声明了就有 handler」）
+#   - EXTRA_SCHEMAS → 供应商专属出参（框架公共出参不在这里）
+# 于是「加一个供应商」不需要改公共文件一行。
+EXTRA_ROUTES = (libtv_routes,)
+EXTRA_JOBS = (
+    JobSpec(
+        name=libtv_worker.JOB_DOWNLOAD,
+        description="LibTV 成片下载：把上游成片拉回平台对象存储",
+    ),
+)
+EXTRA_SCHEMAS = (
+    LibTvAccountOut,
+    LibTvAssetOut,
+    LibTvBenefitOut,
+    LibTvConsumptionItemOut,
+    LibTvConsumptionOut,
+    LibTvProgressIn,
+    LibTvProgressOut,
+    LibTvQueueItemOut,
+)
 
 #: 去字幕模型（上游 `volcano-subtitle-eraser`）：源视频来自父任务，不新建档案
 DESUBTITLE_MODEL = "libtv-subtitle-eraser"

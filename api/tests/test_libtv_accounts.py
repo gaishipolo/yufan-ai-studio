@@ -29,12 +29,18 @@ CREDITS = "http://127.0.0.1:9412"
 
 
 def _settings(
-    *, browser_url: str = FREE, browser_urls: str = "", credits_browser_url: str = ""
+    *,
+    browser_url: str = FREE,
+    browser_urls: str = "",
+    credits_browser_url: str = "",
+    node: str = "node",
 ) -> SimpleNamespace:
     return SimpleNamespace(
         browser_url=browser_url,
         browser_urls=browser_urls,
         credits_browser_url=credits_browser_url,
+        # node 随设置一起搬进了供应商侧（以前在全局配置里）。
+        node=node,
     )
 
 

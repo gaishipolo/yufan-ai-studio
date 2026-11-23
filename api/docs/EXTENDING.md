@@ -614,6 +614,16 @@ class VolcengineSettings(DriverSettings):
 静默 `continue` 会让阈值回落到 90 秒，正好重新打开「巡检误伤在途任务」的窗口。
 一条声明都没有时巡检**跳过本轮并打 error**，绝不拿猜出来的阈值去判死任务。
 
+**如果这个供应商需要自己的端点、作业或出参**
+
+框架公共层不认识供应商，所以这些**由驱动文件自己声明**（`EXTRA_ROUTES` /
+`EXTRA_JOBS` / `EXTRA_SCHEMAS`）—— 同样不用改公共文件一行。写法与纪律见
+`docs/MODEL_DRIVER_STANDARD.md` §1.1：子 router 自带路径前缀且**不要带 tags**
+（标签由父 router 统一给）；作业名必须与 `workers.register_handler(...)` 里的是
+同一个（声明了却没注册 handler → **启动就失败**，不是静默少一个消费者）；
+三个常量必须是 tuple，装配不合法 → **启动失败**（端点凭空消失只会让前端看到
+一个没头没脑的 404）。
+
 **③ 完成**
 
 - `app models` 会列出新模型

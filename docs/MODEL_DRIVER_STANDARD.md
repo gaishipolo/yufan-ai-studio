@@ -31,7 +31,34 @@ drivers/<name>.py  ──自动扫描──▶ ModelRouter ──▶ generation.
 | 起步模板 | `cp drivers/_template.py drivers/<name>.py`，只改 `META` / `MODELS` / `name` / 三个方法体 |
 | 必须导出 | `Driver = <实现类>`（类、工厂函数、已实例化对象都行） |
 | 可选导出 | `META = DriverMeta(label=..., description=..., version=..., author=...)` |
+| 可选导出 | `EXTRA_ROUTES = (APIRouter, ...)` —— 供应商专属端点（见 §1.1） |
+| 可选导出 | `EXTRA_JOBS = (JobSpec(...), ...)` —— 供应商专属异步作业（见 §1.1） |
+| 可选导出 | `EXTRA_SCHEMAS = (BaseModel 子类, ...)` —— 供应商专属出参（见 §1.1） |
 | 生效方式 | 重启进程即自动载入；**不做热重载**，避免已提交任务的 `external_id` 指向换掉的驱动 |
+
+### 1.1 供应商专属的接口面：自己声明（2026-11-23）
+
+公共层不认识供应商：加一个供应商**不该改公共文件一行**。所以供应商自己的端点、
+作业、出参由驱动文件自己声明：
+
+```python
+from fastapi import APIRouter
+from modules.model_driver.spec import JobSpec
+
+router = APIRouter(prefix="/my_vendor")          # 自己带路径前缀，不要带 tags
+EXTRA_ROUTES = (router,)
+EXTRA_JOBS = (JobSpec(name="my_vendor.download"),)
+EXTRA_SCHEMAS = (MyAccountOut,)
+```
+
+- `EXTRA_ROUTES`：框架挂到模块路由上，对外是 `/model-driver/my_vendor/...`。
+  子 router **不要带 tags** —— 标签由父 router 统一给，否则同一个接口在
+  OpenAPI 里会出现两个重复的分组。
+- `EXTRA_JOBS`：作业名必须与 `workers.register_handler(...)` 里用的是同一个；
+  **声明了却没注册 handler，启动就失败**（不是静默少一个消费者）。
+- `EXTRA_SCHEMAS`：供应商专属出参；公共出参不在这里 —— 那是框架自己的口径。
+
+三个常量都必须是 tuple，元素类型不对 → **启动失败**（`spec.ExtrasError`）。
 
 ## 2. 必须实现的成员
 
@@ -308,6 +335,11 @@ models 非空且归属一致、三个方法可调用。
 错误会出现在 `GET /model-driver/drivers` 的 `errors`、
 `app drivers check`（exit 1）与 `app doctor` 的 `model_driver.drivers` 条目里。
 模型 id 与别的驱动撞车、或同名驱动模型清单不同，同样只红那一条。
+
+**例外：自报内容不合法 = 启动失败**。`EXTRA_*`（§1.1）装配失败会抛
+`spec.ExtrasError` 直接让服务起不来，**不会**被当成「这个驱动加载失败」吞掉。
+两者后果不同：加载失败只影响一个供应商；装配失败意味着端点凭空消失 ——
+前端只会看到一个没头没脑的 404，比启动失败难查得多。
 
 **为什么不另起注册表**：`generation.runner.handle_submit()` 里是
 `get_model_router().provider_for(record.model)`，这是整条编排链唯一找供应商的地方。

@@ -20,9 +20,8 @@ from urllib.parse import urlsplit
 from urllib.request import urlopen
 
 import httpx
-from pydantic import BaseModel
+from pydantic import AliasChoices, BaseModel, Field, field_validator
 
-from core.config import get_settings
 from core.exceptions import BadRequest, UpstreamError
 from core.logging import get_logger
 from infra.archive import get_archive_storage, run_dir
@@ -53,8 +52,26 @@ class LibTvSettings(DriverSettings):
 
     model_config = driver_config("LIBTV")
 
-    # node 可执行文件**不在这里**：它是运行期依赖，归 `core.config.node_binary`
-    # （`LIBTV_NODE` 已注册为该字段的别名，旧部署照旧生效）。
+    # node 可执行文件：只有 LibTV 的执行器需要它（适配器是 .mjs，跑在 node 上）。
+    # 以前它挂在全局配置里（`NODE_BINARY`，旧名 `LIBTV_NODE`）——那是把供应商
+    # 参数塞进了公共配置层。现在归供应商自己，两个名字都继续生效，
+    # 部署侧不用改 `.env`。
+    node: str = Field(
+        "node", validation_alias=AliasChoices("NODE_BINARY", "LIBTV_NODE")
+    )
+
+    @field_validator("node", mode="before")
+    @classmethod
+    def _empty_node_means_default(cls, v: object) -> object:
+        """`NODE_BINARY=`（写成空）等同于没配。
+
+        空串不是「走 PATH」而是「找不到可执行文件」：`shutil.which("")` 返回 None，
+        自检会报 `PATH 里找不到 ''`，而配置看上去是配了。
+        """
+        if isinstance(v, str) and not v.strip():
+            return "node"
+        return v
+
     # 适配器从已登录的本地浏览器读 Cookie；显式下发，避免依赖 API 进程继承的环境变量。
     #
     # 单账号时代的键，**仍然有效**：既是「免费队列账号池」的默认值，也是所有
@@ -74,7 +91,9 @@ class LibTvSettings(DriverSettings):
 # 对 libtv 尤其实际：`browser_urls` 是**免费队列账号池**、`credits_browser_url`
 # 是**积分账号**。账号掉线要换账号时，改 `.env` 就能立刻生效，不必重启服务 ——
 # 而「换账号」正是为了绕开 `EXECUTOR_BUSY`（排队信号）卡住的情况。
-get_libtv_settings = vendor_settings(LibTvSettings, env_prefix="LIBTV")
+#: `NODE_BINARY` 也纳进快照：它是 node 的旧名（别名），改它要能立刻生效，
+#: 而它不带 `LIBTV_` 前缀，只按前缀扫环境变量会漏掉。
+get_libtv_settings = vendor_settings(LibTvSettings, env_prefix=("LIBTV", "NODE_BINARY"))
 
 
 def _normalize_url(value: str) -> str:
@@ -175,7 +194,7 @@ async def submit_desubtitle(
     process: asyncio.subprocess.Process | None = None
     try:
         process = await asyncio.create_subprocess_exec(
-            get_settings().node_binary,
+            get_libtv_settings().node,
             str(script),
             payload,
             stdout=asyncio.subprocess.PIPE,
@@ -409,7 +428,7 @@ async def _execute_stage(run_id: str, stage: str) -> ExecutorResult:
             "version": LIBTV_PROCESS_PROTOCOL,
             "stage": stage,
             "run": str(path),
-            "node": get_settings().node_binary,
+            "node": get_libtv_settings().node,
             "result": str(resultfile),
             # 账号也走参数包：监督进程要用它挑账号级串行锁，桥接层要用它连 CDP。
             # 只给环境变量不够——锁名与「连哪个浏览器」必须是同一个来源。

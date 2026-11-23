@@ -616,6 +616,23 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 3. `core/config.py:80-82` 的 `node` 迁进 libtv Settings
 4. 公共文件的供应商名出现次数 → 0（可用一条守卫测试钉住，见 §5）
 
+**进度（2026-11-23）**：✅ 已完成
+
+| 项 | 状态 | 实际 |
+|---|---|---|
+| `registry` 收集并挂载 `EXTRA_*` | ✅ | `EXTRA_ROUTES` / `EXTRA_JOBS` / `EXTRA_SCHEMAS` 由驱动文件自己声明；**装配失败 = 启动失败**（`spec.ExtrasError`），不记成「这个驱动加载失败」—— 端点凭空消失只会让前端看到一个没头没脑的 404。挂载按**对象身份**去重（`include_router` 是复制路由，挂两次就是同一批端点出现两遍） |
+| 删公共层硬编码 | ✅ | `__init__.py`（作业改 `job_names()`）、`router.py`（3 个端点 → `libtv/routes.py`）、`schema.py`（8 个出参 → `libtv/schema.py`） |
+| `node` 迁进 libtv Settings | ✅ | `core/config.py` 删掉 `node_binary`；`LibTvSettings.node` 接管，`NODE_BINARY`（旧名）与 `LIBTV_NODE`（新名）**都继续生效** —— 部署侧不用改 `.env`。`kit/settings.py` 的环境快照支持**多前缀**，否则改旧名不会被感知（不生效） |
+| 供应商名守卫 | ✅ | `tests/test_architecture.py` 加 AST 级守卫：**代码级 0 容忍**，注释类豁免（B5）；清单制豁免 + 守卫自检（口径退化的守卫会永远绿，比没有守卫更糟） |
+
+**接口面零变化**：重构前后逐路径比对 OpenAPI —— 路径 / tags / operationId / schema **全等**，
+`api/docs/openapi.json` 无需重新生成，前端不用改一行。
+
+> ⚠️ **守卫是清单制豁免，不是「这些文件随便写」**：公共层还剩 3 处**待迁移**耦合
+> （`cli.py` 的供应商命令与话术、`generic_inputs.py` 直接调供应商私有函数、
+> `receipts.py` 的历史兜底默认值）与 3 处**内容**（演示数据里的模型名、字段说明文案、
+> 对外展示的服务名 —— 那不是接口耦合，永久豁免）。**清单外的任何新增出现点一律红。**
+
 ### 阶段 3：L3（动态生效）
 
 1. `kit/settings.py` 的 mtime 指纹缓存上线，四个驱动的 `lru_cache` getter 全部切过去
@@ -919,11 +936,19 @@ api/tests/test_driver_kit_media.py                      ← 分类 + 通道选�
 api/tests/test_driver_kit_settings.py
 api/tests/test_driver_submission_guard.py               ← DB 回执 / 二次计费防护
 api/tests/test_driver_refresh.py
+api/src/modules/model_driver/libtv/routes.py            ← 供应商专属端点（阶段 2）
+api/src/modules/model_driver/libtv/schema.py            ← 供应商专属出参（阶段 2）
+api/tests/test_model_driver_self_description.py         ← 自描述机制（阶段 2）
 ```
 
 ### 修改（公共文件 —— 共 10 处，其中 3 处由 D6 引入）
 
 > 此清单需在每次评审时复查；**不能假定「改完不再增长」** —— D5/D6 与通道抽象都是在评审中新增的公共文件改动。
+
+**实际状态（2026-11-23）**：阶段 2 已改前 5 处（`registry.py` / `__init__.py` / `router.py` /
+`schema.py` / `core/config.py`）；后 5 处中 `db/migrations.py` / `db/registry.py` 由阶段 0.5
+完成，`cli.py` / `infra/archive/runs.py` 属阶段 0.5 的话术更新，`generation/runner.py`
+**原则不改**。
 
 ```
 api/src/modules/model_driver/registry.py     ← 收集 EXTRA_*、refresh()
@@ -947,4 +972,9 @@ api/src/modules/model_driver/drivers/{bailian,grsai,grsai_video,agnes,agnes_vide
 
 ---
 
-> **本文档只是设计稿，未改动任何生产代码。** 评审通过后按阶段 0 → 0.5 → 1 → 2 → 3 实施，每阶段独立可发布；其中**阶段 0.5 可独立上线**，它修的是现网的二次计费风险。
+> **实施状态（2026-11-23）**：阶段 0 / 0.5 / 1 / 2 已实施，各阶段的实际改动见对应小节的
+> 「进度」记录；阶段 3（L3 动态生效）未开始 —— 每阶段独立可发布，其中**阶段 0.5 可独立上线**，
+> 它修的是现网的二次计费风险。
+>
+> **「预计变更文件清单」是设计时的预估**：实际改动以各阶段的进度记录为准 —— 评审中新增的
+> 公共文件改动不在原清单里（§9 已提醒过这点）。

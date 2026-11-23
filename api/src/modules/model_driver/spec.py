@@ -44,6 +44,30 @@ Driver = MyDriver
   `poll` 不会被调用，`supports_poll=False`。同步会占住 worker 槽位，是厂商
   事实约束，不是框架缺陷。
 
+## 供应商专属的接口面（自描述）
+
+公共层不认识供应商，所以供应商自己的**端点、作业、出参**由驱动文件自己声明：
+
+```python
+from fastapi import APIRouter
+from modules.model_driver.spec import JobSpec
+
+router = APIRouter(prefix="/my_vendor")          # 自己带路径前缀，不要带 tags
+EXTRA_ROUTES = (router,)
+EXTRA_JOBS = (JobSpec(name="my_vendor.download"),)
+EXTRA_SCHEMAS = (MyAccountOut,)
+```
+
+- `EXTRA_ROUTES`：供应商专属端点。框架挂到模块路由上（对外仍是
+  `/model-driver/my_vendor/...`）。子 router **不要带 tags** —— 标签由父 router
+  统一给，否则同一个接口在 OpenAPI 里会出现两个重复的分组。
+- `EXTRA_JOBS`：供应商专属的异步作业。名字必须与 `workers.register_handler(...)`
+  里用的是同一个；**声明了却没注册 handler，启动就失败**（不是静默少一个消费者）。
+- `EXTRA_SCHEMAS`：供应商专属出参。公共出参不在这里 —— 那是框架自己的口径。
+
+三个常量都必须是 tuple，元素类型不对 → **启动失败**（`ExtrasError`）。装配失败
+不能被当成「这个驱动加载失败」吞掉：端点凭空消失只会让前端看到一个没头没脑的 404。
+
 ## 校验口径
 
 加载期逐项检查，不合规的文件**只红自己这一条**，不会让服务起不来；
@@ -68,9 +92,11 @@ from infra.ai.base import (
 __all__ = [
     "Capability",
     "DriverMeta",
+    "ExtrasError",
     "GenerationProgress",
     "GenerationRequest",
     "GenerationState",
+    "JobSpec",
     "ModelProvider",
     "ModelSpec",
     "SubmitResult",
@@ -88,7 +114,29 @@ class DriverMeta:
     author: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class JobSpec:
+    """驱动自报的作业（供应商专属的异步工作）。
+
+    框架按名字核对「声明了就必须有 handler」：声明了却没注册 handler，
+    启动就失败，而不是静默少一个消费者。名字必须与
+    `workers.register_handler(...)` 里用的是同一个。
+    """
+
+    name: str
+    description: str = ""
+
+
 DEFAULT_META = DriverMeta()
+
+
+class ExtrasError(RuntimeError):
+    """驱动自报的接口面不合法。
+
+    与「驱动文件本身加载失败」分开：后者按既有纪律只红自己这一条
+    （第三方驱动文件不该让整个服务起不来），而**接口面装配失败必须启动失败**
+    —— 端点凭空消失，前端只会看到一个没头没脑的 404。
+    """
 
 _METHODS = ("submit", "poll", "cancel")
 
