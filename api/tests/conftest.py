@@ -30,6 +30,9 @@ os.environ.update(
         # （列表分页、馈送、批量删除），限着会让它们莫名其妙拿 429。
         # 这条闸门由 `test_task_in_flight_cap.py` 自己把值调小后测。
         "TASK_MAX_IN_FLIGHT_PER_USER": "0",
+        # 生图的同一道闸门（T37），理由同上：既有生图用例会连着造好几条记录，
+        # 限着会让它们莫名其妙拿 429。由 `test_image_in_flight_cap.py` 自己测。
+        "IMAGE_MAX_IN_FLIGHT_PER_USER": "0",
         # 周期任务会在后台每 N 秒跑一次，测试里关掉，避免「断言时刚好被巡检动过」
         "SCHEDULER_ENABLED": "false",
         "QUEUE_DRIVER": "memory",

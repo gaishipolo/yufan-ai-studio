@@ -14,8 +14,15 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
+from core.config import get_settings
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Forbidden, InvalidState, UpstreamError
+from core.exceptions import (
+    BadRequest,
+    Forbidden,
+    InvalidState,
+    RateLimited,
+    UpstreamError,
+)
 from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs, inject_text_refs
 from core.logging import get_logger
@@ -23,7 +30,7 @@ from core.param_schema import resolve_params
 from core.response import Page, PageParams
 from db.repository import BaseRepository
 from generation.runner import get_runner
-from generation.spec import STATUS_FAILED, STATUS_QUEUED
+from generation.spec import STATUS_FAILED, STATUS_QUEUED, STATUS_RUNNING
 from infra import get_model_router
 from infra.ai.base import Capability, ModelSpec
 from infra.artifacts import artifact_urls
@@ -166,12 +173,44 @@ class ImageService:
             items.append(item)
         return items
 
+    async def _assert_in_flight_room(self, actor: CurrentUser) -> None:
+        """一个人攒几十条生图，占的是**共享上游**的位次，而他并没有因此更快。
+
+        与视频任务同一口径（`modules/task/service.py::_assert_in_flight_room`）：
+        判据是 queued + running 的条数，上限来自 `IMAGE_MAX_IN_FLIGHT_PER_USER`，
+        `0` = 不限。
+
+        为什么频率限流不够：`image.generate` 每分钟 60 次，拦得住「手抖连点」，
+        拦不住「一分钟点 60 次」。而每条生图都要占供应商账号的上游排队位次
+        （账号是全团队共享的）——挂 60 条的人把别人的生图排到自己后面，
+        自己也一样在队尾。
+
+        注意这里压的**不是** worker 槽位：等出图不占槽位，槽位只在提交 /
+        下载那几秒被占。所以「调大并发」解决不了这件事。
+        """
+        limit = get_settings().image_max_in_flight_per_user
+        if limit <= 0:
+            return
+        stmt = select(ImageJob).where(
+            ImageJob.owner_id == actor.id,
+            ImageJob.status.in_((STATUS_QUEUED, STATUS_RUNNING)),
+        )
+        in_flight = await self.repo.count(stmt)
+        if in_flight >= limit:
+            raise RateLimited(
+                f"你已有 {in_flight} 条生图在排队或生成中（上限 {limit} 条）："
+                "等其中几条跑完再提交，否则会挤占别人的排队时间"
+            )
+
     async def generate(self, actor: CurrentUser, payload: GenerateImageIn) -> ImageJob:
         """建记录并投递到生成队列，接口立即返回 `queued`。
 
         模型**在受理时就校验**，而不是等异步任务跑起来才发现写错：
         供应商没配置、模型名写错这类问题应当是 400，不是「提交成功但任务失败」。
         """
+        # 在途上限放在最前面：这一步不依赖 payload，被挡住时不该先花时间做
+        # 模型解析与参考图解析（那是「提交被拒」时最不该付的代价）。
+        await self._assert_in_flight_room(actor)
         router = get_model_router()
         model_id = payload.model or router.default_model(Capability.IMAGE)
         spec = router.resolve(model_id)
