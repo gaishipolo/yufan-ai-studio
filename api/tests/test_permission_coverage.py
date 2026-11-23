@@ -102,6 +102,14 @@ def _scan_module(path: Path) -> _ModuleInfo:
         elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
             for alias in node.names:
                 info.imports[alias.asname or alias.name] = (node.module, alias.name)
+        elif isinstance(node, ast.Import):
+            # `import a.b.c as x` 绑定的是 `x`；`import a.b.c` 绑定的是 `a`
+            for alias in node.names:
+                if alias.asname:
+                    info.imports[alias.asname] = (alias.name, alias.name)
+                else:
+                    head = alias.name.split(".")[0]
+                    info.imports[head] = (head, head)
     return info
 
 
@@ -138,8 +146,50 @@ def _resolve(
     return None
 
 
+def _resolve_module(
+    name: str,
+    dotted: str,
+    modules: dict[str, _ModuleInfo],
+    seen: frozenset[str] = frozenset(),
+) -> str | None:
+    """把一个名字解析成**模块**的 dotted 名（`mod.CONST` 里的 `mod`）。
+
+    常量解析（`_resolve`）只认「名字本身就是一个字符串常量」，所以
+    `from modules.library import access` 之后的 `access.PERM_DELETE_ANY`
+    会被漏掉——`access` 不是常量，它是一个子模块。
+
+    这里补上那一段：`access` → `modules.library.access`，拿到模块后再去它
+    的顶层常量里找 `PERM_DELETE_ANY`。
+    """
+    key = f"{dotted}:{name}"
+    if key in seen or dotted not in modules:
+        return None
+    seen = seen | {key}
+    info = modules[dotted]
+    if name in info.imports:
+        target, original = info.imports[name]
+        # 子模块优先：`from modules.library import access` → modules.library.access
+        # （target 本身是包 `modules.library`，先试 child 才是对的）
+        child = f"{target}.{original}"
+        if child in modules:
+            return child
+        # `import a.b.c as x` → target 本身就是模块
+        if target in modules:
+            return target
+        return _resolve_module(original, target, modules, seen)
+    # 本模块内的子模块（相对导入 `from . import access`）
+    child = f"{dotted}.{name}"
+    if child in modules:
+        return child
+    return None
+
+
 def _strings(node: ast.expr, dotted: str, modules: dict[str, _ModuleInfo]) -> Iterator[str]:
-    """从一个表达式里榨出所有可能的权限码（字符串常量 / 可解析的常量名 / 元组字面量）。"""
+    """从一个表达式里榨出所有可能的权限码。
+
+    三种形态：字符串常量 / 可解析的常量名 / 元组字面量，
+    另加**跨模块属性**（`access.PERM_DELETE_ANY`）。
+    """
     if isinstance(node, ast.Constant):
         if isinstance(node.value, str):
             yield node.value
@@ -147,6 +197,13 @@ def _strings(node: ast.expr, dotted: str, modules: dict[str, _ModuleInfo]) -> It
         resolved = _resolve(node.id, dotted, modules)
         if resolved is not None:
             yield resolved
+    elif isinstance(node, ast.Attribute):
+        # `access.PERM_DELETE_ANY`：`access` 是子模块，常量在它自己的顶层
+        if isinstance(node.value, ast.Name):
+            module = _resolve_module(node.value.id, dotted, modules)
+            info = modules.get(module) if module else None
+            if info is not None and node.attr in info.consts:
+                yield info.consts[node.attr]
     elif isinstance(node, (ast.Tuple, ast.List, ast.Set)):
         for element in node.elts:
             yield from _strings(element, dotted, modules)
@@ -407,4 +464,106 @@ def test_page_exemptions_have_no_stale_entries() -> None:
     )
     assert not stale, (
         f"这些权限码现在已经有页面声明了，请从豁免表删掉 -> {stale}"
+    )
+
+
+# --------------------------------------------------------------------------- #
+# 服务层常量写法（`access.PERM_DELETE_ANY`）的覆盖保障
+#
+# 背景：守卫的 `_ENFORCEMENT_CALLS` 一直包含 `has`，所以 `actor.has(...)`
+# 本身是被扫到的。真正的盲区在**参数解析**——`access.PERM_DELETE_ANY`
+# 是 `ast.Attribute`（模块属性），而常量解析只认裸名字（`ast.Name`），
+# 于是这 13 处调用点解析不出权限码。
+#
+# 后果不是「码没被看见」（这两个码在 `lifecycle.py` 里有字面量写法，
+# 码一直都在扫描结果里），而是「**调用点**没被看见」：那十几处
+# 改名、挪走或拼错时，没有任何测试会报错。
+#
+# 解法是让守卫能跟着属性链找到常量（`_resolve_module`），而不是把代码
+# 降级成字面量——常量能防拼错，13 处判定点已经用上了这个好处。
+# --------------------------------------------------------------------------- #
+#: 这些码在服务层用**模块属性**引用，守卫必须在那些文件里看到判定点。
+CROSS_MODULE_CONSTANT_CODES: dict[str, tuple[str, ...]] = {
+    "library:delete:any": (
+        "modules.library.bulk:",
+        "modules.library.downloads:",
+        "modules.library.service:",
+        "modules.library.tags:",
+        "modules.library.text_assets:",
+    ),
+    "library:draft:review": (
+        "modules.library.service:",
+        "modules.library.tags:",
+    ),
+}
+
+
+def test_cross_module_constant_codes_reach_the_scan(
+    enforcement: dict[str, set[str]],
+) -> None:
+    """用模块属性写出来的判定点，必须真的进了守卫的视野。
+
+    钉的是**位置**而不是码：码早就在扫描结果里（别处有字面量写法），
+    盲区在调用点。少一个位置就说明那处判定点退化成了「不受任何守卫保护」。
+    """
+    missing: list[str] = []
+    for code, prefixes in CROSS_MODULE_CONSTANT_CODES.items():
+        seen = enforcement.get(code, set())
+        for prefix in prefixes:
+            if not any(site.startswith(prefix) for site in seen):
+                missing.append(f"{code} 在 {prefix}* 看不到判定点")
+    assert not missing, (
+        "这些服务层判定点没被扫描到（常量引用成了盲区）-> "
+        + "; ".join(missing)
+        + "；若该调用点已改写字面量，请同步更新本表"
+    )
+
+
+def test_enforcement_attribute_arguments_are_resolvable(
+    modules: dict[str, _ModuleInfo],
+) -> None:
+    """判定点里凡是**静态常量引用**（`mod.CONST`），那个常量必须能解出来。
+
+    这条把那个盲区钉死：将来有人写成 `has(config.PERM_X)`（`config` 是个
+    导入的模块，但常量名写错或常量挪进了类里），这里就会报错——
+    「解不出来」等于「这个判定点不受任何守卫保护」。
+
+    **不拦运行时动态值**：`actor.has(source.permission)`（导出来源把权限码
+    放在数据里）静态分析本来就读不出来，它由 `_PERMISSION_ATTRS` 那条
+    路径覆盖，不是这里的事。
+    """
+    problems: list[str] = []
+    for dotted in modules:
+        path = _module_path(dotted)
+        if not path.is_file():
+            continue
+        info = modules[dotted]
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            func = node.func
+            name = func.id if isinstance(func, ast.Name) else getattr(func, "attr", "")
+            if name not in _ENFORCEMENT_CALLS:
+                continue
+            for arg in node.args:
+                if not isinstance(arg, ast.Attribute):
+                    continue
+                if not isinstance(arg.value, ast.Name):
+                    continue
+                base = arg.value.id
+                module = _resolve_module(base, dotted, modules)
+                if module is None:
+                    # base 不是模块：要么是运行时值（`source.permission`），
+                    # 要么是个**导入名却解析不出模块**——后者是拼错，拦下
+                    if base in info.imports:
+                        problems.append(f"{dotted}:{node.lineno}: {base}.{arg.attr}")
+                    continue
+                target = modules.get(module)
+                if target is None or arg.attr not in target.consts:
+                    problems.append(f"{dotted}:{node.lineno}: {base}.{arg.attr}")
+    assert not problems, (
+        "这些判定点用了静态常量引用，但解析不出权限码 -> "
+        + "; ".join(sorted(problems)[:10])
+        + "；常量必须在目标模块的顶层"
     )
