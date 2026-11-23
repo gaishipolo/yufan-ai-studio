@@ -66,7 +66,8 @@ export function ShareRequestsModal({ open, onClose }: ShareRequestsModalProps) {
         // 通过时带上审批人**看到**的资产版本：后端比对不一致就 409，
         // 避免「基于旧界面的审批」生效（原先固定传 0，等于把这道校验关掉了）。
         // 驳回不传版本：驳回一条过时的申请单是正当操作，不能被 409 拦住。
-        body: { expectedVersion: action === 'approve' ? (item.stateVersion ?? 0) : 0 },
+        // 版本字段「不传」= 明确不校验；0 不是合法版本，后端会直接拒。
+        body: action === 'approve' ? { expectedVersion: item.stateVersion } : {},
       },
       {
         onSuccess: () => toast(action === 'approve' ? '已通过' : '已驳回'),

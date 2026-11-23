@@ -392,7 +392,7 @@ export function LibraryWorkspace() {
           {
             id: asset.id,
             action: 'reject',
-            body: { reason, expectedVersion: asset.stateVersion ?? 0 },
+            body: { reason, expectedVersion: asset.stateVersion },
           },
           {
             onSuccess: () => {
@@ -431,7 +431,7 @@ export function LibraryWorkspace() {
         return;
       case 'approve':
         decision.mutate(
-          { id: asset.id, action: 'approve', body: { expectedVersion: asset.stateVersion ?? 0 } },
+          { id: asset.id, action: 'approve', body: { expectedVersion: asset.stateVersion } },
           {
             onSuccess: () => toast('已入库'),
             onError: fail,
@@ -492,10 +492,19 @@ export function LibraryWorkspace() {
    * 不带的话后端只能按「不校验」处理——A 打开列表后 B 改了名，A 批量改名会把
    * B 的修改冲掉且没有任何提示（REVIEW_2026-11-23 重要#5 / 一般#6）。
    * 版本取自当前列表数据：列表旧了，后端会逐条报「已被修改」，刷新后重试即可。
+   *
+   * **版本缺失时不编造 0**：0 不是合法版本（后端会拒），编一个等于让这批写
+   * 在「不校验」的状态下改掉别人的成果。缺就让它缺——后端以「缺版本」400
+   * 拒掉整批，提示补上版本。
    */
   function versionsOf(ids: string[]): Record<string, number> {
-    const known = new Map(items.map((asset) => [asset.id, asset.stateVersion ?? 0]));
-    return Object.fromEntries(ids.map((id) => [id, known.get(id) ?? 0]));
+    const known = new Map(items.map((asset) => [asset.id, asset.stateVersion]));
+    const versions: Record<string, number> = {};
+    for (const id of ids) {
+      const version = known.get(id);
+      if (version !== undefined) versions[id] = version;
+    }
+    return versions;
   }
 
   function runBulk(kindOfAction: BulkKind, payload?: { tagIds?: string[] }) {
@@ -819,9 +828,7 @@ export function LibraryWorkspace() {
           busy={bulk.isPending}
           onClose={() => setBatchShare(null)}
           onSubmit={({ target, groupId, reason }) => {
-            const expectedVersions = Object.fromEntries(
-              batchShare.map((asset) => [asset.id, asset.stateVersion ?? 0]),
-            );
+            const expectedVersions = versionsOf(batchShare.map((asset) => asset.id));
             setBatchShare(null);
             applyBulk(
               batchShare.map((asset) => asset.id),

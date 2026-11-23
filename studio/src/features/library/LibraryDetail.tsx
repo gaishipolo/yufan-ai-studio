@@ -176,6 +176,9 @@ function DetailBody({
    * 重新拉取才更新：勾第二个标签时带的还是旧版本，服务端第一次已经把它 +1 了，
    * 于是必然 409「资产已被修改」——用户看到的是「打两个标签，第二个没生效」。
    * 改名仍带版本：那才是「两个人同时改同一行」该拦的场景。
+   *
+   * 「不带」= 字段不出现（序列化时被丢掉），后端按 `None` 处理＝明确不校验；
+   * 0 不是合法版本，不能再拿它当「不校验」的替身。
    */
   const save = (
     body: { name?: string; tagIds?: string[] },
@@ -186,7 +189,7 @@ function DetailBody({
         id: asset.id,
         body: {
           ...body,
-          expectedVersion: options?.versioned === false ? 0 : (asset.stateVersion ?? 0),
+          expectedVersion: options?.versioned === false ? undefined : asset.stateVersion,
         },
       },
       {

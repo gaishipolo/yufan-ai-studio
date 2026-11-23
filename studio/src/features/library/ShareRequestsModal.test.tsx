@@ -72,10 +72,11 @@ describe('ShareRequestsModal · 审批要带上版本', () => {
 
     const call = decideMock.mock.calls[0][0] as {
       approve: boolean;
-      body: { expectedVersion: number };
+      body: { expectedVersion?: number };
     };
     expect(call.approve).toBe(false);
-    expect(call.body.expectedVersion).toBe(0);
+    /* 「不传」= 明确不校验；0 不是合法版本（P2-2），传了会被后端 422 拒掉 */
+    expect(call.body.expectedVersion).toBeUndefined();
   });
 });
 
