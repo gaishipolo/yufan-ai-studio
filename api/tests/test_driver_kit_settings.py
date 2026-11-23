@@ -5,7 +5,9 @@
 
 from __future__ import annotations
 
+import ast
 import os
+from pathlib import Path
 
 import modules.model_driver.kit.settings as kit_settings
 from modules.model_driver.kit.settings import clear_cache, vendor_settings
@@ -70,3 +72,37 @@ def test_cache_does_not_grow_without_bound(monkeypatch) -> None:  # noqa: ANN001
 
     assert len(kit_settings._cache) <= kit_settings._MAX_CACHE_ENTRIES
     clear_cache()
+
+
+def test_no_driver_builds_its_own_cached_settings_getter() -> None:
+    """**防漂移守卫**：驱动不得自建 `lru_cache` 配置 getter。
+
+    `@lru_cache` 把 `.env` 的读取**永久**缓存住 —— 改配置必须重启进程。
+    这正是 2026-11-23 空 key 事故的直接原因之一（改 `.env` 不生效，
+    进程还在用旧值），也是 D3 要消灭的东西。
+
+    统一走 `kit/settings.py::vendor_settings`（mtime 指纹）：改 `.env`
+    下次请求即生效。
+
+    `kit/settings.py` 自己不算违规（它在文档字符串里提到 `lru_cache`，
+    且不导入它）。
+    """
+    offenders: list[str] = []
+    root = Path(__file__).resolve().parent.parent / "src" / "modules" / "model_driver"
+
+    for path in root.rglob("*.py"):
+        if path.name == "settings.py" and path.parent.name == "kit":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            for decorator in node.decorator_list:
+                target = decorator.func if isinstance(decorator, ast.Call) else decorator
+                if isinstance(target, ast.Name) and target.id == "lru_cache":
+                    offenders.append(f"{path.relative_to(root)}:{node.lineno}: {node.name}")
+
+    assert not offenders, (
+        "这些地方自建了 lru_cache 配置 getter，必须改用 kit/settings.py 的 "
+        "vendor_settings（改 .env 下次请求即生效）：" + ", ".join(offenders)
+    )

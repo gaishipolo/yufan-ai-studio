@@ -37,9 +37,12 @@
 | **缺密钥判定收进 kit（事故修正）** | ✅ 已完成 | `kit/credentials.py::require_api_key`；agnes/agnes_video 从 502 修正为 400；四个驱动统一；8 条新测试 + 防漂移守卫 |
 | 阶段 1 第 2 组（agnes/agnes_video） | ✅ 已完成（部分）| 配置 getter 切 mtime 指纹；缺密钥判定统一；**HTTP 错误映射保留私有**（404 有定制文案、agnes_video 有业务码例外） |
 | 阶段 1 第 3 组（bailian） | ✅ 已完成（部分）| 配置 getter 切 kit（`lru_cache` → mtime 指纹）；缺密钥判定统一；**成片落盘路径与输出地址格式 → `infra/executor_output.py`**（消除驱动↔框架字面量重复）+ AST 级防漂移守卫；「图片改内联」⏳ 待实测 |
+| 阶段 1 第 4 组（libtv） | ✅ 已完成（部分）| 配置 getter 切 kit（**全仓最后一个**自建 `lru_cache` getter）+ 防漂移守卫；**A6 落地**：`MediaChannel.WORKSPACE` 单列一档 + libtv 声明 + 两条正交性守卫 |
 | **A4 假设验证** | ✅ 已完成 | 成立，但带限定条件：**图片链的通道是写死的无条件内联**，声明只在视频链生效 → 通道抽象接线时图片链必须改成按声明分流（见 §1.1 A4 验证结果） |
-| 通道决策层 | ✅ 已建、⏳ 未接线 | `infra/media_channel.py` + 9 条测试；接线需改 pipeline 按素材类型分组读字节，风险超出「行为等价迁移」，留待专门评审 |
-| 全量回归 | ✅ 已通过 | **1920 passed, 14 skipped**；ruff 全仓 / mypy 278 文件全绿 |
+| **A6 假设验证** | ✅ 已完成 | **成立**（静态核实代替运行时验证 —— 抽象尚未接线，跑不出「抽象下」的任务）。已用 `WORKSPACE` 档把正交性固定在代码里；连带发现 **libtv 防重复计费强度弱于 bailian**（工作区 `run.json` vs DB 唯一约束）→ 阶段 2 待办 |
+| 通道决策层 | ✅ 已建、⏳ 未接线 | `infra/media_channel.py` + **15 条测试**（含 `WORKSPACE` 档与 libtv 正交性守卫）；接线需改 pipeline 按素材类型分组读字节，风险超出「行为等价迁移」，留待专门评审 |
+| 全量回归 | ✅ 已通过 | **1963 passed, 14 skipped**；ruff 全仓 / mypy 279 文件全绿 |
+| **阶段 1（L1 迁移）** | ✅ **四组全部完成** | `grsai`/`grsai_video` → `agnes`/`agnes_video` → `bailian` → `libtv`。kit 四件齐备：`errors.py` / `credentials.py` / `settings.py` + 执行器输出的 `infra/executor_output.py`。**剩余待办**（均需实机验证或超出 L1 范围）：① 通道抽象接线（须同时改图片链，A4 限定条件）② bailian 图片改内联（需真实密钥实测）③ D5 回执提炼为 kit（`receipts.py` 尚未迁入，只有 bailian 在用）④ libtv 防重复计费缺口 |
 
 > ⚠️ **当前仍不能上线**：代码已切 DB，但尚未执行**生产环境**的存量文件回执迁移。直接上线会让「旧任务的文件回执」读不到 → 恢复路径判为无回执 → 二次计费。上线 runbook：①冻结 bailian 提交（运维停入口/下线模型）→ ②`app migrate-receipts --dry-run` 核对 → ③正式迁移，校验 100% → ④解冻。**冻结机制需人工执行，代码不内置开关**（见 §3 冻结小节）。
 
@@ -116,7 +119,7 @@ G5 单独强调：这不是洁癖。2026-11-23 就因为**语义在 `generation/
 | A3 | 历史素材字节仍可从 S3 重新读取（D6 的重建前提） | 阶段 0.5 前 | 抽样 `referenceKeys` 对应对象，检查存在性与完整性 | 存在丢失对象 → D6 改为「仅新任务使用 S3 唯一副本」，存量档案保留磁盘副本并单独登记 |
 | A4 | ~~`inline_references` 声明与真正走哪条通道一致~~ | ✅ **2026-11-23 已验证：成立，但带一个限定条件** | 穷举 5 个驱动的声明 × 实际通道 | 见下方「A4 验证结果」 | 通道抽象接线时**必须**把图片链也改成按声明分流 |
 | A5 | 驱动 import 无不可重复的副作用，新增文件热加载安全 | 阶段 3 前 | 同一驱动 import 两次 + `refresh()` 两轮，检查注册表与路由是否稳定 | 有副作用 → L3 降级为「仅管理端点手动刷新且需重启生效」，G4 撤回 |
-| A6 | libtv 的工作区需求与通道选择**正交** | 阶段 1（libtv 迁移时） | 让 libtv 在通道抽象下跑一次完整任务，确认 `canvas-run.mjs` 的 sha256 校验不受影响 | 不正交 → libtv 保持独立通道实现，G8 对 libtv 例外 |
+| A6 | ~~libtv 的工作区需求与通道选择正交~~ | ✅ **2026-11-23 已验证：成立**（静态核实代替运行时验证，理由见下方） | 穷举 libtv 的素材流向 + `canvas-run.mjs` 的校验对象 | 已用 `MediaChannel.WORKSPACE` 单独一档把正交性固定在代码里 |
 
 #### A4 验证结果（2026-11-23）
 
@@ -258,6 +261,35 @@ external_id = None, submit_attempts = 1
 
 **这不是「有人写错了」，是「同一个语义有两处真相，其中一处必然漂移」。** 抽象的目标就是把这类判断收进一处。
 
+#### A6 验证结果（2026-11-23）
+
+**原验证方法不可行**：文档要求「让 libtv 在通道抽象下跑一次完整任务，确认 `canvas-run.mjs` 的 sha256 校验不受影响」—— 但通道抽象**尚未接线**（`infra/media_channel.py` 目前是独立模块，没有任何生产代码调用它），跑不出「抽象下」的任务。改用**静态核实**：把「若抽象接线、且按声明分流」的后果沿代码路径推到底。
+
+证据链：
+
+| 环节 | 证据 | 说明 |
+|---|---|---|
+| 校验对象 | `libtv/runtime/vendor/tools/js-reverse-mcp/canvas-run.mjs:33` | `checksums[name]=sha(await readFile(path.join(run,name)))` —— 对工作区里**每个文件**算 sha256 |
+| 读工作区 | 同文件 `:95` / `:108` | `readFile(path.join(run,'inputs/request.json'))` |
+| 素材就绪判定 | `drivers/libtv.py:296` → `_request_ready(path)` | 素材必须是工作区里**真实存在的文件** |
+| 提交阶段 | `drivers/libtv.py:333` → `executor.execute_stage(value,"submit")` | 提交时执行器读工作区 |
+| 去字幕链路 | `libtv/executor.py:153 submit_desubtitle` | `desubtitle.mjs` + `MediaUploader` —— **读本地文件再传上游** |
+| 防重状态机 | `drivers/libtv.py:303-324` | `executor.state(path)` 读 `run.json` 的 `submission_unknown` / `submitting` → 拒绝重提 |
+
+**结论：A6 成立 —— 工作区需求与通道选择正交。** libtv 需要的不是「把素材送到上游」，而是「把素材落到**本地执行器**能读到的地方」；它与 Base64/OSS/公网 URL 是**不同维度**，不是同一维度里的备选项。
+
+**已用代码把这条正交性固定住**（否则它只活在文档里，早晚被「统一成内联」的重构踩掉）：
+
+- `infra/media_channel.py` 新增 `MediaChannel.WORKSPACE` 一档，排在优先级**最后**（它是「本地执行器专有」的形态，只在前面的档都不可用时才是答案）；
+- `validate_declaration()` 拒绝 `WORKSPACE` 与其它通道**并列声明** —— 混声明会让选路静默挑一个，而执行器只认工作区里的真实文件 → 任务在提交阶段才炸，且报错与用户输入无关；
+- `drivers/libtv.py` 声明 `accepted_media_formats` = 全部素材类型 → `WORKSPACE`；
+- 两条**防漂移守卫**（`tests/test_media_channel.py`）：libtv 的声明必须与通道决策层的口径一致；libtv **不得**声明 `inline_references`（那会让框架把素材转成 Base64，等于把文件抽走）。
+
+**两个连带结论**：
+
+1. **通道抽象接线时，图片链必须改成按声明分流**（A4 的限定条件）—— 否则 libtv 这类声明在图片链上形同虚设；
+2. **libtv 的防重复计费保护强度与 bailian 不对等**（bailian 有 DB 唯一约束，libtv 只有工作区里的 `run.json`）。工作区被清理 → 有重复计费风险。这是**已知缺口**，留待阶段 2 专门处理，本轮不扩范围。
+
 > ✅ **2026-11-23 已修正**：新增 `kit/credentials.py::require_api_key()` 作为**缺密钥的唯一判定**，四个驱动全部改用它。核实发现口径此前是分裂的：
 >
 > | 驱动 | 修正前 | 修正后 |
@@ -295,7 +327,7 @@ external_id = None, submit_attempts = 1
 | `kit/errors.py` | **框架持有唯一分类实现**：按驱动声明的 `status_map` / `error_map` 执行；统一 `suffix(error)`（两个 `_suffix` 逐字等价） | A1 验证 + 调研 LiteLLM |
 | `kit/credentials.py` | **缺密钥的唯一判定**：空 → `BadRequest`(4xx，确定没送达)。文案由驱动给（`vendor`/`env_name`/`note`），异常类型由 kit 定 | **2026-11-23 事故修正**（§2.4）|
 | `kit/settings.py` | `vendor_settings(prefix, cls)` 工厂 + mtime 指纹缓存 | Settings 样板 ×5 结构等价（未逐行比对，风格一致） |
-| `kit/submission_guard.py` | 提交前**DB 唯一约束抢占** + 「可能已受理」禁止自动重提 | **阶段 0.5 已实现**（`receipts.py`，作为件迁入） |
+| `kit/submission_guard.py` | 提交前**DB 唯一约束抢占** + 「可能已受理」禁止自动重提 | ⏳ **目标路径，尚未实现**。阶段 0.5 的实际实现是 `modules/model_driver/receipts.py`（**未迁入 kit**，且**只有 `bailian` 在用**）→ D5「提炼为 kit 供所有驱动共用」**尚未完成** |
 | ~~`kit/http.py`~~ | ❌ 不抽 —— 4 份映射规则互异，抽了只能靠参数开关还原差异 | A1 验证 |
 | ~~`kit/models.py::strip_prefix`~~ | ❌ 不抽 —— agnes_video 是双别名归一、grsai 才剥前缀、bailian 是精确查表 | A1 验证 |
 | ~~`kit/media.py::classify`~~ | ❌ 不抽分类 —— 无分类/MIME+协议/MIME+后缀三种维度，失败行为从「不报错」到「严格报错」 | A1 验证；但「认不出就报错」的默认仍在 grsai 侧 |
@@ -545,7 +577,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | `grsai` / `grsai_video` | ✅ 已完成 | 错误分类 → kit（`status_map` 声明口径）、`_suffix` → kit、配置 getter → kit | 剥模型前缀（grsai 特有）、素材分类（grsai 特有） |
 | `agnes` / `agnes_video` | ✅ 已完成（部分）| 配置 getter → kit、**缺密钥判定 → kit** | **HTTP 错误映射保留私有**：404 有定制文案（「当前密钥分组未开通…可用模型见 GET /api/v1/models」）、401/403/429 各有专门提示、`agnes_video` 还有业务码例外 —— `status_map` 只表达异常类型，表达不了逐状态的定制文案，强迁会破坏行为等价 |
 | `bailian` | ✅ 已完成（部分）| 配置 getter → kit（`lru_cache` → mtime 指纹）、缺密钥判定 → kit、**成片落盘路径与输出地址格式 → `infra/executor_output.py`**（消除驱动与框架间的字面量重复）| `_real_model`（精确查表，非剥前缀）、`_validated_inputs`（百炼特有校验）、音频 OSS 直传 —— 均按 A1 结论保留私有；「图片改内联」属行为变更例外，**待实测**（见下） |
-| `libtv` | ⏳ 未开始 | —— | 最后迁，顺带验证 L2 的 extras 机制 |
+| `libtv` | ✅ 已完成（部分）| 配置 getter → kit（`libtv/executor.py` 的 `@lru_cache` → mtime 指纹，**全仓最后一个**自建缓存 getter） | 无 HTTP 层（调本地 Node 执行器）→ 无 `kit/errors.py` 可切；错误分类全是业务语义（`EXECUTOR_BUSY` = **排队**不是限流、`STALE_LOCK` = 锁不是错误、`EXECUTOR_RELEASE_MISMATCH` = 重试无用）→ 保留私有。**实质产出在 A6**：把「工作区」单列为 `MediaChannel.WORKSPACE` 一档 + 两条防漂移守卫 |
 
 迁移顺序（按收益/风险比）：
 
@@ -563,7 +595,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | **不迁** | `_validated_inputs`（206）的尺寸/时长/帧率校验 | 百炼特有约束，不是通用样板 | 保留私有 |
 | **可收敛** | `prepare_inputs`（345）的**图片**素材 | 上游支持 Base64 → 改走 `inline_data_uris()`，不再下载到磁盘 + OSS 上传 | ⏳ **待实测**：需要真实百炼密钥验证「上游接受 Base64 且素材在上限内」。凭据不在手，不凭猜改 |
 | **不迁** | `prepare_inputs` 的**音频** OSS 直传与 `oss://` 拼装 | 百炼 `audio_url` 不支持 Base64，音频仍需临时 OSS URL | 保留私有 |
-| **先修后迁** | 回执抢占与 `records/bailian-submission.json` | 现状回执落本地文件、误删会二次计费 → **先迁 DB 唯一约束（D6）**，再由 kit 统一封装；不能原样提炼（D5 依赖 D6） | ✅ 阶段 0.5 已完成（DB 唯一约束 + 回执落库，`kit/submission_guard.py`） |
+| **先修后迁** | 回执抢占与 `records/bailian-submission.json` | 现状回执落本地文件、误删会二次计费 → **先迁 DB 唯一约束（D6）**，再由 kit 统一封装；不能原样提炼（D5 依赖 D6） | ✅ 阶段 0.5 已完成（DB 唯一约束 + 回执落库，实现在 `modules/model_driver/receipts.py`）。⚠️ **但「提炼为 kit 供所有驱动共用」（D5）尚未做** —— 目前只有 `bailian` 引用它 |
 | ~~待修正~~ ✅ 已修正 | `outputs/generated.mp4` 落盘与 `output_url` 指向 `/api/v1/templates/replacement-runs/...` | 该路由**已不存在**（`generation/runner.py:824` 自注「没有路由」；`modules/template` 已删），靠 `task/pipeline.py:39` 的正则识别并从工作区取字节搬到对象存储 | **核实结论：不是「改路由」**。该地址是驱动↔框架的**内部协议**（框架 `persist_output` 认出它 → 搬进对象存储 → 换成对象 key）。改成「真实路由」反而会坏。真正的隐患是**字面量在驱动与框架各写一份**（漂移 = 静默丢件：任务成功、资产库空）。已收进 `infra/executor_output.py`（相对路径 + 地址格式 + 识别正则），驱动与框架共用一份，并加 AST 级防漂移守卫 |
 
 **每个驱动迁完**：该驱动的既有测试全绿 + 全量 `pytest` 全绿 + `ruff` / `mypy` 干净。
@@ -672,9 +704,14 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 - `drivers/` 内的驱动**不得直接抛 `UpstreamError`**（必须走 kit 的分类函数）—— 这条能直接防住 2026-11-23 那类事故复发
 - 驱动不得自建 `lru_cache` 配置 getter（必须走 `kit/settings.py`）
 - 驱动不得自建**文件回执**或 `O_EXCL` 抢占（必须走 DB 唯一约束 + `kit/submission_guard.py`）—— 直接防住「工作区误删 → 二次计费」复发
+  - **例外：`libtv`（本地执行器）**。它的 `run.json` 里也有 `submission_unknown` / `submitting` 状态，形态上就是「文件回执」—— 但它是**执行器的状态机**，不是「抢占」：提交动作发生在本地进程内，状态与提交动作在同一工作区，且有 `_resolve_unknown()` 把已认领的 task_id 接回。套 DB 唯一约束会得到两套互相不知情的真相（DB 说没提过、工作区说提过）。
+    - ⚠️ 代价是**保护强度不对等**：`bailian` 的 DB 回执跨进程/跨实例有效；`libtv` 的只在**工作区还在**时有效。工作区被清理 → 有重复计费风险。**这是已知缺口，留待阶段 2**（见 §1.1 A6 验证结果）。
 - 驱动不得自建**素材传输实现**（Base64 / OSS 上传 / 公网 URL 拼装必须走 `infra/media_channel.py`）—— 防止三种通道再次散落成 N 份
+  - **例外：`libtv` 的「工作区」档**（`MediaChannel.WORKSPACE`）。它说的是「素材要落到哪里**本地执行器**才读得到」，与「上游收什么格式」正交，不是同一维度里的备选项（见 §1.1 A6 验证结果）。
 
 ### 5.7 提交幂等与防重复计费（`kit/submission_guard.py`，D5 + D6）
+
+> **状态更正（2026-11-23）**：本节描述的是**目标**结构。阶段 0.5 已落地的是**介质修正**（D6：回执从文件改为 DB 唯一约束），实现位于 `modules/model_driver/receipts.py`；**D5（提炼为 kit 供所有驱动共用）尚未完成** —— `kit/submission_guard.py` 这个文件还不存在，目前只有 `bailian` 引用 `receipts.py`。
 
 | 场景 | 期望 |
 |---|---|
@@ -724,7 +761,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | D2 | 刷新触发方式 | **管理端点为主 + 周期巡检兜底**，共用一个 `registry.refresh()`；端点需**新增运维级权限点** | `core/permissions.py` 现有 6 个权限点全是业务动作向，**无 admin/运维级** → 刷新能 import/挂载代码，不能挂在 `model_driver:read` 上 |
 | D3 | 配置缓存策略 | **mtime 指纹**，键 = `(mtime_ns, size)` + 进程内 env 快照；**不引入 TTL** | pydantic-settings 每次实例化都**整读 `.env` 并解析**（`driver_config.py:41,58`）→ 无缓存的成本是每次请求一次文件读；TTL 的「最长延迟 N 秒」在改 key 止血场景里意味着继续用坏 key 提交 |
 | D4 | `bailian` / `echo` 是否迁移 | **`echo` 永不迁移；`bailian` 纳入迁移，样板层迁，供应商特有层不迁；输出地址遗留约定单独修正** | `echo.py` 零 HTTP、零配置、无素材与错误分类 → kit 对它零收益，且它是「零配置供应商」的活样板；`bailian` **是 HTTP 驱动**（`httpx` 66、`_headers` 324、`_json` 332、`submit` 406），kit 四个模块全部适用，且它是唯一带参考音频的驱动（百炼 `audio_url` 不支持 Base64 → 音频仍需 OSS 临时 URL；**图片可改内联，不必物化**）。**不存在独立替换链**（`modules/template` 已删、`replacement_runs` 表已删、`output_url` 指向的路由已不存在）→ 所谓「耦合」实为「执行器工作区产物约定」，不作为不可动边界 |
-| D5 | 防重复计费机制归谁 | **把 bailian 的提交幂等提炼为 `kit/submission_guard.py` 供所有驱动共用；但回执必须落数据库（唯一约束抢占），不落工作区文件** | 框架只有「分类」（`_possibly_delivered`），bailian 在驱动内做了「机制」（`O_EXCL` 抢占 + 回执 + `submission_unknown` 禁止重提）→ 该能力只服务了一个供应商。但现有回执存在 `records/bailian-submission.json`（`bailian.py:443`），与工作区同生共死 → 工作区误删会让「恢复动作」变成「当作新任务重提 = 二次计费」。**提炼前必须先修正回执介质（D6），否则统一的是错误做法** |
+| D5 | 防重复计费机制归谁 | **把 bailian 的提交幂等提炼为 `kit/submission_guard.py` 供所有驱动共用；但回执必须落数据库（唯一约束抢占），不落工作区文件** | 框架只有「分类」（`_possibly_delivered`），bailian 在驱动内做了「机制」（`O_EXCL` 抢占 + 回执 + `submission_unknown` 禁止重提）→ 该能力只服务了一个供应商。但现有回执存在 `records/bailian-submission.json`（`bailian.py:443`），与工作区同生共死 → 工作区误删会让「恢复动作」变成「当作新任务重提 = 二次计费」。**提炼前必须先修正回执介质（D6），否则统一的是错误做法**<br>⚠️ **2026-11-23 现状**：D6 已完成（回执落 DB），但 **D5 未完成** —— `modules/model_driver/receipts.py` 还没迁入 kit，且只有 `bailian` 在用；`libtv` 用的是执行器本地状态机（工作区 `run.json`），**不适用** DB 唯一约束（见 §1.1 A6 验证结果） |
 | D6 | 工作区 / S3 / 数据库的职责边界 | **素材字节以 S3 为唯一副本；档案元数据与提交回执落数据库；本地工作区降级为「可重建的临时执行目录」并加 GC** | `materialize()` 把 S3 字节下载一份到 `inputs/*`（`generic_inputs.py:315,323-325`），工作区**无清理机制**（`cli.py` 只有 `runs-status`）；`runs.py:138-141` 已文档化「换机器显示调用档案不存在」；回执同在工作区 → 误删后二次计费（详见 §6.5） |
 
 **每项的替代条件**（不推荐但保留触发条件）：
@@ -837,7 +874,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 |---|---|---|---|
 | 结构 | 公共文件中供应商名出现次数 | 0（B5 注释类豁免） | 守卫测试 |
 | 结构 | 错误分类实现点数量 | 1 | 守卫测试 |
-| 结构 | 通道实现份数 | Base64 / OSS / 公网 URL 各 1 份 | 守卫测试 |
+| 结构 | 通道实现份数 | Base64 / OSS / 公网 URL 各 1 份；工作区（`WORKSPACE`）1 份 | 守卫测试 |
 | 可靠性 | 工作区删除后恢复成功率 | 100%（G7） | 故障注入测试 |
 | 可靠性 | 同一 `request_id` 的上游提交次数 | 恒为 1 | 审计事件 |
 | 可靠性 | 迁移期回执一致性比对通过率 | 100% | 迁移脚本报告 |
@@ -875,7 +912,7 @@ api/src/modules/model_driver/kit/models.py
 api/src/modules/model_driver/kit/media.py
 api/src/modules/model_driver/kit/settings.py
 api/src/modules/model_driver/kit/submission_guard.py   ← D5，依赖 D6
-api/src/infra/media_channel.py                          ← 三种通道实现 + 可行性校验 + 回退决策（§3.1.4）
+api/src/infra/media_channel.py                          ← 四种通道实现 + 可行性校验 + 回退决策（§3.1.4）
 api/src/db/submission_receipts.py                       ← 提交回执表（唯一约束）
 api/tests/test_driver_kit_errors.py
 api/tests/test_driver_kit_media.py                      ← 分类 + 通道选择

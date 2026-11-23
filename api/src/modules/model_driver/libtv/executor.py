@@ -15,7 +15,6 @@ import subprocess
 import sys
 import uuid
 from contextlib import suppress
-from functools import lru_cache
 from pathlib import Path
 from urllib.parse import urlsplit
 from urllib.request import urlopen
@@ -28,6 +27,7 @@ from core.exceptions import BadRequest, UpstreamError
 from core.logging import get_logger
 from infra.archive import get_archive_storage, run_dir
 from infra.driver_config import DriverSettings, driver_config
+from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.libtv.state import (
     LIBTV_PROCESS_PROTOCOL,
     ExecutorResult,
@@ -69,9 +69,12 @@ class LibTvSettings(DriverSettings):
     credits_browser_url: str = ""
 
 
-@lru_cache
-def get_libtv_settings() -> LibTvSettings:
-    return LibTvSettings()
+# 配置热生效（D3）：mtime 指纹缓存替代原 `lru_cache`，改 `.env` 下次请求即生效。
+#
+# 对 libtv 尤其实际：`browser_urls` 是**免费队列账号池**、`credits_browser_url`
+# 是**积分账号**。账号掉线要换账号时，改 `.env` 就能立刻生效，不必重启服务 ——
+# 而「换账号」正是为了绕开 `EXECUTOR_BUSY`（排队信号）卡住的情况。
+get_libtv_settings = vendor_settings(LibTvSettings, env_prefix="LIBTV")
 
 
 def _normalize_url(value: str) -> str:

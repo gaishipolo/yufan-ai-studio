@@ -29,6 +29,7 @@ from infra.ai.base import (
     ReferenceLimit,
 )
 from infra.executor_output import executor_output_url
+from infra.media_channel import MediaChannel
 from infra.queue.base import Job
 from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.libtv import account as libtv_account
@@ -252,6 +253,20 @@ class LibTVProvider:
     # 1500s + 100s；框架会再加 30s 余量。写小了会在上传素材时被队列硬超时
     # 取消，而那时「提交意图」已经落库 → 被判成「可能已计费」。
     submit_timeout_sec = 1650.0
+
+    # 素材通道：**工作区**（落盘到归档工作区，由本地执行器读文件）。
+    #
+    # 这里不是「上游收什么格式」，而是「素材要落到哪里执行器才读得到」——
+    # libtv 的执行器读工作区里的真实文件并做 sha256 校验（`canvas-run.mjs`），
+    # 改成 Base64 或 OSS 它就读不到了。设计文档 A6 说「工作区需求与通道选择
+    # 正交」，这一条声明就是那个正交性在代码里的落点。
+    #
+    # 注意：**不声明** `inline_references` —— 那表示「别把我的素材转成 Base64」。
+    accepted_media_formats = {
+        "image": frozenset({MediaChannel.WORKSPACE}),
+        "video": frozenset({MediaChannel.WORKSPACE}),
+        "audio": frozenset({MediaChannel.WORKSPACE}),
+    }
 
     def reference_limits_for(self, model_id: str) -> Mapping[str, ReferenceLimit]:
         """按模型返回参考素材分类上限，供受理期与模型目录复用。"""
