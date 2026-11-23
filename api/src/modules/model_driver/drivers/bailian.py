@@ -31,8 +31,11 @@ libtv 不需要这一步（它跑本地执行器，自己处理文件）。
 - 素材与请求体的路径取自 run 工作区（`infra.archive.run_dir`）：
   `inputs/input-map.json`、`inputs/prompt-spec.json`、`records/media-inputs.json`。
   这些是替换链编排期写下的档案格式，不是本驱动自定义的。
-- `poll()` 成功后把成片落到 `outputs/generated.mp4`，`output_url` 指向
-  `templates` 模块的下载路由——框架只把它当字符串落库，路由归属仍是替换链。
+- `poll()` 成功后把成片落到归档工作区的 `outputs/generated.mp4`，`output_url`
+  返回 `infra.executor_output.executor_output_url(run_id)` 那个「本地地址」——
+  **它没有对应路由**，是驱动与框架之间的内部协议：框架 `persist_output` 认出它，
+  把字节搬进对象存储、再换成对象 key 落库。落盘相对路径与地址格式都住在
+  `infra/executor_output.py`，两边共用一份（字面量漂移 = 静默丢件）。
 - 归档租约、回执归档（`bailian-reconfirmed-*.json`）由替换链的 worker 负责，
   驱动只保证「回执写得下、读得回、不重复提交」。
 
@@ -58,7 +61,6 @@ import json
 import re
 import time
 import uuid
-from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -83,8 +85,10 @@ from infra.archive import get_archive_storage, run_dir
 from infra.archive.base import lease
 from infra.archive.runs import check_id
 from infra.driver_config import DriverSettings, driver_config
+from infra.executor_output import EXECUTOR_OUTPUT_RELATIVE, executor_output_url
 from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.kit.credentials import require_api_key
+from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.receipts import (
     STATUS_REJECTED,
     STATUS_SUBMITTED,
@@ -158,9 +162,9 @@ class BailianSettings(DriverSettings):
     download_timeout_sec: float = 45
 
 
-@lru_cache
-def get_bailian_settings() -> BailianSettings:
-    return BailianSettings()
+# 配置热生效（D3）：mtime 指纹缓存 —— 改 `.env` 下次请求即生效，
+# 且不再每次请求都整读一遍 `.env`（原实现靠 `lru_cache`，改配置要重启进程）。
+get_bailian_settings = vendor_settings(BailianSettings, env_prefix="BAILIAN")
 
 
 def run_path(run_id: str) -> Path:
@@ -538,15 +542,16 @@ class BailianProvider:
         output = result.get("output", {})
         status = output.get("task_status")
         if status == "SUCCEEDED":
-            destination = folder / "outputs/generated.mp4"
+            destination = folder / EXECUTOR_OUTPUT_RELATIVE
             if not await asyncio.to_thread(destination.is_file):
                 await self._download(output.get("video_url"), destination)
-            # 成片先落盘再由替换链发布：这里返回的是**下载路由**，不是 OSS 直链。
+            # 成片先落盘再由替换链发布：这里返回的是**本地地址**（内部协议，
+            # 没有对应路由），框架 `persist_output` 会认出它、把字节搬进对象存储。
             return GenerationProgress(
                 external_id,
                 GenerationState.SUCCEEDED,
                 100,
-                output_url=f"/api/v1/templates/replacement-runs/{run_id}/output",
+                output_url=executor_output_url(run_id),
             )
         if status in {"FAILED", "CANCELED", "UNKNOWN"}:
             return GenerationProgress(

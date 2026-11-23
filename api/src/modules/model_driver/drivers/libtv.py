@@ -25,6 +25,7 @@ from infra.ai.base import (
     GenerationState,
     ModelSpec,
 )
+from infra.executor_output import executor_output_url
 from infra.queue.base import Job
 from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.libtv import executor, process
@@ -340,7 +341,7 @@ class LibTVProvider:
             # 与 `QueueItem.queued` 是同一条规则。框架据此顺延墙钟：排队不该算进「生成超时」。
             queued=meta.status == "queued",
             progress=100 if status == GenerationState.SUCCEEDED else min(99, meta.progress_percent),
-            output_url=f"/api/v1/templates/replacement-runs/{run_id}/output"
+            output_url=executor_output_url(run_id)
             if status == GenerationState.SUCCEEDED
             else None,
             error=_failed_message(meta, live_reason) if status == GenerationState.FAILED else None,

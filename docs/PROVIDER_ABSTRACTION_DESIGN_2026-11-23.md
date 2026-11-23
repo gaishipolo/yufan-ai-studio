@@ -35,9 +35,11 @@
 | 阶段 0（A1 验证 + kit 骨架） | ✅ 已完成 | 21 条黄金样本；kit/errors.py；生产代码零改动 |
 | 阶段 1 首批（grsai/grsai_video 迁移） | ✅ 已完成 | 错误分类 + `_suffix` 委托 kit；配置 getter 切 mtime 指纹；47 条驱动测试全绿 |
 | **缺密钥判定收进 kit（事故修正）** | ✅ 已完成 | `kit/credentials.py::require_api_key`；agnes/agnes_video 从 502 修正为 400；四个驱动统一；8 条新测试 + 防漂移守卫 |
-| 阶段 1 第 2 组（agnes/agnes_video） | ✅ 部分完成 | 配置 getter 切 mtime 指纹；缺密钥判定统一；**HTTP 错误映射保留私有**（404 有定制文案、agnes_video 有业务码例外） |
+| 阶段 1 第 2 组（agnes/agnes_video） | ✅ 已完成（部分）| 配置 getter 切 mtime 指纹；缺密钥判定统一；**HTTP 错误映射保留私有**（404 有定制文案、agnes_video 有业务码例外） |
+| 阶段 1 第 3 组（bailian） | ✅ 已完成（部分）| 配置 getter 切 kit（`lru_cache` → mtime 指纹）；缺密钥判定统一；**成片落盘路径与输出地址格式 → `infra/executor_output.py`**（消除驱动↔框架字面量重复）+ AST 级防漂移守卫；「图片改内联」⏳ 待实测 |
+| **A4 假设验证** | ✅ 已完成 | 成立，但带限定条件：**图片链的通道是写死的无条件内联**，声明只在视频链生效 → 通道抽象接线时图片链必须改成按声明分流（见 §1.1 A4 验证结果） |
 | 通道决策层 | ✅ 已建、⏳ 未接线 | `infra/media_channel.py` + 9 条测试；接线需改 pipeline 按素材类型分组读字节，风险超出「行为等价迁移」，留待专门评审 |
-| 全量回归 | ✅ 已通过 | **1913 passed, 14 skipped**；ruff 全仓 / mypy 277 文件全绿 |
+| 全量回归 | ✅ 已通过 | **1920 passed, 14 skipped**；ruff 全仓 / mypy 278 文件全绿 |
 
 > ⚠️ **当前仍不能上线**：代码已切 DB，但尚未执行**生产环境**的存量文件回执迁移。直接上线会让「旧任务的文件回执」读不到 → 恢复路径判为无回执 → 二次计费。上线 runbook：①冻结 bailian 提交（运维停入口/下线模型）→ ②`app migrate-receipts --dry-run` 核对 → ③正式迁移，校验 100% → ④解冻。**冻结机制需人工执行，代码不内置开关**（见 §3 冻结小节）。
 
@@ -112,9 +114,34 @@ G5 单独强调：这不是洁癖。2026-11-23 就因为**语义在 `generation/
 | A1 | 各驱动的 `_http_error` / `_json` 等样板**语义等价**，可以合成一份 | 阶段 0 | 逐行比对 4 个驱动的函数，产出差异清单 + 黄金样本测试 | **❌ 2026-11-23 验证失败**：4 组里仅两个 `_suffix` 逐字等价；HTTP 映射/剥前缀/素材分类都不可合并（差异是业务语义，如 `agnes_video` 把 `5xx+video_queue_full` 判 429、其他判 502；429 在 agnes 是 `RateLimited`、grsai 是 `BadRequest`）。**按预案处置**：G5 降级为「同语义同状态码」而非「同一函数」；kit 只抽确定等价件，其余保留驱动私有并以**声明式映射表**约束 |
 | A2 | 存量文件回执**全部可读、可解析、可映射到 DB** | 阶段 0.5 前 | 只读扫描全部 `records/bailian-submission.json`，统计损坏/缺失/模型不一致 | 有损坏 → 先人工修复清单再迁移；**不得跳过损坏项**（跳过 = 二次计费风险） |
 | A3 | 历史素材字节仍可从 S3 重新读取（D6 的重建前提） | 阶段 0.5 前 | 抽样 `referenceKeys` 对应对象，检查存在性与完整性 | 存在丢失对象 → D6 改为「仅新任务使用 S3 唯一副本」，存量档案保留磁盘副本并单独登记 |
-| A4 | `inline_references` 声明与真正走哪条通道**一致**（尤其 agnes 生图链路无条件内联） | 阶段 1 前 | 按驱动 × 素材类型穷举，记录实际通道 | 声明与实现不符 → 先修声明，再迁 kit；否则通道抽象会把错的行为固化 |
+| A4 | ~~`inline_references` 声明与真正走哪条通道一致~~ | ✅ **2026-11-23 已验证：成立，但带一个限定条件** | 穷举 5 个驱动的声明 × 实际通道 | 见下方「A4 验证结果」 | 通道抽象接线时**必须**把图片链也改成按声明分流 |
 | A5 | 驱动 import 无不可重复的副作用，新增文件热加载安全 | 阶段 3 前 | 同一驱动 import 两次 + `refresh()` 两轮，检查注册表与路由是否稳定 | 有副作用 → L3 降级为「仅管理端点手动刷新且需重启生效」，G4 撤回 |
 | A6 | libtv 的工作区需求与通道选择**正交** | 阶段 1（libtv 迁移时） | 让 libtv 在通道抽象下跑一次完整任务，确认 `canvas-run.mjs` 的 sha256 校验不受影响 | 不正交 → libtv 保持独立通道实现，G8 对 libtv 例外 |
+
+#### A4 验证结果（2026-11-23）
+
+穷举 5 个驱动的「声明 × 实际通道」：
+
+| 驱动 | 走哪条链 | `inline_references` 声明 | 实际通道 | 一致？ |
+|---|---|---|---|---|
+| `agnes`（生图） | 图片链 | 未声明 | **无条件内联**（`image/pipeline.py:391` 直接调 `_reference_data_uris`） | ✅ 该链不查声明 |
+| `agnes_video` | 视频链 | `True` | 内联（`task/pipeline.py:284` 查到 → 内联） | ✅ |
+| `grsai`（生图） | 图片链 | `True` | 无条件内联（声明与结果同向） | ✅ |
+| `grsai_video` | 视频链 | `True` | 内联 | ✅ |
+| `bailian` | 视频链（仅视频，`_ensure_supported` 拒生图） | 未声明 | 落盘物化 → OSS 直链 | ✅ |
+| `libtv` | 视频链 | 未声明 | 落盘物化 → 本地工作区 | ✅ |
+
+**结论：A4 成立** —— 没有「声明说内联、实际走 OSS」这类反向漂移。
+
+**但带一个限定条件**：框架里**只有视频链**查 `inline_references`
+（`task/pipeline.py:284`）；**图片链的通道是写死的无条件内联**
+（`image/pipeline.py:391`），声明在这条链上根本不参与。所以：
+
+- 通道抽象接线时，**必须把图片链也改成按声明分流** —— 否则「声明」在图片链上形同虚设，
+  且 `agnes` 这类「靠『这条链默认内联』才正确」的驱动会静默走错通道；
+- 附带发现：`bailian.py:11` 注释写「Wan 只接受公网 URL 做参考素材，不认本地文件」，
+  与上游文档不符（`bailian.py:387` 已标注）。这类「把通道说成上游能力约束」的注释，
+  正是「通道抽象」要消解的东西 —— 通道是平台侧的选择，不是供应商的必然。
 | A7 | 通道可行性错误能在**启动期** Detection（公网域名配置、OSS 凭据端点） | 阶段 1（通道抽象上线时） | 故意错配配置启动，确认启动失败而非运行时 400 | 无法启动期检测 → 增加受理期校验守卫，禁止进入提交阶段 |
 
 ---
@@ -517,7 +544,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 |---|---|---|---|
 | `grsai` / `grsai_video` | ✅ 已完成 | 错误分类 → kit（`status_map` 声明口径）、`_suffix` → kit、配置 getter → kit | 剥模型前缀（grsai 特有）、素材分类（grsai 特有） |
 | `agnes` / `agnes_video` | ✅ 已完成（部分）| 配置 getter → kit、**缺密钥判定 → kit** | **HTTP 错误映射保留私有**：404 有定制文案（「当前密钥分组未开通…可用模型见 GET /api/v1/models」）、401/403/429 各有专门提示、`agnes_video` 还有业务码例外 —— `status_map` 只表达异常类型，表达不了逐状态的定制文案，强迁会破坏行为等价 |
-| `bailian` | ⏳ 未开始 | —— | 先做「图片改内联、音频保留 OSS」的行为修正（A4/A7 实测），再迁 |
+| `bailian` | ✅ 已完成（部分）| 配置 getter → kit（`lru_cache` → mtime 指纹）、缺密钥判定 → kit、**成片落盘路径与输出地址格式 → `infra/executor_output.py`**（消除驱动与框架间的字面量重复）| `_real_model`（精确查表，非剥前缀）、`_validated_inputs`（百炼特有校验）、音频 OSS 直传 —— 均按 A1 结论保留私有；「图片改内联」属行为变更例外，**待实测**（见下） |
 | `libtv` | ⏳ 未开始 | —— | 最后迁，顺带验证 L2 的 extras 机制 |
 
 迁移顺序（按收益/风险比）：
@@ -530,14 +557,14 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 
 **`bailian` 的分层边界**（它同时含可收敛样板与不可动资产）：
 
-| 层 | 内容 | 处理 |
-|---|---|---|
-| 可迁 | `_headers`（324）、`_json`（332）、`_real_model`（178）、`get_bailian_settings` + `lru_cache`（153） | 换成 kit 对应件 |
-| **不迁** | `_validated_inputs`（206）的尺寸/时长/帧率校验 | 百炼特有约束，不是通用样板 |
-| **可收敛** | `prepare_inputs`（345）的**图片**素材 | 上游支持 Base64 → 改走 `inline_data_uris()`，不再下载到磁盘 + OSS 上传 |
-| **不迁** | `prepare_inputs` 的**音频** OSS 直传与 `oss://` 拼装 | 百炼 `audio_url` 不支持 Base64，音频仍需临时 OSS URL |
-| **先修后迁** | 回执抢占与 `records/bailian-submission.json` | 现状回执落本地文件、误删会二次计费 → **先迁 DB 唯一约束（D6）**，再由 kit 统一封装；不能原样提炼（D5 依赖 D6） |
-| **待修正** | `outputs/generated.mp4` 落盘与 `output_url` 指向 `/api/v1/templates/replacement-runs/...` | 该路由**已不存在**（`generation/runner.py:824` 自注「没有路由」；`modules/template` 已删），靠 `task/pipeline.py:39` 的正则识别并从工作区取字节搬到对象存储。属遗留约定，单独修正，不作为「不可动契约」 |
+| 层 | 内容 | 处理 | 实际（2026-11-23）|
+|---|---|---|---|
+| 可迁 | `_headers`（324）、`_json`（332）、`_real_model`（178）、`get_bailian_settings` + `lru_cache`（153） | 换成 kit 对应件 | `_headers` 里的缺密钥判定已随 `kit/credentials.py` 统一；配置 getter 已切 kit（mtime 指纹）；`_json` / `_real_model` **不迁**（A1：bailian 是精确查表，`status_map` 表达不了逐状态文案） |
+| **不迁** | `_validated_inputs`（206）的尺寸/时长/帧率校验 | 百炼特有约束，不是通用样板 | 保留私有 |
+| **可收敛** | `prepare_inputs`（345）的**图片**素材 | 上游支持 Base64 → 改走 `inline_data_uris()`，不再下载到磁盘 + OSS 上传 | ⏳ **待实测**：需要真实百炼密钥验证「上游接受 Base64 且素材在上限内」。凭据不在手，不凭猜改 |
+| **不迁** | `prepare_inputs` 的**音频** OSS 直传与 `oss://` 拼装 | 百炼 `audio_url` 不支持 Base64，音频仍需临时 OSS URL | 保留私有 |
+| **先修后迁** | 回执抢占与 `records/bailian-submission.json` | 现状回执落本地文件、误删会二次计费 → **先迁 DB 唯一约束（D6）**，再由 kit 统一封装；不能原样提炼（D5 依赖 D6） | ✅ 阶段 0.5 已完成（DB 唯一约束 + 回执落库，`kit/submission_guard.py`） |
+| ~~待修正~~ ✅ 已修正 | `outputs/generated.mp4` 落盘与 `output_url` 指向 `/api/v1/templates/replacement-runs/...` | 该路由**已不存在**（`generation/runner.py:824` 自注「没有路由」；`modules/template` 已删），靠 `task/pipeline.py:39` 的正则识别并从工作区取字节搬到对象存储 | **核实结论：不是「改路由」**。该地址是驱动↔框架的**内部协议**（框架 `persist_output` 认出它 → 搬进对象存储 → 换成对象 key）。改成「真实路由」反而会坏。真正的隐患是**字面量在驱动与框架各写一份**（漂移 = 静默丢件：任务成功、资产库空）。已收进 `infra/executor_output.py`（相对路径 + 地址格式 + 识别正则），驱动与框架共用一份，并加 AST 级防漂移守卫 |
 
 **每个驱动迁完**：该驱动的既有测试全绿 + 全量 `pytest` 全绿 + `ruff` / `mypy` 干净。
 

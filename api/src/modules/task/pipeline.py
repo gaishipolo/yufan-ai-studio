@@ -7,7 +7,6 @@
 from __future__ import annotations
 
 import asyncio
-import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -25,6 +24,7 @@ from infra import get_model_router, get_storage
 from infra.ai.base import Capability, GenerationRequest, InlineReferencesCapable
 from infra.archive import get_archive_storage
 from infra.archive.runs import run_dir
+from infra.executor_output import EXECUTOR_OUTPUT_RELATIVE, RUN_OUTPUT_URL
 from infra.reference_inline import MIME_BY_SUFFIX, inline_data_uris
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask, parse_params_json
@@ -34,9 +34,13 @@ KIND_VIDEO = "video"
 # 执行器把成片下载到运行工作区的这个相对路径下（`runtime/vendor/.../canvas-run.mjs`
 # 的 `downloadResult` 写死的名字）。驱动拿不到公网地址，只能回一个指向工作区的
 # 相对地址，所以「搬进对象存储」这一步必须由这里按工作区路径取字节。
-_EXECUTOR_OUTPUT = "outputs/generated.mp4"
+#
+# 相对路径与「本地地址」的格式都住在 `infra/executor_output.py` —— 驱动
+# （`bailian` / `libtv`）写、这里读，字面量只有一份。漂移的后果是「任务成功
+# 但资产库空」：驱动写一个路径、框架按另一个路径找，找不到就当没有成片。
+_EXECUTOR_OUTPUT = EXECUTOR_OUTPUT_RELATIVE
 # 驱动对这类产物的约定形状；换执行器时改这一处。
-_RUN_OUTPUT_URL = re.compile(r"/replacement-runs/([a-f0-9]{32})/output$")
+_RUN_OUTPUT_URL = RUN_OUTPUT_URL
 
 # 单份参考素材的字节上限（与生图链同一数值之外的**视频链**口径）：base64 会把它撑大 4/3。
 #
