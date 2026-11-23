@@ -1,0 +1,4 @@
+interface:
+  display_name: "视频提示词三版转换"
+  short_description: "生成占位主提示词、随机提示词及人物场景服饰的选中与未选文案，统一无字幕"
+  default_prompt: "使用 $prompt-three-variants 将下面原稿封装为带Mixed占位符的原提示词、独立随机提示词，以及人物、场景、服饰每个槽位的选中时文案和未选时文案。产品绑定以本次参考图为准，不写死型号配色；统一无字幕。"
