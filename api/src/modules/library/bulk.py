@@ -53,10 +53,12 @@ PERMISSION_BY_ACTION = {
 #: 这些动作会把版本透传给下游服务做乐观锁比对（改名会覆盖名字、草稿决策会改状态、
 #: 共享申请会写申请单快照）。
 #:
-#: 缺版本时不能静默当成 0 —— 0 在 `LibraryService._check_version` 里是「不校验」，
-#: 那正是审查#5/#6 指出的缺口：A 打开列表后 B 改了名，A 批量改名会把 B 的修改冲掉，
-#: 且没有任何提示（见 REVIEW_2026-11-23 重要#5、一般#6）。宁可 400 让调用方把版本
-#: 补上，也不要「看起来有保护、实际没有」。
+#: 缺版本时不能静默当成「不校验」——那正是审查#5/#6 指出的缺口：A 打开列表后
+#: B 改了名，A 批量改名会把 B 的修改冲掉，且没有任何提示（见 REVIEW_2026-11-23
+#: 重要#5、一般#6）。宁可 400 让调用方把版本补上，也不要「看起来有保护、实际没有」。
+#:
+#: 传 `0` 也不行：`expected_versions` 的值必须是合法版本（≥1），0 在入参层
+#: 就被拒（422），走不到这里（P2-2）。
 #:
 #: `delete` / `restore` / `addTag` / `removeTag` 不在此列：下游服务根本不接版本
 #: （`LifecycleService.delete`、`add_asset_tags` 都没有这个参数），要求调用方传
@@ -92,11 +94,11 @@ class BulkService:
             raise Forbidden(f"没有执行 {payload.action} 的权限")
         if payload.action in VERSIONED_ACTIONS:
             # 版本必须逐条给全：少一条，那一条就会在「没有保护」的情况下改写别人的成果。
-            # 0 也算缺（资产的 state_version 从 1 起，0 只可能是没传）。
+            # 只看「缺 key」：传 0 已经在入参层被拒（422，0 不是合法版本）。
             missing = [
                 asset_id
                 for asset_id in dict.fromkeys(payload.ids)
-                if not payload.expected_versions.get(asset_id)
+                if asset_id not in payload.expected_versions
             ]
             if missing:
                 raise BadRequest(
@@ -127,7 +129,9 @@ class BulkService:
         )
 
     async def _apply(self, asset_id: str, payload: BulkIn, actor: CurrentUser) -> None:
-        version = payload.expected_versions.get(asset_id, 0)
+        # 版本化动作在 `run()` 里已校验「逐条给全」，这里拿到的一定是合法版本；
+        # 非版本化动作取到 None（不消费版本）。
+        version = payload.expected_versions.get(asset_id)
         data = payload.payload or {}
         action = payload.action
 

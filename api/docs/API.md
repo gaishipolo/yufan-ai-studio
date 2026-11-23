@@ -1867,7 +1867,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `name` | `string \| null` | 否 |  |
 | `tagIds` | `string[] \| null` | 否 |  |
-| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
 
@@ -2048,7 +2048,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `purpose` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetOut>`（前端取 `res.data`）
 
@@ -2136,7 +2136,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `content` | `string` | 是 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 | `note` | `string` | 否 |  |
 
 **响应** `ApiResponse<TextAssetOut>`（前端取 `res.data`）
@@ -2175,7 +2175,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | `number` | 是 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<TextAssetOut>`（前端取 `res.data`）
 
@@ -2325,7 +2325,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
 
@@ -2387,7 +2387,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<LibraryAssetDetailOut>`（前端取 `res.data`）
 
@@ -2652,7 +2652,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `target` | `ShareTarget` | 否 |  |
 | `groupId` | `string` | 否 |  |
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
 
@@ -2722,7 +2722,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `note` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
 
@@ -2789,7 +2789,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `note` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 **响应** `ApiResponse<ShareRequestOut>`（前端取 `res.data`）
 
@@ -3899,7 +3899,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `name` | `string \| null` | 否 |  |
 | `tagIds` | `string[] \| null` | 否 |  |
-| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `AssetSort`（枚举）
 
@@ -4057,7 +4057,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `DriverListOut`
 
@@ -5120,7 +5120,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `purpose` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 | >0 时做乐观锁校验；0 表示不校验（兼容单页操作） |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `ShareAction`（枚举）
 
@@ -5133,7 +5133,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `note` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `ShareHistoryItem`
 
@@ -5170,7 +5170,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `target` | `ShareTarget` | 否 |  |
 | `groupId` | `string` | 否 |  |
 | `reason` | `string` | 否 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `ShareRequestOut`
 
@@ -5644,7 +5644,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `version` | `number` | 是 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 
 ### `TextAssetUpdateIn`
 
@@ -5654,7 +5654,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `content` | `string` | 是 |  |
-| `expectedVersion` | `number` | 否 |  |
+| `expectedVersion` | `number \| null` | 否 |  |
 | `note` | `string` | 否 |  |
 
 ### `TextAssetVersionOut`

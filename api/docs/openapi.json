@@ -9716,10 +9716,17 @@
             "title": "Tagids"
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "description": ">0 时做乐观锁校验；0 表示不校验（兼容单页操作）",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -9774,7 +9781,8 @@
           },
           "expectedVersions": {
             "additionalProperties": {
-              "type": "integer"
+              "type": "integer",
+              "minimum": 1.0
             },
             "type": "object",
             "title": "Expectedversions"
@@ -10235,9 +10243,17 @@
             "default": ""
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -14348,10 +14364,17 @@
             "default": ""
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "description": ">0 时做乐观锁校验；0 表示不校验（兼容单页操作）",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -14375,9 +14398,17 @@
             "default": ""
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -14513,9 +14544,17 @@
             "default": ""
           },
           "expectedVersion": {
-            "type": "integer",
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -16280,10 +16319,17 @@
             "title": "Version"
           },
           "expectedVersion": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           }
         },
         "type": "object",
@@ -16302,10 +16348,17 @@
             "title": "Content"
           },
           "expectedVersion": {
-            "type": "integer",
-            "minimum": 0.0,
-            "title": "Expectedversion",
-            "default": 0
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0,
+                "description": "客户端看到的版本：带了就做乐观锁校验，不带（null）表示明确不校验。版本从 1 起，0 不合法。"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Expectedversion"
           },
           "note": {
             "type": "string",

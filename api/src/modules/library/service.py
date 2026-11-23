@@ -710,7 +710,7 @@ class LibraryService:
         return await self.detail(asset_id, actor)
 
     async def set_purpose(
-        self, asset_id: str, purpose: str, actor: CurrentUser, expected_version: int = 0
+        self, asset_id: str, purpose: str, actor: CurrentUser, expected_version: int | None = None
     ) -> LibraryAssetOut:
         """把一条素材移入案例池（`purpose='case'`），或移回普通素材（空串）。
 
@@ -1428,14 +1428,17 @@ class LibraryService:
             return (LibraryAsset.size_bytes.desc(), LibraryAsset.id.desc())
         return (LibraryAsset.created_at.desc(), LibraryAsset.id.desc())
 
-    def _check_version(self, row: LibraryAsset, expected: int) -> None:
-        """乐观锁。`expected=0` 表示不校验——单页操作没必要为了一个数字失败一次。
+    def _check_version(self, row: LibraryAsset, expected: int | None) -> None:
+        """乐观锁。**带了就比对，不带（`None`）表示明确不校验**。
 
-        TODO(P2-2): `0` 当哨兵值有双重语义（漏传版本 = 静默不校验），
-        而资产的 `state_version` 从 1 起，0 根本不是合法版本。
-        拆分方案与迁移路径见 docs/FIX_ITEM_P2-2_2026-11-23.md（本轮只立项）。
+        `expected=0` 的哨兵语义已经移除（P2-2）：资产的 `state_version` 从 1 起，
+        0 不是合法版本，旧写法把「漏传版本」和「显式不校验」混成同一件事，
+        于是漏传会被静默降级为不校验。现在 `None` 是唯一的「不校验」表达，
+        0 在入参层就被拒（422），走不到这里。
+
+        见 docs/FIX_ITEM_P2-2_2026-11-23.md。
         """
-        if expected and row.state_version != expected:
+        if expected is not None and row.state_version != expected:
             raise Conflict(
                 "资产已被修改，请刷新后重试",
                 details={"expectedVersion": expected, "stateVersion": row.state_version},

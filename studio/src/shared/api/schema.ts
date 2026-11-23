@@ -118,8 +118,7 @@ export const UsageScope_VALUES = ["mine", "all"] as const;
 export interface AssetPatchIn {
   name?: string | null;
   tagIds?: string[] | null;
-  /** >0 时做乐观锁校验；0 表示不校验（兼容单页操作） */
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** 批量写。**逐条判定、逐条提交**：一批里 3 条已共享就返回 7 成功 + 3 条明细。 */
@@ -255,7 +254,7 @@ export interface DownloadSkip {
 /** DraftDecisionIn */
 export interface DraftDecisionIn {
   reason?: string;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** DriverListOut */
@@ -1321,14 +1320,13 @@ export interface SessionOut {
 混在一起会让「只想改个错别字」的请求顺手把素材推出自己的库。 */
 export interface SetPurposeIn {
   purpose?: string;
-  /** >0 时做乐观锁校验；0 表示不校验（兼容单页操作） */
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** 审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。 */
 export interface ShareDecisionIn {
   note?: string;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** 可见性变更的一条记录。`reason` 是撤销申请里填的理由，审核人当时看的就是它。 */
@@ -1359,7 +1357,7 @@ export interface ShareRequestIn {
   target?: ShareTarget;
   groupId?: string;
   reason?: string;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** ShareRequestOut */
@@ -1782,14 +1780,14 @@ export interface TextAssetOut {
 /** 把某一历史版本重新写成**新的一版**，不改历史行。 */
 export interface TextAssetRestoreIn {
   version: number;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
 }
 
 /** 在线编辑。`expected_version` 是**内容版本**，不是 `stateVersion`：
 两个人同时打开编辑框时，后保存的人必须看到「正文已被改过」而不是静默覆盖。 */
 export interface TextAssetUpdateIn {
   content: string;
-  expectedVersion?: number;
+  expectedVersion?: number | null;
   note?: string;
 }
 

@@ -1052,12 +1052,18 @@ def test_require_scan_is_not_vacuous() -> None:
 
 
 # --------------------------------------------------------------------------- #
-# 写操作必须带版本
+# 版本字段的取值表达
 #
-# 0 在版本比对里是「不校验」。前端固定传 0、后端 `if payload.expected_version`
-# 于是长期空转：接口看着有并发保护，实际上一条基于旧快照的写照样生效
-# （REVIEW_2026-11-23 严重#1 / 重要#5）。这类缺口靠 review 抓不干净——
-# 写的人只会觉得「先留个 0 表示不关心」，所以用机器守住。
+# P2-2 之后，版本只有两种合法表达：**一个真实版本（≥1）** 或 **None（明确不校验）**。
+# 0 不再是合法版本（入参层就 422），前端固定传 0 的老写法会直接被拒。
+#
+# 于是有两种新的错误写法要守住：
+# - 写死 0：语义上已经失效，运行时才发现（422），不如编译期就被指出来；
+# - `or` 兜底（`x or y`）：0 会被当成「没带」，而 0 已经非法——这行代码的真实
+#   含义（没带就回落）被一个永远不成立的分支掩盖，回落逻辑从此静默失效。
+#
+# 这类缺口靠 review 抓不干净——写的人只会觉得「先留个 0 表示不关心」，
+# 所以用机器守住。
 # --------------------------------------------------------------------------- #
 #: 会消费资产版本的入参模型 → 版本字段名
 _VERSIONED_INPUTS = {
@@ -1066,11 +1072,18 @@ _VERSIONED_INPUTS = {
     "DraftDecisionIn": "expected_version",
     "ShareRequestIn": "expected_version",
     "ShareDecisionIn": "expected_version",
+    "SetPurposeIn": "expected_version",
+    "TextAssetUpdateIn": "expected_version",
+    "TextAssetRestoreIn": "expected_version",
 }
 
 
 def _version_problems(path: Path) -> list[str]:
-    """一个文件里「写操作没带版本 / 版本写死 0」的问题清单。"""
+    """一个文件里「版本字段用错了表达」的问题清单。
+
+    **不带版本不算问题**：不传就是 `None`，即「明确不校验」，是合法用法
+    （单页操作没必要为了一个数字失败一次）。这条守卫只拦两种坏写法。
+    """
     tree = ast.parse(path.read_text(encoding="utf-8"))
     problems: list[str] = []
     for node in ast.walk(tree):
@@ -1082,16 +1095,24 @@ def _version_problems(path: Path) -> list[str]:
             continue
         value = next((kw.value for kw in node.keywords if kw.arg == field), None)
         if value is None:
-            problems.append(f"{path.name}:{node.lineno} {name}() 没带 {field}")
-        elif isinstance(value, ast.Constant) and value.value == 0:
-            problems.append(f"{path.name}:{node.lineno} {name}() 的 {field} 写死 0（= 不校验）")
+            continue
+        if isinstance(value, ast.Constant) and value.value == 0:
+            problems.append(
+                f"{path.name}:{node.lineno} {name}() 的 {field} 写死 0"
+                "（0 不是合法版本，入参层就会 422）"
+            )
+        elif isinstance(value, ast.BoolOp) and isinstance(value.op, ast.Or):
+            problems.append(
+                f"{path.name}:{node.lineno} {name}() 的 {field} 用了 `or` 兜底："
+                "0 会被当成「没带」，改成显式的 None 判断"
+            )
     return problems
 
 
-def test_write_inputs_always_carry_the_asset_version() -> None:
-    """素材库的写操作入参必须带版本，且不能是字面量 0。
+def test_version_arguments_never_use_zero_or_or_fallbacks() -> None:
+    """版本字段不得写死 0，也不得用 `or` 兜底。
 
-    缺版本 → 静默按「不校验」处理 → A 打开列表后 B 改了名，A 的批量改名会把
+    漏传版本 → 静默按「不校验」处理 → A 打开列表后 B 改了名，A 的批量改名会把
     B 的修改冲掉，且没有任何提示（REVIEW_2026-11-23 重要#5 / 一般#6）。
     """
     problems: list[str] = []
@@ -1111,20 +1132,23 @@ def test_write_inputs_always_carry_the_asset_version() -> None:
         f"只扫到 {checked} 处版本化入参构造（预期 ≥3）：扫描口径退化了，"
         "这条守卫会永远绿"
     )
-    assert not problems, "写操作没有真正带上版本：\n" + "\n".join(f"  - {p}" for p in problems)
+    assert not problems, "版本字段用错了表达：\n" + "\n".join(f"  - {p}" for p in problems)
 
 
-def test_version_guard_catches_a_missing_or_zero_version(tmp_path: Path) -> None:
+def test_version_guard_catches_zero_and_or_fallbacks(tmp_path: Path) -> None:
     """守卫自身的自检：故意违规的样例必须被抓出来。"""
     sample = tmp_path / "sample.py"
     sample.write_text(
+        # 合法：不带版本 = None = 明确不校验
         "AssetPatchIn(name='x')\n"
+        # 违规①：写死 0
         "AssetPatchIn(name='x', expected_version=0)\n"
-        "DraftDecisionIn(reason='ok')\n",
+        # 违规②：`or` 兜底
+        "AssetPatchIn(name='x', expected_version=version or 0)\n",
         encoding="utf-8",
     )
     problems = _version_problems(sample)
-    assert len(problems) == 3, f"自检失败：应该抓到 3 处，实际 {problems}"
+    assert len(problems) == 2, f"自检失败：应该抓到 2 处，实际 {problems}"
 
 
 # --------------------------------------------------------------------------- #
