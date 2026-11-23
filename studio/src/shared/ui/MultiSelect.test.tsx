@@ -103,30 +103,30 @@ describe('MultiSelect', () => {
     });
   });
 
+  /** 把触发器的位置钉在视口里：`bottom` 之后剩多少空间由 innerHeight 决定。 */
+  function placeTriggerAt(bottom: number, innerHeight: number) {
+    Object.defineProperty(window, 'innerHeight', { value: innerHeight, configurable: true });
+    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
+      bottom,
+      top: bottom - 32,
+      height: 32,
+      left: 0,
+      right: 200,
+      width: 200,
+      x: 0,
+      y: bottom - 32,
+      toJSON: () => ({}),
+    } as DOMRect);
+  }
+
+  const popoverOf = () => {
+    const trigger = screen.getByRole('button', { name: '标签' });
+    const id = trigger.getAttribute('aria-controls') ?? '';
+    return document.getElementById(id);
+  };
+
   /* 浮层方向：批量栏贴在视口底部，朝下展开会整块落到屏幕外（用户只看到一条边）。 */
   describe('浮层方向', () => {
-    /** 把触发器的位置钉在视口里：`bottom` 之后剩多少空间由 innerHeight 决定。 */
-    function placeTriggerAt(bottom: number, innerHeight: number) {
-      Object.defineProperty(window, 'innerHeight', { value: innerHeight, configurable: true });
-      vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-        bottom,
-        top: bottom - 32,
-        height: 32,
-        left: 0,
-        right: 200,
-        width: 200,
-        x: 0,
-        y: bottom - 32,
-        toJSON: () => ({}),
-      } as DOMRect);
-    }
-
-    const popoverOf = () => {
-      const trigger = screen.getByRole('button', { name: '标签' });
-      const id = trigger.getAttribute('aria-controls') ?? '';
-      return document.getElementById(id);
-    };
-
     it('下方够高就朝下展开', async () => {
       const user = userEvent.setup();
       placeTriggerAt(120, 800);
@@ -147,6 +147,37 @@ describe('MultiSelect', () => {
       expect(popoverOf()).toHaveAttribute('data-placement', 'top');
       // 朝上时不能还留着向下展开的定位类
       expect(popoverOf()?.className).not.toContain('top-[calc(100%+4px)]');
+    });
+  });
+
+  /* 资产库上传弹窗的下拉框只露出半截：Modal 内容区是 overflow-auto，
+     absolute 浮层被祖先裁掉。修复是 Portal + fixed，这里钉住两个必要条件。 */
+  describe('弹窗内不被裁剪', () => {
+    it('浮层 Portal 到 body 且用 fixed 定位', async () => {
+      const user = userEvent.setup();
+      placeTriggerAt(400, 800);
+      render(<Harness />);
+
+      await user.click(screen.getByRole('button', { name: '标签' }));
+
+      const popover = popoverOf();
+      expect(popover).not.toBeNull();
+      expect(popover?.parentElement).toBe(document.body);
+      expect(popover?.style.position).toBe('fixed');
+      expect(popover?.className).not.toContain('absolute');
+    });
+
+    it('点浮层内的选项不会当成外部点击而把浮层收起', async () => {
+      const user = userEvent.setup();
+      placeTriggerAt(400, 800);
+      render(<Harness />);
+
+      await user.click(screen.getByRole('button', { name: '标签' }));
+      await user.click(screen.getByRole('checkbox', { name: '音乐' }));
+
+      // 浮层还在，且选中结果已传给父级
+      expect(screen.getByRole('checkbox', { name: '音乐' })).toBeInTheDocument();
+      expect(screen.getByTestId('picked')).toHaveTextContent('t1');
     });
   });
 });
