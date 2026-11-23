@@ -51,11 +51,11 @@
 | 3 | H8 13 处 `has(access.*)` | 读 `tests/test_permission_coverage.py` 全文、grep 13 处调用点与 import 形式、查两个码的声明处、临时探针对比扩展前后扫描结果 | **成立，但审查的机理说错了**：守卫的 `_ENFORCEMENT_CALLS` **本含 `has`**（调用点被扫到）；盲区在**参数解析**——`access.PERM_X` 是 `ast.Attribute`，常量解析只认 `ast.Constant`/`ast.Name`。且码一直可见（`lifecycle.py` 有字面量写法），**看不见的是 13 个调用点** | 不改 13 处代码（保留常量：能防拼错，审查建议的「改回字面量」是倒退）；改守卫：`test_permission_coverage.py` 新增 `_resolve_module()` + `_strings()` 的 `ast.Attribute` 分支 + `ast.Import` 导入记录；新增两条棘轮：`test_cross_module_constant_codes_reach_the_scan`（钉位置）、`test_enforcement_attribute_arguments_are_resolvable`（静态常量引用必须可解析） | 临时探针：码总数 60→60（未引入新码），`library:delete:any` 4→14 处、`library:draft:review` 3→6 处，**+13 与审查数精确吻合**；`test_permission_coverage.py` 10 passed、ruff 全绿 | **完成** |
 | 4 | H7 9 处 `getattr` | 读 `infra/ai/base.py`、`generation/pipeline.py`、`generation/runner.py`、`infra/queue/base.py`、两个 queue 驱动、三处调用点；grep 全部 `getattr(` | **成立（8 处违反点 + 1 处正当）**：审查建议的三个协议（`Persistable`/`ArchiveRequestable`/`StatsCapable`）确实缺失；`PollCapable` 已存在且恰好就是 `supports_poll: bool`。`db.py` 那句「stats 不在协议里（别的驱动没有这个概念）」**是错的**——memory 驱动也有 | 新增 5 个协议（`generation/pipeline.py` 4 个 + `infra/queue/base.py` 1 个）；8 处 `getattr` 探测改 `isinstance`；修 `db.py` 过时注释；新增 `api/tests/test_capability_protocols.py`（守卫 + 3 类自检） | 12 passed（含**故意违规的自检**：喂 3 种违规写法证明守卫会红）；后端全量 **1812 passed**；ruff 全绿 | **完成** |
 | 5 | T37 生图在途上限 | 读 `docs/TODO.md` T37、`task/service.py::_assert_in_flight_room`、`image/models.py`、`image/service.py::generate`、`image/router.py`、`core/config.py`、`tests/conftest.py` | **成立**：任务侧有在途上限（queued + running，`0`=不限），生图侧只有**频率**限流（`image.generate` 60/分钟）——频率限流拦得住手抖、拦不住「一分钟点 60 次」，而每条生图占供应商账号的上游排队位次（账号全团队共享）。TODO 里「计数口在 task 模块」的顾虑**不成立**：`ImageJob` 就在 image 模块，带 `owner_id`+`status`，可自数 | 加 `image_max_in_flight_per_user: int = 5`；`image/service.py` 新增 `_assert_in_flight_room()` 并在 `generate()` 最前面调用（超限 429，消息带上限与在途数）；`.env.example` 补键；`conftest.py` 测试环境默认关掉；新增 `test_image_in_flight_cap.py` 6 条（含默认值棘轮 + AST 路径棘轮） | `test_image_in_flight_cap.py` 6 passed；后端全量 **1818 passed, 14 skipped**；ruff 全绿 | **完成** |
-| 6 | M7 静默截断 | grep `_MAX_IDS` 全库；读 `core/ports/library_references.py` 全文、三个 checker、`library/bulk.py` 全文、grep 全部 `ask_library_references` 调用点、读 `library/access.py` 与 `lifecycle.py:113-128` | **部分成立**：3 处 `[:_MAX_IDS]` 静默切片是事实；但**当前不可达**（所有调用点只传一个 id），且审查的两条证据链都已过时——批量动作走 `delete`（进回收站），`purge` **刻意不在批量里**；「跨组保护走 JSON LIKE」也不对（它查的是**关联表** `LibraryAssetGroup`）。JSON LIKE 实际只用于**引用检查** | 3 处静默切片改**超限即抛 `Unavailable`（503，fail-closed）**；新增 `test_library_reference_limits.py` 9 条（超限报错×3、边界×3、AST 守卫「无静默切片」、守卫「purge 不在批量」、端到端引用拦截） | 9 passed；后端全量 **1827 passed, 14 skipped**；ruff 全绿 | **完成（拆关联表部分待确认）** |
+| 6 | M7 静默截断 | grep `_MAX_IDS` 全库；读 `core/ports/library_references.py` 全文、三个 checker、`library/bulk.py` 全文、grep 全部 `ask_library_references` 调用点、读 `library/access.py` 与 `lifecycle.py:113-128` | **部分成立**：3 处 `[:_MAX_IDS]` 静默切片是事实；但**当前不可达**（所有调用点只传一个 id），且审查的两条证据链都已过时——批量动作走 `delete`（进回收站），`purge` **刻意不在批量里**；「跨组保护走 JSON LIKE」也不对（它查的是**关联表** `LibraryAssetGroup`）。JSON LIKE 实际只用于**引用检查** | 3 处静默切片改**超限即抛 `Unavailable`（503，fail-closed）**；新增 `test_library_reference_limits.py` 9 条（超限报错×3、边界×3、AST 守卫「无静默切片」、守卫「purge 不在批量」、端到端引用拦截） | 9 passed；后端全量 **1827 passed, 14 skipped**；ruff 全绿 | **完成（主体）**；子项「拆关联表」另见 §3.7 |
 
 ### 本轮汇总（2026-11-23 收尾）
 
-六项全部走完：**5 项完成、1 项关闭（已过时）、1 个子项待确认**。
+六项全部走完：**5 项完成、1 项关闭（已过时）**；另按用户拍板补做了 M7 的子项「拆关联表」（§3.7）。
 
 | 项 | 结论一句话 | 关键验证 |
 |---|---|---|
@@ -65,10 +65,11 @@
 | H7 | 完成——补 5 个协议，8 处 `getattr` 探测改 `isinstance`；顺带修掉 `db.py` 那句过时注释 | 12 passed（含故意违规的自检）/ 全量 1812 |
 | T37 | 完成——生图加在途上限（默认 5，0=不限）；**image 模块可自数**（TODO 里「计数口在 task 模块」的顾虑不成立） | 6 passed / 全量 1818 |
 | M7 | 完成（主体）——3 处静默截断改**超限即 503**；审查的两条证据链都已过时 | 9 passed / 全量 1827 |
+| M7 子项 | 完成——下载任务资产清单拆成关联表（`library_download_job_assets`），引用检查从 **JSON 子串粗筛**改成**关联表 `IN` 查询** | 7 + 1 passed；全量 1835；手工复验 upgrade/downgrade |
 
-**最终全量**：后端 **1827 passed, 14 skipped**（基线 1794 → 本轮 +33）；`ruff check src tests` All checks passed。
+**最终全量**：后端 **1835 passed, 14 skipped**（基线 1794 → 本轮 +41）；`ruff check src tests` All checks passed。
 
-**本轮新增的待确认项**（见 §4 待确认表）：M7 的「下载任务资产引用拆成关联表」——涉及迁移 + 模型 + 引用检查改写 + 旧数据兼容，属独立的大重构，本轮按用户指示跳过。
+**本轮新增的待确认项**：无（M7 的子项已按用户拍板做掉）。
 
 **本轮发现的模式**（供后续轮次参考）：审查文档里的行号普遍已漂移，**引用行号当证据会指错地方**——三处（H8/H7/M7）都不得不用 grep + 读全文重新定位，且 M7 的两条证据直接指向了已被重构掉的代码。
 
@@ -244,6 +245,47 @@
 
 **待确认（本轮按指示跳过）**：「下载任务的资产引用拆成关联表」——涉及迁移 + 模型改写 + 引用检查改写 + 旧数据兼容，属一次独立的大重构，本轮未做。需用户拍板是否要排期。
 
+**→ 已于 2026-11-23 晚补做（用户拍板「直接做 1」），见 §3.7。**
+
+### 3.7 M7 补做 · 下载任务的资产引用拆成关联表
+
+**触发**：用户拍板「直接做 1」——把 §3.6 标为待确认的「下载任务资产引用拆成关联表」做掉。
+
+**核实（方式）**：
+1. grep `asset_ids` → 该列只有 **4 个使用点**（模型定义、写入点 `downloads.py:128`、读取点 `_to_out`、打包处），无隐藏引用；
+2. 读 `downloads.py` 全文 → **`asset_ids` 的顺序有语义**：包内文件按 `001_名`、`002_名` 命名，序号来自用户勾选顺序 → 拆表必须保住顺序，不能只保集合；
+3. 读 `models.py` 的 `LibraryPackItem` → 同款关联表参照（`pack_id` / `asset_id` / `position`，**刻意没加外键**）→ 新表照它的形状；
+4. 读 `core/ports/library_references.py` 全文 + 三个 checker → 引用检查的三个来源都走同一个注入端口，下载任务那支原本是 `LIKE '%"id"%'` 的**子串粗筛**（外加二次精确比对兜底）；粗筛的正确性依赖 JSON 文本形状，而它的落点是**不可逆删除**；
+5. 读 `library/__init__.py` 的 `ModuleSpec` → 来源声明的位置字符串要一并改（静态守卫对账 `location` 指向的文件/符号是否存在）；
+6. 读 `tests/test_architecture.py` 的引用字段守卫 → 它只盯 `reference_library_ids` 字段名，本改动**不触发**；
+7. 读 `migrations/versions/e5b91c4d7a26_*`（数据搬迁型迁移先例）+ `db/base.py` 的 `TimestampMixin`/`UUIDMixin` → 迁移写法与列定义照抄；
+8. 读 `tests/test_migrations.py` → 已有守卫：`compare_metadata` 零差异、空库能升 head、每个迁移必须有 `downgrade`、**带数据的库也要能升上来**（这正是本次改动的风险点）；
+9. `alembic heads` → 迁移链当前 head 为 `c4f1a82e7b60`，新迁移挂在它后面。
+
+**结论**：成立，且形状可照 `LibraryPackItem`。
+
+**改动**：
+- **模型**（`modules/library/models.py`）：新增 `LibraryDownloadJobAsset(job_id, asset_id, position)`；`LibraryDownloadJob.asset_ids`（JSON）→ `asset_count`（冗余计数，与既有的 `size_bytes` 同一做法——任务的资产集合创建后不可变）；
+- **引用检查**（`modules/library/references.py`）：`DownloadJobReferences` 从「JSON 文本粗筛 + 二次比对」改成关联表上的**一次 `IN` 查询**；`_escape_like` 一并删掉；
+- **写入/读取/清理**（`modules/library/downloads.py`）：建任务时写关联行（`position` = 下标）；打包时按 `position` 读回顺序；GC 删历史行时**一并删关联行**（无外键，级联得自己写）；
+- **来源声明**（`modules/library/__init__.py`）：`name` / `location` 改指新表；
+- **迁移**（`migrations/versions/b7c4e91f2a58_download_job_assets_table.py`）：建表 + 索引 → **把存量 `asset_ids` 逐行搬进关联表并回填 `asset_count`** → 删 JSON 列（sqlite 走 `batch_alter_table`）；`downgrade()` 反向搬回并删表；
+- **测试**（`tests/library_support.py`、`tests/test_library_downloads.py`）：helper 造任务时写关联行；`fetch_download_job` 改从关联表取清单；
+- **新增** `tests/test_download_job_assets_table.py`（7 条）：清单在关联表且 JSON 列没了（**模型层 + 库层都查**）/ `position` 保住顺序 / 端到端包内序号 001-002-003 / 引用检查只报真正被引用的资产 / 前缀相似的两个 id 不互相误报 / **源码守卫**（`references.py` 不许再出现 `.like(`）/ GC 清历史行后关联行不残留；
+- **新增** `tests/test_migrations.py::test_download_job_manifest_moves_to_the_link_table`：带数据的旧库升上来 → 关联表 3 行且**顺序不变**、`asset_count` 回填、JSON 列消失。
+
+**验证**：
+- `tests/test_download_job_assets_table.py` 7 passed；`tests/test_migrations.py` 10 passed（含 `compare_metadata` 零差异）；
+- **手工复验迁移**（临时 sqlite 库，跑完即删）：upgrade → 关联表行/计数/列结构全对；downgrade → JSON 列回来、计数列与关联表消失；
+- 后端全量 **1835 passed, 14 skipped**（1827 + 8）；`ruff check src tests` All checks passed。
+
+**过程中修掉的一处隐患**：迁移里一开始把 Python `datetime` 直接绑给 sqlite（走 sqlite3 的**默认 datetime adapter**）——Python 3.12 起已弃用，且写出的格式带 `+00:00` 与 ORM 写入的格式（无时区后缀）不一致。改为**按方言给不同形状**：sqlite 传与 ORM 逐字一致的字符串，PG 传 aware datetime（`timestamptz` 需要时区）。改后回归里那条弃用警告消失。
+
+**残留（如实记录）**：
+1. 关联表**刻意没加外键**（与 `library_pack_items` 同，本模块约定「关系由应用层维护」）→ 级联删除只能靠应用层写对；已用一条用例钉住「GC 删历史行时关联行不残留」，但**别的地方将来若新增删除路径，需自己确认**；
+2. `asset_count` 是**冗余计数**，与既有的 `size_bytes` 一样依赖「任务的资产集合创建后不可变」这个前提；
+3. 生图 `reference_json`、视频 `reference_library_ids` **仍是 JSON 列**——本轮只拆了下载任务这一支（它是唯一带**顺序**语义、且直接参与不可逆删除判据的那支）。若要彻底统一模型，这是剩下的两处。
+
 ## 4. 待核实 / 待确认 汇总（滚动更新）
 
 ### 待核实
@@ -263,7 +305,7 @@
 | H4 / M13 / M16 | 架构 | 幂等键格式规范、事件去重 vs 内容去重的边界、override 顺序规则 |
 | H11 | 架构 | LibTV 专属面：可选协议化还是拆独立模块 |
 | T30 | 已拍板 | PG 迁移闸观察期——维持暂不动 |
-| M7 子项 | 架构 | 「下载任务的资产引用拆成关联表」要不要做——迁移 + 模型改写 + 引用检查改写 + 旧数据兼容，属独立的大重构 |
+| M7 子项 | 已拍板并完成 | 「下载任务的资产引用拆成关联表」——用户拍板「直接做 1」，已实现（§3.7） |
 
 ## 5. 提交与验证口径
 
