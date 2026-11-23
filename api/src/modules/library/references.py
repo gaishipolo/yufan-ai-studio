@@ -16,7 +16,7 @@
 
 ## 查什么
 
-- `library_download_jobs`：有人已经把它打进下载包（打包任务还没过期）。
+- `library_download_job_assets`：有人已经把它打进下载包（打包任务还没过期）。
 
 不查的：`library_asset_groups`（共享关系，删除矩阵已经先拦）、
 `library_asset_tags`（标签不是引用）、`library_asset_generation.reference_asset_ids`
@@ -30,19 +30,15 @@ from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
 
-from sqlalchemy import String, cast, select
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.exceptions import Unavailable
-from modules.library.models import LibraryDownloadJob
+from modules.library.models import LibraryDownloadJob, LibraryDownloadJobAsset
 
 __all__ = ["DownloadJobReferences"]
 
 _MAX_IDS = 200
-
-
-def _escape_like(value: str) -> str:
-    return value.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
 def _wanted(asset_ids: Sequence[str]) -> list[str]:
@@ -67,7 +63,12 @@ def _wanted(asset_ids: Sequence[str]) -> list[str]:
 
 
 class DownloadJobReferences:
-    """`library_download_jobs.asset_ids`：已经打进下载包的资产。"""
+    """`library_download_job_assets`：已经打进下载包的资产。
+
+    查的是关联表，不是在 JSON 文本里做子串粗筛——粗筛的问题是「字符串里
+    恰好出现了这个 id」不等于「这个 id 在清单里」，而这个判据的落点是不可
+    逆删除（漏查 = 没人引用 = 放行）。
+    """
 
     async def references(
         self, session: AsyncSession, asset_ids: Sequence[str]
@@ -75,18 +76,22 @@ class DownloadJobReferences:
         wanted = _wanted(asset_ids)
         if not wanted:
             return {}
-        found: dict[str, list[str]] = {}
-        # JSON 列没法跨方言按元素查：先按子串粗筛（只会多捞），再精确比对
-        for asset_id in wanted:
-            job_rows = await session.execute(
-                select(LibraryDownloadJob.id, LibraryDownloadJob.asset_ids).where(
-                    LibraryDownloadJob.status.in_(("queued", "running", "succeeded")),
-                    cast(LibraryDownloadJob.asset_ids, String).like(
-                        f"%{_escape_like(asset_id)}%", escape="\\"
+        rows = (
+            await session.execute(
+                select(LibraryDownloadJobAsset.asset_id, LibraryDownloadJob.id)
+                .join(
+                    LibraryDownloadJob,
+                    LibraryDownloadJob.id == LibraryDownloadJobAsset.job_id,
+                )
+                .where(
+                    LibraryDownloadJobAsset.asset_id.in_(wanted),
+                    LibraryDownloadJob.status.in_(
+                        ("queued", "running", "succeeded")
                     ),
                 )
             )
-            for job_id, asset_ids_in_job in job_rows.all():
-                if asset_id in (asset_ids_in_job or []):
-                    found.setdefault(asset_id, []).append(f"下载任务 {job_id}")
+        ).all()
+        found: dict[str, list[str]] = {}
+        for asset_id, job_id in rows:
+            found.setdefault(str(asset_id), []).append(f"下载任务 {job_id}")
         return found

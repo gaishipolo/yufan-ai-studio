@@ -43,9 +43,9 @@ register_library_ingest(SqlLibraryIngest())
 # 声明，CI 直接红，不必等用户发现「删掉的图裂了」。
 LIBRARY_REFERENCE_SOURCES = (
     LibraryReferenceSource(
-        name="library_download_jobs.asset_ids",
+        name="library_download_job_assets",
         checker=DownloadJobReferences(),
-        location="modules/library/models.py:LibraryDownloadJob.asset_ids",
+        location="modules/library/models.py:LibraryDownloadJobAsset",
         description="已经打进下载包的任务（仅 queued / running / succeeded）",
     ),
 )

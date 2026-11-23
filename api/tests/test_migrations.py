@@ -436,3 +436,81 @@ def test_slot_source_is_folded_into_type_with_data(
     # 槽位行：同上，且新列有默认值
     assert rows == [("source", "video", ""), ("views", "image", "")]
     assert "source" not in columns
+
+
+def test_download_job_manifest_moves_to_the_link_table(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """下载任务的资产清单从 JSON 列搬到关联表，**带数据的库**也要搬对。
+
+    搬错的后果分两种，两样都**不会报错**：
+
+    - 漏搬 → 引用检查查不到 → 判成「没人引用」→ 不可逆删除放行；
+    - 顺序丢了 → 包内文件序号乱（序号来自清单顺序）。
+
+    所以这两条都要钉住：关联表里有几行、行序如何、计数列有没有回填、
+    JSON 列是不是真的没了。
+
+    做法：升到搬迁之前那一版 → 手工塞一条带 3 个资产的任务 → 升到 head。
+    """
+    import json
+    import sqlite3
+
+    from core.config import reload_settings
+    from db import session as db_session
+
+    db_file = tmp_path / "downloads.db"
+    monkeypatch.setenv("DB_URL", f"sqlite+aiosqlite:///{db_file.as_posix()}")
+    reload_settings()
+    db_session.reset_state_for_tests()
+    try:
+        config = _config()
+        command.upgrade(config, "c4f1a82e7b60")  # 搬迁之前那一版
+        conn = sqlite3.connect(db_file)
+        try:
+            conn.execute(
+                "INSERT INTO library_download_jobs (id, owner_id, asset_ids, status,"
+                " storage_key, size_bytes, error, created_at, updated_at)"
+                " VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    "job-1",
+                    "u1",
+                    json.dumps(["a1", "a2", "a3"]),
+                    "succeeded",
+                    "library/downloads/x.zip",
+                    0,
+                    "",
+                    "2026-01-01 00:00:00.000000",
+                    "2026-01-01 00:00:00.000000",
+                ),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        command.upgrade(config, "head")
+
+        conn = sqlite3.connect(db_file)
+        try:
+            rows = conn.execute(
+                "SELECT job_id, asset_id, position FROM library_download_job_assets"
+                " ORDER BY job_id, position"
+            ).fetchall()
+            counts = conn.execute(
+                "SELECT id, asset_count FROM library_download_jobs"
+            ).fetchall()
+            columns = [
+                row[1] for row in conn.execute("PRAGMA table_info(library_download_jobs)")
+            ]
+        finally:
+            conn.close()
+    finally:
+        reload_settings()
+        db_session.reset_state_for_tests()
+
+    # 清单搬过来了，顺序不变
+    assert rows == [("job-1", "a1", 0), ("job-1", "a2", 1), ("job-1", "a3", 2)], rows
+    # 冗余的个数回填了（列表页显示「几个文件」靠它）
+    assert counts == [("job-1", 3)], counts
+    # 旧 JSON 列真的没了
+    assert "asset_ids" not in columns, columns

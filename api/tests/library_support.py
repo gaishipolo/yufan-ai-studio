@@ -323,7 +323,7 @@ def insert_download_job(asset_id: str) -> str:
     引用检查的两个来源里，封装那支已随「素材封装」下线（2026-11-16），
     剩下的是下载任务 —— 它挡的是不可逆删除，所以这条闸必须仍然可测。
     """
-    from modules.library.models import LibraryDownloadJob
+    from modules.library.models import LibraryDownloadJob, LibraryDownloadJobAsset
 
     async def run() -> str:
         from db.session import get_session_factory
@@ -331,10 +331,14 @@ def insert_download_job(asset_id: str) -> str:
         async with get_session_factory()() as session:
             job = LibraryDownloadJob(
                 owner_id="system",
-                asset_ids=[asset_id],
+                asset_count=1,
                 status="queued",
             )
             session.add(job)
+            await session.flush()
+            session.add(
+                LibraryDownloadJobAsset(job_id=job.id, asset_id=asset_id, position=0)
+            )
             await session.commit()
             return job.id
 
@@ -417,20 +421,29 @@ def backdate_download(
 
 
 def fetch_download_job(job_id: str) -> dict[str, Any] | None:
-    from modules.library.models import LibraryDownloadJob
+    from modules.library.models import LibraryDownloadJob, LibraryDownloadJobAsset
 
     async def run() -> dict[str, Any] | None:
+        from sqlalchemy import select
+
         from db.session import get_session_factory
 
         async with get_session_factory()() as session:
             row = await session.get(LibraryDownloadJob, job_id)
             if row is None:
                 return None
+            asset_ids = (
+                await session.execute(
+                    select(LibraryDownloadJobAsset.asset_id)
+                    .where(LibraryDownloadJobAsset.job_id == job_id)
+                    .order_by(LibraryDownloadJobAsset.position)
+                )
+            ).scalars().all()
             return {
                 "status": row.status,
                 "storage_key": row.storage_key,
                 "size_bytes": row.size_bytes,
-                "asset_ids": list(row.asset_ids or []),
+                "asset_ids": [str(asset_id) for asset_id in asset_ids],
                 "error": row.error,
             }
 

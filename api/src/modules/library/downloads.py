@@ -57,6 +57,7 @@ from modules.library.errors import DownloadEmpty, DownloadNotReady, DownloadTooL
 from modules.library.models import (
     LibraryAsset,
     LibraryDownloadJob,
+    LibraryDownloadJobAsset,
     LibraryPackItem,
 )
 from modules.library.schema import DownloadIn, DownloadJobOut, DownloadSkip
@@ -127,10 +128,22 @@ class DownloadService:
 
         job = LibraryDownloadJob(
             owner_id=actor.id,
-            asset_ids=[row.id for row in selected],
+            asset_count=len(selected),
             status=QUEUED,
         )
         self.session.add(job)
+        # 资产清单写进关联表（不是 JSON 列）：引用检查要靠它判断「这条资产
+        # 能不能彻底删除」，那必须是一次精确的 `IN` 查询，而不是在 JSON
+        # 文本里做子串粗筛（粗筛漏查 = 没人引用 = 不可逆删除放行）。
+        await self.session.flush()
+        for position, row in enumerate(selected):
+            self.session.add(
+                LibraryDownloadJobAsset(
+                    job_id=job.id,
+                    asset_id=row.id,
+                    position=position,
+                )
+            )
         await self.session.commit()
         try:
             await enqueue_download(job.id)
@@ -299,7 +312,7 @@ class DownloadService:
         return DownloadJobOut(
             id=row.id,
             status=row.status,
-            asset_count=len(row.asset_ids or []),
+            asset_count=row.asset_count,
             size_bytes=row.size_bytes,
             error=row.error,
             download_url=download_url,
@@ -418,7 +431,17 @@ async def build_download(job_id: str) -> None:
             logger.info("打包任务已被别人领走，跳过 id=%s", job_id)
             return
 
-        asset_ids = [str(asset_id) for asset_id in (row.asset_ids or [])]
+        # 清单在关联表里，`position` 就是包内顺序（包内文件按 001_名 命名）
+        asset_ids = [
+            str(asset_id)
+            for asset_id in (
+                await session.execute(
+                    select(LibraryDownloadJobAsset.asset_id)
+                    .where(LibraryDownloadJobAsset.job_id == row.id)
+                    .order_by(LibraryDownloadJobAsset.position)
+                )
+            ).scalars().all()
+        ]
         notes: list[str] = []
         key = ""
         size = 0
@@ -705,6 +728,14 @@ async def run_download_gc(
             report.purged += 1
             if dry_run:
                 continue
+            # 关联行一并删掉：关联表**刻意没加外键**（本模块的约定是关系由
+            # 应用层维护），所以级联删除得自己写——留着孤儿行会让引用检查
+            # 报出「这个资产还被下载任务 xxx 引用」，而那个任务早就不存在了。
+            await session.execute(
+                delete(LibraryDownloadJobAsset).where(
+                    LibraryDownloadJobAsset.job_id == row.id
+                )
+            )
             await session.execute(
                 delete(LibraryDownloadJob).where(LibraryDownloadJob.id == row.id)
             )

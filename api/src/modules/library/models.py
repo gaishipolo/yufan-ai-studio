@@ -391,7 +391,16 @@ class LibraryDownloadJob(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "library_download_jobs"
 
     owner_id: Mapped[str] = mapped_column(String(32), nullable=False)
-    asset_ids: Mapped[list] = mapped_column(JSON, default=list, nullable=False)
+    # 资产清单在 `library_download_job_assets`（关联表），这里只留**个数**。
+    #
+    # 为什么不留 JSON 列表：引用检查（「这条资产能不能彻底删除」）原来靠
+    # `LIKE '%"id"%'` 在 JSON 文本里粗筛——那是「字符串里恰好出现了这个 id」，
+    # 不是「这个 id 在列表里」。列被改名、格式变了、或者 id 出现在别的字段里，
+    # 查询就查不到，于是「没人引用」被误判 → 不可逆删除放行 → 引用方裂图。
+    #
+    # 为什么留个数（而不是每次列表都回表数一遍）：任务的资产集合创建后
+    # **不可变**，所以这是个安全的冗余；`size_bytes` 是同样的做法。
+    asset_count: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     status: Mapped[str] = mapped_column(String(12), default="queued", nullable=False)
     storage_key: Mapped[str] = mapped_column(String(256), default="", nullable=False)
     size_bytes: Mapped[int] = mapped_column(BigInteger, default=0, nullable=False)
@@ -405,4 +414,33 @@ class LibraryDownloadJob(Base, UUIDMixin, TimestampMixin):
         # `ConstraintColumnNotFoundError`。
         Index("ix_library_download_jobs_owner", "owner_id"),
         Index("ix_library_download_jobs_expiry", "status", "expires_at"),
+    )
+
+
+class LibraryDownloadJobAsset(Base, UUIDMixin, TimestampMixin):
+    """打包任务里的一个资产（**有序**）。
+
+    这是「下载任务的资产引用」的唯一真相。引用检查（「这条资产能不能彻底
+    删除」）查它一次普通的 `IN` 查询即可，索引直接可用——不再需要在 JSON
+    文本里做子串粗筛，也就不会出现「查不到 = 没人引用」的误判。
+
+    `position` 保留打包顺序：包内文件按 `001_名`、`002_名` 命名，顺序是
+    用户勾选的顺序。
+
+    刻意**不加外键**（与 `LibraryPackItem` 同）：本模块的约定是「关系由
+    应用层维护」，而引用检查本身就是要回答「还引用着吗」——用外键把这个
+    问题变成插入/删除时的约束冲突，会把「能不能删」的判断挪到写入时刻，
+    反而答不清。
+    """
+
+    __tablename__ = "library_download_job_assets"
+
+    job_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    asset_id: Mapped[str] = mapped_column(String(32), nullable=False)
+    position: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
+
+    __table_args__ = (
+        Index("uq_library_download_job_assets", "job_id", "asset_id", unique=True),
+        Index("ix_library_download_job_assets_asset", "asset_id"),
+        Index("ix_library_download_job_assets_job", "job_id", "position"),
     )
