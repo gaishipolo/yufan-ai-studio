@@ -33,6 +33,7 @@ from collections.abc import Mapping, Sequence
 from sqlalchemy import String, cast, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from core.exceptions import Unavailable
 from modules.library.models import LibraryDownloadJob
 
 __all__ = ["DownloadJobReferences"]
@@ -45,7 +46,24 @@ def _escape_like(value: str) -> str:
 
 
 def _wanted(asset_ids: Sequence[str]) -> list[str]:
-    return [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id][:_MAX_IDS]
+    """去重后的 id 列表。**超上限就报错，不静默截断。**
+
+    静默截断在这里是危险的：这个函数的返回值直接决定「这条资产能不能
+    彻底删除」。丢掉一部分 id = 少查一批引用 = 「查不到 = 没人引用」
+    ——而本文件开头整段都在说这个等式不成立。不可逆删除一旦因此放行，
+    只能靠备份找回。
+
+    抛 `Unavailable`（503）而不是 `BadRequest`（400）：这是**服务端调用方式**
+    的问题，不是用户的输入问题；而且删除路径必须 fail-closed——宁可这次
+    不删，也不要在可能漏查的前提下删掉。
+    """
+    wanted = [asset_id for asset_id in dict.fromkeys(asset_ids) if asset_id]
+    if len(wanted) > _MAX_IDS:
+        raise Unavailable(
+            f"一次最多检查 {_MAX_IDS} 个资产引用，收到 {len(wanted)} 个："
+            "拒绝在可能漏查的前提下做删除判断，请分批处理"
+        )
+    return wanted
 
 
 class DownloadJobReferences:
