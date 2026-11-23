@@ -389,6 +389,10 @@ class Settings(BaseSettings):
     # 一个几百万行的任务表就能把 worker 的 RSS 打满；而 worker 是共享进程，
     # 会连带同一进程里其他模块的 job 一起 OOM。
     export_max_rows: int = 100_000
+    # 单次导出的**字节**上限。行数上限挡不住「行少但每行很长」：几百行长文本
+    # 也能堆出几百 MB。字节熔断是最后一道闸，宁可明确失败也不要吃穿内存
+    # （worker 是共享进程，会连带同进程里其他模块的 job 一起 OOM）。
+    export_max_bytes: int = 64 * 1024 * 1024
     # 产物保留时长（小时）。到期由周期任务 `export.reclaim` 删字节，**记录行保留**
     # （状态转 expired），这样「上周导过什么」查得到，只是文件没了。
     export_ttl_hours: int = 168

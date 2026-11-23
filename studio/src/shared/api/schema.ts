@@ -1367,6 +1367,8 @@ export interface ShareRequestOut {
   id: string;
   assetId: string;
   assetName?: string;
+  stateVersion?: number;
+  requestStateVersion?: number;
   applicantId: string;
   applicantName?: string | null;
   action: ShareAction;

@@ -14540,6 +14540,16 @@
             "title": "Assetname",
             "default": ""
           },
+          "stateVersion": {
+            "type": "integer",
+            "title": "Stateversion",
+            "default": 0
+          },
+          "requestStateVersion": {
+            "type": "integer",
+            "title": "Requeststateversion",
+            "default": 0
+          },
           "applicantId": {
             "type": "string",
             "title": "Applicantid"

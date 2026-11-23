@@ -64,6 +64,81 @@ def test_bulk_delete_reports_partial_failure(client: TestClient, api: str) -> No
     assert fetch_asset(shared["id"])["state"] == "active"  # type: ignore[index]
 
 
+def test_bulk_rename_requires_a_version(client: TestClient, api: str) -> None:
+    """批量改名必须带版本：缺了就 400，不能静默按「不校验」处理。
+
+    0 在 `LibraryService._check_version` 里是「不校验」。批量入口若默认取 0，
+    A 打开列表后 B 改了名，A 批量改名会把 B 的修改冲掉且没有提示——批量接口
+    看着有并发保护，实际没有（见 REVIEW_2026-11-23 重要#5、一般#6）。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    asset = upload_image(client, api, owner_h, color="lightblue")
+
+    missing = _bulk(
+        client,
+        api,
+        owner_h,
+        {"ids": [asset["id"]], "action": "rename", "payload": {"name": "新名字"}},
+    )
+    assert missing.status_code == 400, missing.text
+    assert "expectedVersions" in missing.json()["message"]
+
+    version = fetch_asset(asset["id"])["state_version"]
+    ok = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [asset["id"]],
+            "action": "rename",
+            "payload": {"name": "新名字"},
+            "expectedVersions": {asset["id"]: version},
+        },
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["data"]["succeeded"] == 1
+    detail = client.get(f"{api}/library/assets/{asset['id']}", headers=owner_h)
+    # 改名默认保留原扩展名（keep_extension）
+    assert detail.json()["data"]["name"].startswith("新名字")
+
+
+def test_bulk_rename_reports_a_stale_version_per_item(client: TestClient, api: str) -> None:
+    """版本过期的条目逐条报错，其余照常提交（不整体回滚）。"""
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, LIB_RW)
+    first = upload_image(client, api, owner_h, color="lightblue")
+    second = upload_image(client, api, owner_h, color="lightgreen")
+
+    # 只给第一条对版本，第二条给一个过时的版本
+    versions = {
+        first["id"]: fetch_asset(first["id"])["state_version"],
+        second["id"]: fetch_asset(second["id"])["state_version"] + 99,
+    }
+    result = _bulk(
+        client,
+        api,
+        owner_h,
+        {
+            "ids": [first["id"], second["id"]],
+            "action": "rename",
+            "payload": {"name": "批量改名"},
+            "expectedVersions": versions,
+        },
+    )
+    assert result.status_code == 200, result.text
+    data = result.json()["data"]
+    assert data["succeeded"] == 1
+    assert data["failed"] == 1
+    by_id = {item["id"]: item for item in data["results"]}
+    assert by_id[first["id"]]["ok"] is True
+    assert by_id[second["id"]]["ok"] is False
+    assert by_id[second["id"]]["errorCode"] == 40900
+    # 版本过期的那条不能被改名
+    detail = client.get(f"{api}/library/assets/{second['id']}", headers=owner_h)
+    assert detail.json()["data"]["name"] == second["name"]
+
+
 def test_bulk_revoke_rejects_a_stale_version(client: TestClient, api: str) -> None:
     """批量撤销共享的 expected_version 之前没人消费。
 
@@ -252,6 +327,11 @@ def test_bulk_share_reports_partial_failure(client: TestClient, api: str) -> Non
             "ids": [plain["id"], already["id"]],
             "action": "requestShare",
             "payload": {"target": "team", "reason": "给全员看"},
+            # 批量共享要带版本（共享申请会写申请单快照，版本不对就该拒）
+            "expectedVersions": {
+                plain["id"]: fetch_asset(plain["id"])["state_version"],
+                already["id"]: fetch_asset(already["id"])["state_version"],
+            },
         },
     )
     assert result.status_code == 200, result.text
@@ -288,7 +368,14 @@ def test_bulk_share_by_non_owner_stays_pending(client: TestClient, api: str) -> 
         client,
         api,
         other_h,
-        {"ids": ids, "action": "requestShare", "payload": {"target": "team"}},
+        {
+            "ids": ids,
+            "action": "requestShare",
+            "payload": {"target": "team"},
+            "expectedVersions": {
+                asset_id: fetch_asset(asset_id)["state_version"] for asset_id in ids
+            },
+        },
     )
     assert result.status_code == 200, result.text
     assert result.json()["data"]["succeeded"] == 2

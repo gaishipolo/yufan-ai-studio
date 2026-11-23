@@ -238,6 +238,7 @@ Authorization: Bearer <accessToken>
 | `41381` | 413 | library | `LibraryFileTooLarge` | 文件不能超过 300MB |
 | `41382` | 413 | library | `DownloadTooLarge` | 单次打包超出上限 |
 | `41383` | 413 | library | `LibraryTextTooLarge` | 文本资产不能超过 1MB |
+| `41391` | 413 | export | `ExportTooLarge` | 导出内容过大，请缩小筛选范围后重试 |
 | `42900` | 429 | 框架 | `RateLimited` | 请求过于频繁，请稍后再试 |
 | `50100` | 501 | 框架 | `NotImplementedFeature` | 该功能尚未实现 |
 | `50200` | 502 | 框架 | `UpstreamError` | 上游服务异常 |
@@ -2660,6 +2661,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -2688,6 +2691,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `[].id` | `string` | 是 |  |
 | `[].assetId` | `string` | 是 |  |
 | `[].assetName` | `string` | 否 |  |
+| `[].stateVersion` | `number` | 否 |  |
+| `[].requestStateVersion` | `number` | 否 |  |
 | `[].applicantId` | `string` | 是 |  |
 | `[].applicantName` | `string \| null` | 否 |  |
 | `[].action` | `ShareAction` | 是 |  |
@@ -2726,6 +2731,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -2754,6 +2761,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -2789,6 +2798,8 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |
@@ -5168,6 +5179,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `id` | `string` | 是 |  |
 | `assetId` | `string` | 是 |  |
 | `assetName` | `string` | 否 |  |
+| `stateVersion` | `number` | 否 |  |
+| `requestStateVersion` | `number` | 否 |  |
 | `applicantId` | `string` | 是 |  |
 | `applicantName` | `string \| null` | 否 |  |
 | `action` | `ShareAction` | 是 |  |

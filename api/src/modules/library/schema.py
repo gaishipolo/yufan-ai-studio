@@ -520,6 +520,9 @@ class ShareRequestIn(CamelModel):
     target: ShareTarget = ShareTarget.GROUP
     group_id: str = ""
     reason: str = Field(default="", max_length=200)
+    # TODO(P2-2): `0` 既是「合法取值范围外」又是「不校验」的哨兵值 ——
+    # 漏传版本会被静默当成不校验（REVIEW_2026-11-23 严重#1）。
+    # 方案与迁移路径见 docs/FIX_ITEM_P2-2_2026-11-23.md（本轮只立项，不实施）。
     expected_version: int = 0
 
 
@@ -527,6 +530,8 @@ class ShareDecisionIn(CamelModel):
     """审批 / 驳回 / 撤回申请单。`note` 会进申请单与审计。"""
 
     note: str = Field(default="", max_length=200)
+    # TODO(P2-2): 同 `ShareRequestIn.expected_version`——0 的双重语义待拆分，
+    # 见 docs/FIX_ITEM_P2-2_2026-11-23.md。
     expected_version: int = 0
 
 
@@ -534,6 +539,12 @@ class ShareRequestOut(CamelModel):
     id: str
     asset_id: str
     asset_name: str = ""
+    # 资产**当前**版本。审批人据此回传，后端比对不一致就 409，
+    # 避免「基于旧界面的审批」生效。
+    state_version: int = 0
+    # 申请单入库时的资产版本**快照**。用来提示「该申请基于旧版本」，
+    # 让审批人知道资产在申请之后被改过。与 `state_version` 语义不同，别混用。
+    request_state_version: int = 0
     applicant_id: str
     applicant_name: str | None = None
     action: ShareAction
@@ -550,6 +561,7 @@ class ShareRequestOut(CamelModel):
 
 class DraftDecisionIn(CamelModel):
     reason: str = Field(default="", max_length=200)
+    # TODO(P2-2): 同上——0 的双重语义待拆分，见 docs/FIX_ITEM_P2-2_2026-11-23.md。
     expected_version: int = 0
 
 
@@ -576,6 +588,9 @@ class BulkIn(CamelModel):
     ids: list[str] = Field(min_length=1, max_length=100)
     action: BulkAction
     payload: dict = Field(default_factory=dict)
+    # TODO(P2-2): 「缺 key」与「版本 0」目前不可区分。批量入口已经对会消费
+    # 版本的动作做了必填校验（P0-4），但类型上这层语义仍有歧义，
+    # 见 docs/FIX_ITEM_P2-2_2026-11-23.md。
     expected_versions: dict[str, int] = Field(default_factory=dict)
 
 

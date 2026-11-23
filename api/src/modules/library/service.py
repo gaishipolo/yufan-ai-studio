@@ -1429,7 +1429,12 @@ class LibraryService:
         return (LibraryAsset.created_at.desc(), LibraryAsset.id.desc())
 
     def _check_version(self, row: LibraryAsset, expected: int) -> None:
-        """乐观锁。`expected=0` 表示不校验——单页操作没必要为了一个数字失败一次。"""
+        """乐观锁。`expected=0` 表示不校验——单页操作没必要为了一个数字失败一次。
+
+        TODO(P2-2): `0` 当哨兵值有双重语义（漏传版本 = 静默不校验），
+        而资产的 `state_version` 从 1 起，0 根本不是合法版本。
+        拆分方案与迁移路径见 docs/FIX_ITEM_P2-2_2026-11-23.md（本轮只立项）。
+        """
         if expected and row.state_version != expected:
             raise Conflict(
                 "资产已被修改，请刷新后重试",

@@ -43,3 +43,17 @@ class ExportGone(AppError):
     code = errors.code(410, 1)
     message = "导出文件已过保留期被回收，请重新导出"
     http_status = 410
+
+
+class ExportTooLarge(AppError):
+    """产物超过字节上限。
+
+    行数上限（`export_max_rows`）挡不住「行少但每行很长」的情况：几百行的
+    长文本也能堆出几百 MB。字节熔断是最后一道闸：**明确失败并告诉用户怎么
+    缩小范围**，好过把 worker 进程的内存吃穿（worker 是共享进程，会连带
+    同进程里其他模块的 job 一起 OOM）。
+    """
+
+    code = errors.code(413, 1)
+    message = "导出内容过大，请缩小筛选范围后重试"
+    http_status = 413

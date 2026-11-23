@@ -1049,3 +1049,167 @@ def test_require_scan_is_not_vacuous() -> None:
     )
     assert len(codes) >= 15, f"只扫到 {len(codes)} 个字面量权限码（预期 ≥15）：解析口径变了"
     assert "library:read" in codes, "连确定以字面量出现的 library:read 都没扫到，文件定位有问题"
+
+
+# --------------------------------------------------------------------------- #
+# 写操作必须带版本
+#
+# 0 在版本比对里是「不校验」。前端固定传 0、后端 `if payload.expected_version`
+# 于是长期空转：接口看着有并发保护，实际上一条基于旧快照的写照样生效
+# （REVIEW_2026-11-23 严重#1 / 重要#5）。这类缺口靠 review 抓不干净——
+# 写的人只会觉得「先留个 0 表示不关心」，所以用机器守住。
+# --------------------------------------------------------------------------- #
+#: 会消费资产版本的入参模型 → 版本字段名
+_VERSIONED_INPUTS = {
+    "BulkIn": "expected_versions",
+    "AssetPatchIn": "expected_version",
+    "DraftDecisionIn": "expected_version",
+    "ShareRequestIn": "expected_version",
+    "ShareDecisionIn": "expected_version",
+}
+
+
+def _version_problems(path: Path) -> list[str]:
+    """一个文件里「写操作没带版本 / 版本写死 0」的问题清单。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        name = _base_name(node.func)
+        field = _VERSIONED_INPUTS.get(name)
+        if field is None:
+            continue
+        value = next((kw.value for kw in node.keywords if kw.arg == field), None)
+        if value is None:
+            problems.append(f"{path.name}:{node.lineno} {name}() 没带 {field}")
+        elif isinstance(value, ast.Constant) and value.value == 0:
+            problems.append(f"{path.name}:{node.lineno} {name}() 的 {field} 写死 0（= 不校验）")
+    return problems
+
+
+def test_write_inputs_always_carry_the_asset_version() -> None:
+    """素材库的写操作入参必须带版本，且不能是字面量 0。
+
+    缺版本 → 静默按「不校验」处理 → A 打开列表后 B 改了名，A 的批量改名会把
+    B 的修改冲掉，且没有任何提示（REVIEW_2026-11-23 重要#5 / 一般#6）。
+    """
+    problems: list[str] = []
+    checked = 0
+    for path in _python_files(MODULES_DIR / "library"):
+        found = _version_problems(path)
+        checked += len(
+            [
+                node
+                for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+                if isinstance(node, ast.Call) and _base_name(node.func) in _VERSIONED_INPUTS
+            ]
+        )
+        problems.extend(found)
+
+    assert checked >= 3, (
+        f"只扫到 {checked} 处版本化入参构造（预期 ≥3）：扫描口径退化了，"
+        "这条守卫会永远绿"
+    )
+    assert not problems, "写操作没有真正带上版本：\n" + "\n".join(f"  - {p}" for p in problems)
+
+
+def test_version_guard_catches_a_missing_or_zero_version(tmp_path: Path) -> None:
+    """守卫自身的自检：故意违规的样例必须被抓出来。"""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "AssetPatchIn(name='x')\n"
+        "AssetPatchIn(name='x', expected_version=0)\n"
+        "DraftDecisionIn(reason='ok')\n",
+        encoding="utf-8",
+    )
+    problems = _version_problems(sample)
+    assert len(problems) == 3, f"自检失败：应该抓到 3 处，实际 {problems}"
+
+
+# --------------------------------------------------------------------------- #
+# 对外错误字段不得写原始异常
+#
+# `str(exc)` 里可能有内部路径、SQL 片段、数据库连接串、上游地址。这些字段
+# 会随列表/详情接口返回前端，等于开了一条信息泄露通道
+# （REVIEW_2026-11-23 重要#3）。完整 traceback 只进日志。
+# --------------------------------------------------------------------------- #
+#: 常见的异常变量名
+_EXCEPTION_NAMES = {"exc", "e", "err", "error", "exception"}
+
+
+def _error_field_problems(path: Path) -> list[str]:
+    """一个文件里「把原始异常写进对外错误字段」的问题清单。"""
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    problems: list[str] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign):
+            continue
+        if not any(
+            isinstance(target, ast.Attribute) and target.attr == "error" for target in node.targets
+        ):
+            continue
+        value = node.value
+        if isinstance(value, ast.Call) and _base_name(value.func) == "str":
+            for arg in value.args:
+                if isinstance(arg, ast.Name) and arg.id.lower() in _EXCEPTION_NAMES:
+                    problems.append(f"{path.name}:{node.lineno} str({arg.id}) 写进了对外错误字段")
+        elif isinstance(value, ast.JoinedStr):
+            names = {
+                inner.id
+                for part in value.values
+                if isinstance(part, ast.FormattedValue)
+                for inner in ast.walk(part.value)
+                if isinstance(inner, ast.Name)
+            }
+            if names & _EXCEPTION_NAMES:
+                problems.append(
+                    f"{path.name}:{node.lineno} f-string 里带了异常变量，写进了对外错误字段"
+                )
+    return problems
+
+
+def test_outward_error_fields_never_carry_the_raw_exception() -> None:
+    """对外错误字段只能写用户文案，不能写 `str(exc)`。
+
+    `record.error` / `job.error` 这类字段会随接口返回前端。
+    """
+    problems: list[str] = []
+    checked = 0
+    for path in _python_files(SRC):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        skip = _docstring_nodes(tree)
+        checked += sum(
+            1
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Assign)
+            and id(node) not in skip
+            and any(
+                isinstance(target, ast.Attribute)
+                and target.attr == "error"
+                for target in node.targets
+            )
+        )
+        problems.extend(_error_field_problems(path))
+
+    assert checked >= 3, (
+        f"只扫到 {checked} 处对外错误字段赋值（预期 ≥3）：扫描口径退化了，"
+        "这条守卫会永远绿"
+    )
+    assert not problems, "对外错误字段写进了原始异常：\n" + "\n".join(f"  - {p}" for p in problems)
+
+
+def test_error_field_guard_catches_a_raw_exception(tmp_path: Path) -> None:
+    """守卫自身的自检：故意违规的样例必须被抓出来。"""
+    sample = tmp_path / "sample.py"
+    sample.write_text(
+        "try:\n"
+        "    pass\n"
+        "except Exception as exc:\n"
+        "    record.error = str(exc)\n"
+        "    job.error = f'打包失败：{exc}'\n"
+        "    other.error = '正常文案'\n",
+        encoding="utf-8",
+    )
+    problems = _error_field_problems(sample)
+    assert len(problems) == 2, f"自检失败：应该抓到 2 处，实际 {problems}"

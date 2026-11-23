@@ -574,3 +574,111 @@ def test_share_to_team_is_visible_to_everyone(client: TestClient, api: str) -> N
     blocked = client.delete(f"{api}/library/assets/{asset['id']}", headers=owner_h)
     assert blocked.status_code == 409
     assert blocked.json()["code"] == 40982
+
+
+# --------------------------------------------------------------------------- #
+# 审批端的乐观锁（P0-1）
+#
+# 申请单是快照：申请时成立，不代表审批时还成立。修复前前端固定传
+# `expectedVersion: 0`，后端 `decide()` 又把 0 当成「不校验」，于是
+# 「基于旧界面的审批」照样生效——共享审批看着有并发保护，实际没有
+# （见 REVIEW_2026-11-23 严重#1）。
+# --------------------------------------------------------------------------- #
+def test_share_request_records_the_asset_version_snapshot(
+    client: TestClient, api: str
+) -> None:
+    """申请单要记住申请时的资产版本。
+
+    `row.expected_version` 以前是个死列：只写不读。它现在的两个职责是——
+    审批端的兜底比对基准、前端「资产已变更」提示的依据。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="navy")
+
+    request = _share(client, api, owner_h, asset["id"], group_id=group["id"]).json()["data"]
+    assert request["status"] == "pending"
+    assert request["requestStateVersion"] == asset["stateVersion"]
+    assert request["stateVersion"] == asset["stateVersion"]
+
+
+def test_approving_with_a_stale_version_is_rejected(
+    client: TestClient, api: str
+) -> None:
+    """审批人看到的版本必须还是当前版本，否则 409。
+
+    旧实现的版本判断是 `if payload.expected_version and ...`：前端固定传 0，
+    判断长期空转。改成「审批人回传看到的版本」之后，基于旧界面的审批
+    会被拦住，刷新后按当前版本再点「通过」才能生效。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="navy")
+
+    request = _share(client, api, owner_h, asset["id"], group_id=group["id"]).json()["data"]
+    seen_version = request["stateVersion"]
+
+    # 审批人打开列表之后，资产被改了名（state_version 前进）
+    renamed = client.patch(
+        f"{api}/library/assets/{asset['id']}",
+        json={"name": "改过的名字"},
+        headers=owner_h,
+    )
+    assert renamed.status_code == 200, renamed.text
+    current_version = renamed.json()["data"]["stateVersion"]
+    assert current_version != seen_version, "改名必须推进 state_version，否则这条用例没意义"
+
+    # 按自己看到的那一版点「通过」→ 409
+    stale = client.post(
+        f"{api}/library/share-requests/{request['id']}/approve",
+        json={"expectedVersion": seen_version},
+        headers=admin,
+    )
+    assert stale.status_code == 409, stale.text
+    assert stale.json()["details"]["stateVersion"] == current_version
+
+    # 刷新后按当前版本再点「通过」→ 200
+    fresh = client.post(
+        f"{api}/library/share-requests/{request['id']}/approve",
+        json={"expectedVersion": current_version},
+        headers=admin,
+    )
+    assert fresh.status_code == 200, fresh.text
+    assert fresh.json()["data"]["status"] == "approved"
+
+
+def test_rejecting_with_a_stale_version_is_still_allowed(
+    client: TestClient, api: str
+) -> None:
+    """驳回不受版本校验限制。
+
+    版本判断只在「通过」时做：驳回一条过时的申请单是正当操作（正是把它关掉的
+    时候）。修复前版本判断写在 approve/reject 分支之前，驳回时也会被 409
+    拦住——于是「按旧界面驳回」这条最安全的操作反而做不了。
+    """
+    admin = admin_headers(client)
+    owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)
+    group = make_group(client, admin, [owner["id"]])
+    asset = upload_image(client, api, owner_h, color="navy")
+
+    request = _share(client, api, owner_h, asset["id"], group_id=group["id"]).json()["data"]
+    seen_version = request["stateVersion"]
+
+    # 资产改名，版本前进
+    renamed = client.patch(
+        f"{api}/library/assets/{asset['id']}",
+        json={"name": "改过的名字"},
+        headers=owner_h,
+    )
+    assert renamed.status_code == 200, renamed.text
+
+    # 按旧版本驳回：必须放行
+    rejected = client.post(
+        f"{api}/library/share-requests/{request['id']}/reject",
+        json={"expectedVersion": seen_version},
+        headers=admin,
+    )
+    assert rejected.status_code == 200, rejected.text
+    assert rejected.json()["data"]["status"] == "rejected"

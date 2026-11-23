@@ -50,6 +50,34 @@ PERMISSION_BY_ACTION = {
     BulkAction.REQUEST_REVOKE: "library:share",
 }
 
+#: 这些动作会把版本透传给下游服务做乐观锁比对（改名会覆盖名字、草稿决策会改状态、
+#: 共享申请会写申请单快照）。
+#:
+#: 缺版本时不能静默当成 0 —— 0 在 `LibraryService._check_version` 里是「不校验」，
+#: 那正是审查#5/#6 指出的缺口：A 打开列表后 B 改了名，A 批量改名会把 B 的修改冲掉，
+#: 且没有任何提示（见 REVIEW_2026-11-23 重要#5、一般#6）。宁可 400 让调用方把版本
+#: 补上，也不要「看起来有保护、实际没有」。
+#:
+#: `delete` / `restore` / `addTag` / `removeTag` 不在此列：下游服务根本不接版本
+#: （`LifecycleService.delete`、`add_asset_tags` 都没有这个参数），要求调用方传
+#: 是纯粹的噪音。
+VERSIONED_ACTIONS = {
+    BulkAction.RENAME,
+    BulkAction.APPROVE_DRAFT,
+    BulkAction.REJECT_DRAFT,
+    BulkAction.REQUEST_SHARE,
+    BulkAction.REQUEST_REVOKE,
+}
+
+#: 报错文案用的中文动作名
+ACTION_LABEL = {
+    BulkAction.RENAME: "批量改名",
+    BulkAction.APPROVE_DRAFT: "批量通过草稿",
+    BulkAction.REJECT_DRAFT: "批量驳回草稿",
+    BulkAction.REQUEST_SHARE: "批量申请共享",
+    BulkAction.REQUEST_REVOKE: "批量申请撤销共享",
+}
+
 
 class BulkService:
     def __init__(self, session: AsyncSession, storage: ObjectStorage) -> None:
@@ -62,6 +90,19 @@ class BulkService:
             raise BadRequest(f"不支持的批量动作：{payload.action}")
         if not actor.has(permission):
             raise Forbidden(f"没有执行 {payload.action} 的权限")
+        if payload.action in VERSIONED_ACTIONS:
+            # 版本必须逐条给全：少一条，那一条就会在「没有保护」的情况下改写别人的成果。
+            # 0 也算缺（资产的 state_version 从 1 起，0 只可能是没传）。
+            missing = [
+                asset_id
+                for asset_id in dict.fromkeys(payload.ids)
+                if not payload.expected_versions.get(asset_id)
+            ]
+            if missing:
+                raise BadRequest(
+                    f"{ACTION_LABEL[payload.action]}需要带上每条资产的版本"
+                    f"（expectedVersions），缺少 {len(missing)} 条"
+                )
 
         results: list[BulkItemResult] = []
         for asset_id in dict.fromkeys(payload.ids):

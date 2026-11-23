@@ -246,6 +246,11 @@ class LibraryShareRequest(Base, UUIDMixin):
     note: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     reason: Mapped[str] = mapped_column(String(200), default="", nullable=False)
     decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    # 申请单入库时的**资产版本快照**：申请人当时看到的版本（前端没带时以服务端
+    # 当时的版本为准，保证这一列永远是一个真实版本而不是 0）。
+    # 用途是**提示**而不是拦截：出参里的 `requestStateVersion` 让审批界面标出
+    # 「资产已变更」。它不参与拦截——见 `sharing.decide()` 里的说明：快照兜底
+    # 会把「同一资产两条待审申请」的合法升级路径变成永久 409。
     expected_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, default=utcnow

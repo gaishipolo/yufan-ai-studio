@@ -157,7 +157,9 @@ class ShareService:
             status="approved" if direct else "pending",
             reviewer_id=actor.id if direct else None,
             decided_at=datetime.now(UTC) if direct else None,
-            expected_version=payload.expected_version,
+            # 快照：申请人看到的资产版本。前端没带时以服务端当时的版本为准，
+            # 保证这一列永远是一个真实版本而不是 0（否则审批端拿不到比对基准）。
+            expected_version=payload.expected_version or asset.state_version,
         )
         self.session.add(row)
         if direct:
@@ -211,7 +213,8 @@ class ShareService:
             note="self_approved" if self_review else "",
             reason=reason,
             decided_at=datetime.now(UTC) if self_review else None,
-            expected_version=payload.expected_version,
+            # 快照：同 `_request_share`，撤销申请也记下当时的资产版本。
+            expected_version=payload.expected_version or asset.state_version,
         )
         self.session.add(row)
         if self_review:
@@ -241,11 +244,6 @@ class ShareService:
             raise Forbidden("没有审批该申请的权限")
 
         asset = await access.load_asset(self.session, row.asset_id)
-        if payload.expected_version and asset.state_version != payload.expected_version:
-            raise Conflict(
-                "资产已被修改，请刷新后重试",
-                details={"stateVersion": asset.state_version},
-            )
         if approve:
             # 申请单是**快照**：申请时成立，不代表审批时还成立。这里按申请的目标
             # 重跑一次目标有效性校验，不通过就 409 让审批人重新看一眼。
@@ -259,6 +257,26 @@ class ShareService:
                 ShareTarget(row.target),
                 row.group_id or "",
             )
+            # 乐观锁：审批人看到的资产版本必须仍然是当前版本。
+            #
+            # 判据是**客户端回传的版本**（审批人界面上那一版的 stateVersion），
+            # 与 `LibraryService._check_version` 的口径一致：`expected=0` 表示
+            # 不校验。真正空转的是前端——它固定传 0，于是这条判断形同虚设：
+            # 共享审批看着有并发保护，实际上一条基于旧界面的申请照样能通过
+            # （见 REVIEW_2026-11-23 严重#1）。现在前端回传真实版本，保护才生效。
+            #
+            # **刻意不拿申请单快照兜底**：快照是「申请时」的版本，而通过共享
+            # 本身就会推进 state_version——同一资产挂两条待审申请时（先小组、
+            # 后团队），第二条的快照必然落后；用它兜底会把这条合法的升级路径
+            # 变成 409，而不跟踪版本的客户端连「刷新后重试」都做不到（永远 409），
+            # 待办列表里就会留下一条谁也处理不掉的单子。
+            # 快照的用途是**提示**而不是拦截：出参里的 `requestStateVersion`
+            # 让界面标出「资产已变更」，由审批人自己决定要不要通过。
+            if payload.expected_version and asset.state_version != payload.expected_version:
+                raise Conflict(
+                    "资产已被修改，请刷新后重试",
+                    details={"stateVersion": asset.state_version},
+                )
 
         # 抢占：只有真正的第一个请求能把 status 从 pending 改掉
         claimed = cast(
@@ -635,6 +653,10 @@ class ShareService:
                 id=row.id,
                 asset_id=row.asset_id,
                 asset_name=assets[row.asset_id].name if row.asset_id in assets else "",
+                # 资产当前版本：审批人回传它做乐观锁。
+                state_version=assets[row.asset_id].state_version if row.asset_id in assets else 0,
+                # 申请单入库时的快照版本：用来提示「该申请基于旧版本」。
+                request_state_version=row.expected_version,
                 applicant_id=row.applicant_id,
                 applicant_name=names.get(row.applicant_id),
                 action=ShareAction(row.action),
