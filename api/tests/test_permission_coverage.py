@@ -414,9 +414,7 @@ BACKGROUND_ONLY_PERMISSIONS: dict[str, str] = {
     "model_driver:read:all": "model_driver:read 的附加开关，随主码走",
     "model_driver:retry:any": "model_driver:read 的附加开关，随主码走",
     "model_driver:cancel:any": "model_driver:read 的附加开关，随主码走",
-    # 刷新驱动目录是**运维动作**（热接上新增的驱动文件），前端没有入口 ——
-    # 没有页面可以声明它，关页面也不该影响它。
-    "model_driver:refresh": "运维动作，前端无入口（运维/CLI 触发）",
+    # `model_driver:refresh` 已在 P4 运维页落地（page:ops），从豁免表移出。
 }
 
 

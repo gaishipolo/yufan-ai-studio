@@ -169,6 +169,7 @@ Authorization: Bearer <accessToken>
 |---|---|---|
 | `page:image` | 生图 | 关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any |
 | `page:library` | 资产库 | 关联接口：library:case:read, library:create, library:delete, library:delete:any, library:draft:review, library:generation:ingest, library:read, library:share, library:share:approve, library:share:approve:group, library:share:approve:team, library:share:direct, library:tag:manage, library:update |
+| `page:ops` | 运维 | 关联接口：model_driver:refresh |
 | `page:shots` | 镜头库 | 关联接口：shot:read |
 | `page:storyboards` | 分镜模板库 | 关联接口：storyboard:read |
 | `page:studio` | 生成工作台 | 关联接口：catalog:read, image:create, task:create |

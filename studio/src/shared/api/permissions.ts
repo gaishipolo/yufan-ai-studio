@@ -116,6 +116,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     items: [
       { code: 'page:image', name: '生图', description: '关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any', requires: ['catalog:read', 'image:create', 'image:delete', 'image:read', 'image:read:all', 'image:retry:any'], route: '/image' },
       { code: 'page:library', name: '资产库', description: '关联接口：library:case:read, library:create, library:delete, library:delete:any, library:draft:review, library:generation:ingest, library:read, library:share, library:share:approve, library:share:approve:group, library:share:approve:team, library:share:direct, library:tag:manage, library:update', requires: ['library:case:read', 'library:create', 'library:delete', 'library:delete:any', 'library:draft:review', 'library:generation:ingest', 'library:read', 'library:share', 'library:share:approve', 'library:share:approve:group', 'library:share:approve:team', 'library:share:direct', 'library:tag:manage', 'library:update'], route: '/library' },
+      { code: 'page:ops', name: '运维', description: '关联接口：model_driver:refresh', requires: ['model_driver:refresh'], route: '/ops' },
       { code: 'page:shots', name: '镜头库', description: '关联接口：shot:read', requires: ['shot:read'], route: '/shots' },
       { code: 'page:storyboards', name: '分镜模板库', description: '关联接口：storyboard:read', requires: ['storyboard:read'], route: '/storyboards' },
       { code: 'page:studio', name: '生成工作台', description: '关联接口：catalog:read, image:create, task:create', requires: ['catalog:read', 'image:create', 'task:create'], route: '/studio' },
@@ -176,6 +177,7 @@ export const PERMISSION_CODES = [
   'model_driver:retry:any',
   'page:image',
   'page:library',
+  'page:ops',
   'page:shots',
   'page:storyboards',
   'page:studio',

@@ -79,6 +79,7 @@ submit 返回值再落）—— 后者把「上游已受理、进程在写库前
 
 from __future__ import annotations
 
+import re
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -214,9 +215,33 @@ async def mark_submitted(
     await session.flush()
 
 
+#: 台账 `error` 的统一口径：`{类型}: {消息}`。
+#:
+#: 只有这两个 mark 函数写这一列（全仓搜 `receipt.error =` 可核），所以口径收敛在
+#: 一处。两类来源：
+#: - 异常路径（ `_settle_failure` ）传 `TimeoutError: 连接超时` 这类 `类型: 消息`，
+#:   原样保留 —— 类型就是真实异常类名；
+#: - 业务判定（「提交返回成功，但没有可续接的标识」等）没有异常对象，补
+#:   `业务判定:` 前缀。**不冒充异常类名**：运维看到 `BadRequest:` 会去找抛错代码，
+#:   而那其实是框架对结果的判断，没有异常。
+#:
+#: 这列只供人读、不参与任何判定（`STATUS_*` 才是状态机），所以统一的是可读性，
+#: 不改变对外行为，也不用动契约。
+_ERROR_PREFIX = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*: |^业务判定: ")
+
+
+def _normalized_error(error: str) -> str:
+    text = error.strip()
+    if not text:
+        return ""
+    if not _ERROR_PREFIX.match(text):
+        text = f"业务判定: {text}"
+    return text[:512]
+
+
 async def mark_rejected(session: AsyncSession, receipt: SubmissionReceipt, *, error: str) -> None:
     receipt.status = STATUS_REJECTED
-    receipt.error = error[:512]
+    receipt.error = _normalized_error(error)
     receipt.settled_at = utcnow()
     await session.flush()
 
@@ -224,7 +249,7 @@ async def mark_rejected(session: AsyncSession, receipt: SubmissionReceipt, *, er
 async def mark_unknown(session: AsyncSession, receipt: SubmissionReceipt, *, error: str) -> None:
     """超时 / 5xx / 响应畸形：可能已受理，禁止自动重提。"""
     receipt.status = STATUS_UNKNOWN
-    receipt.error = error[:512]
+    receipt.error = _normalized_error(error)
     receipt.settled_at = utcnow()
     await session.flush()
 

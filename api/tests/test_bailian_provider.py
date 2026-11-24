@@ -10,6 +10,7 @@ from storage_stub import DirStorage
 from core.exceptions import BadRequest, NotFound, UpstreamError
 from db.session import get_session_factory
 from infra.ai.base import Capability, GenerationRequest, GenerationState
+from infra.storage.base import StorageError
 from modules.model_driver.drivers import bailian
 from modules.model_driver.kit.submission_guard import find_recoverable_external_id
 from modules.model_driver.models import SubmissionReceipt
@@ -646,11 +647,31 @@ async def test_rejects_bytes_that_differ_from_the_archive_digest(workspace):
 
 
 async def test_reports_a_missing_object_in_our_storage(workspace):
-    """存储里的对象没了 → 上游错误（不是我们代码写错了）。"""
+    """我方存储里的对象没了 → 明确说是**我方**的问题，不是百炼拒收。
+
+    两类失败对外都是 502（StorageError 继承 UpstreamError），但文案必须能分开：
+    原来这里报「百炼素材上传失败」，运维顺着去查百炼，真实原因在我们自己的
+    对象存储里。判别力靠下面那条「供应商拒收」用例对照 —— 只测这一条的话，
+    把两类合并成一句通用文案也会绿。
+    """
     (workspace / "blobs/tests/bailian/media-1").unlink()
 
-    with pytest.raises(UpstreamError, match="上传失败"):
+    with pytest.raises(StorageError, match="我方存储") as error:
         await provider(lambda _: pytest.fail("must fail before upload")).prepare_inputs("run")
+    assert "百炼素材上传失败" not in str(error.value)
+    assert "tests/bailian/media-1" in str(error.value)
+
+
+async def test_reports_a_rejected_upload_as_an_upstream_failure(workspace):
+    """供应商拒收素材 → 仍报「百炼素材上传失败」，与我方存储丢失分得开。"""
+    def reject_upload(request):
+        if request.url.host == "upload.example.com":
+            return httpx.Response(400, json={"message": "invalid media"})
+        return upload_handler(request)
+
+    with pytest.raises(UpstreamError, match="百炼素材上传失败") as error:
+        await provider(reject_upload).prepare_inputs("run")
+    assert "我方存储" not in str(error.value)
 
 
 async def test_uploads_the_bytes_from_our_storage(workspace):

@@ -466,3 +466,73 @@ async def test_settle_failure_does_not_mask_the_original_error(
         provider="bailian", run_id="g" * 32, exc=BadRequest("上游说：参数错")
     )
     assert status == STATUS_REJECTED, "落库失败也要把判定结果交回去"
+
+
+# ------------------------------------------------------- 台账 error 的统一口径
+#
+# 这一列只供人读、不参与状态机，但「各驱动口径不一致」会让运维看不出这条是
+# 抛异常还是框架的判定。统一成 `{类型}: {消息}`：异常路径用真实异常类名，
+# 业务判定补 `业务判定:` —— 关键是**不冒充异常类名**（看到 BadRequest: 会
+# 去找抛错代码，而那其实是框架对结果的判断）。
+#
+# 两类来源都要测，只测一类的话「一律加前缀」或「一律不加」都能绿。
+
+
+async def test_business_verdict_gets_a_label_without_pretending_to_be_an_exception(
+    session: AsyncSession,
+) -> None:
+    await decide_before_submit(provider="bailian", run_id="v" * 32, model=MODEL)
+    await settle_submission(
+        provider="bailian",
+        run_id="v" * 32,
+        status=STATUS_UNKNOWN,
+        error="提交返回成功，但没有可续接的标识",
+    )
+
+    receipt = await get_receipt(session, provider="bailian", run_id="v" * 32)
+    assert receipt is not None
+    assert receipt.error == "业务判定: 提交返回成功，但没有可续接的标识"
+    assert "BadRequest" not in (receipt.error or "")
+
+
+async def test_rejected_business_verdict_is_labeled_too(session: AsyncSession) -> None:
+    """rejected 与 unknown 两个写入口都要规范化 —— 只做一个会漏一半。"""
+    await decide_before_submit(provider="bailian", run_id="r" * 32, model=MODEL)
+    await settle_submission(
+        provider="bailian",
+        run_id="r" * 32,
+        status=STATUS_REJECTED,
+        error="Agnes 是同步驱动，不支持轮询",
+    )
+
+    receipt = await get_receipt(session, provider="bailian", run_id="r" * 32)
+    assert receipt is not None
+    assert receipt.error == "业务判定: Agnes 是同步驱动，不支持轮询"
+
+
+async def test_exception_error_keeps_its_real_class_name(session: AsyncSession) -> None:
+    await decide_before_submit(provider="bailian", run_id="e" * 32, model=MODEL)
+    await settle_failure(
+        provider="bailian", run_id="e" * 32, exc=TimeoutError("连接超时")
+    )
+
+    receipt = await get_receipt(session, provider="bailian", run_id="e" * 32)
+    assert receipt is not None
+    assert receipt.error == "TimeoutError: 连接超时"
+    assert "业务判定" not in (receipt.error or "")
+
+
+async def test_an_already_labeled_error_is_not_labeled_twice(session: AsyncSession) -> None:
+    """重复调 settle 或调用方自己带了前缀 → 不叠加（幂等口径）。"""
+    await decide_before_submit(provider="bailian", run_id="d" * 32, model=MODEL)
+    await settle_submission(
+        provider="bailian",
+        run_id="d" * 32,
+        status=STATUS_REJECTED,
+        error="业务判定: 参数不齐",
+    )
+
+    receipt = await get_receipt(session, provider="bailian", run_id="d" * 32)
+    assert receipt is not None
+    assert receipt.error == "业务判定: 参数不齐"
+    assert not (receipt.error or "").startswith("业务判定: 业务判定:")

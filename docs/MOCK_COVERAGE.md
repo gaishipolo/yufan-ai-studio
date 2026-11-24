@@ -14,13 +14,14 @@
 
 ## 模块级覆盖率
 
-**4 / 10** 个模块带 `mock.ts`。
+**4 / 11** 个模块带 `mock.ts`。
 
 | 模块 | mock.ts |
 | --- | --- |
 | `auth` | ✓ |
 | `image` | — |
 | `library` | ✓ |
+| `ops` | — |
 | `shots` | — |
 | `storyboards` | — |
 | `studio` | — |

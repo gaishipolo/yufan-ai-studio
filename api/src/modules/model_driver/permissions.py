@@ -20,6 +20,10 @@ PERM_CANCEL_ANY = "model_driver:cancel:any"
 # 不能挂在 read 上（看模型目录的人不该能改进程里装了什么），
 # 也不该只凭 read:all —— 那是「看别人任务」的开关，与此无关。
 PERM_REFRESH = "model_driver:refresh"
+# 运维页：刷新动作原来登记为「后台能力」（有权限码、没有页面可点）。P4 拍板
+# 单独建一页承载它 —— 页面码与接口码分开，关页面时接口也跟着关。审计（谁在
+# 什么时候刷了什么）后端目前只有日志、没有可查询记录，留待下一步。
+PAGE = "page:ops"
 SPECS = (
     PermissionSpec(
         PERM_READ,
@@ -57,10 +61,12 @@ SPECS = (
             "重新扫描驱动目录，把新增的驱动文件热接上（进程级：只影响本实例，"
             "多实例各自收敛）。改已加载的文件不热替换，要重启才生效"
         ),
+        pages=(PAGE,),
     ),
 )
 
 __all__ = [
+    "PAGE",
     "PERM_CANCEL",
     "PERM_CANCEL_ANY",
     "PERM_CREATE",

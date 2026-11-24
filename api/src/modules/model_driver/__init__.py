@@ -13,7 +13,7 @@ submit / query / cancel / models 四个方法，底层复用 `generation.runner`
    把「已提交但业务表没记上」的凭证找回来）。
 """
 
-from api.module import ModuleSpec
+from api.module import ModuleSpec, PageSpec
 from core.ports.model_generation import register_model_generation
 from core.ports.submission_ledger import register_submission_ledger
 from modules.model_driver import (
@@ -45,6 +45,9 @@ module = ModuleSpec(
     tags=["模型驱动"],
     description="单文件模型驱动开发与统一生成接口",
     permissions=SPECS,
+    # 运维页（P4）：单独一页承载「刷新驱动目录」。审计（谁在何时刷了什么）
+    # 后端只有日志、没有可查询记录，留待下一步 —— 页面不假装能查历史。
+    pages=(PageSpec(code="page:ops", name="运维", route="/ops"),),
     # 驱动自报的作业（如 `libtv.download`，见 `drivers/libtv.py` 的 EXTRA_JOBS）。
     # 声明是义务：声明了却没注册 handler 会启动失败，而不是静默少一个 handler。
     jobs=job_names(),

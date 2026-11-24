@@ -473,14 +473,16 @@ class BailianProvider:
                     )
                 except BadRequest:
                     raise
-                except (
-                    KeyError,
-                    TypeError,
-                    ValueError,
-                    OSError,
-                    httpx.HTTPError,
-                    StorageError,
-                ) as exc:
+                except StorageError as exc:
+                    # 我方存储里的对象丢了：**不是供应商拒收**。原来这一类也被
+                    # 包成「百炼素材上传失败」——运维顺着文案去查百炼，真实原因
+                    # 在我们自己的对象存储里。StorageError 本身就是 UpstreamError
+                    # 的子类（对外仍 502），单独抛它即可，不必新增错误码 / 动契约。
+                    raise StorageError(
+                        f"我方存储中的参考素材对象不可用（{storage_key}）：{exc}；"
+                        "请检查对象存储或重新上传素材"
+                    ) from exc
+                except (KeyError, TypeError, ValueError, OSError, httpx.HTTPError) as exc:
                     raise UpstreamError("百炼素材上传失败，请重新准备素材") from exc
                 media.append({"type": kind, "url": uploaded.url})
         if media:
