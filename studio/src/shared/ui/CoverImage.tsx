@@ -28,7 +28,9 @@ export function CoverImage({ src, seed, alt = '', className, imgClassName }: Cov
         <img
           src={src}
           alt={alt}
-          loading="lazy"
+          /* 刻意不懒加载：模板库一屏就十几张封面，Edge 的懒加载干预会把视口外的
+             图换成占位符并延后 load 事件，用户看到的就是「卡片没有案例」。封面是
+             几十 KB 的缩略图，立即加载比省这点流量重要。 */
           onError={() => setFailed(true)}
           className={cn('absolute inset-0 h-full w-full object-cover', imgClassName)}
         />
