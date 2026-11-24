@@ -48,14 +48,25 @@ preferred_channel = {"image": MediaChannel.BASE64}  # 可选偏好，需理由
 from __future__ import annotations
 
 from collections.abc import Mapping
+from dataclasses import dataclass
 from enum import StrEnum
+from typing import Any, Protocol, runtime_checkable
 
 from core.exceptions import BadRequest
+from infra.ai.base import InlineReferencesCapable
 
 __all__ = [
+    "ChannelPlan",
     "MediaChannel",
+    "MediaChannelPreferenceDeclared",
+    "MediaChannelsDeclared",
     "MediaKind",
+    "OssUploadDeclared",
     "choose_channel",
+    "declared_channels",
+    "plan_channel",
+    "preferred_channels",
+    "record_channel_fallbacks",
     "validate_declaration",
 ]
 
@@ -157,3 +168,203 @@ def _fits(channel: MediaChannel, size_bytes: int, base64_max_bytes: int) -> bool
     if channel is MediaChannel.BASE64:
         return size_bytes <= base64_max_bytes
     return True
+
+
+@runtime_checkable
+class MediaChannelsDeclared(Protocol):
+    """驱动按素材类型声明可用的传输通道（结构化类型，驱动无需继承）。
+
+    键是素材类型（`image` / `audio` / `video`），值是该类型可走的通道集合。
+
+    ```python
+    accepted_media_formats = {
+        "image": frozenset({MediaChannel.BASE64}),
+        "audio": frozenset({MediaChannel.OSS}),
+    }
+    ```
+
+    这是**声明**，不是实现：框架只读它来决定「这个驱动该走哪条通道」，
+    通道本身的落地（编码、上传、落工作区）由框架与驱动各自负责。
+    """
+
+    accepted_media_formats: Mapping[str, frozenset[MediaChannel]]
+
+
+@runtime_checkable
+class MediaChannelPreferenceDeclared(Protocol):
+    """可选：声明偏好通道（必须给理由，否则声明会被忽略）。"""
+
+    preferred_media_channels: Mapping[str, MediaChannel]
+
+
+@runtime_checkable
+class OssUploadDeclared(Protocol):
+    """可选：声明本驱动能拿到供应商签发的 OSS 上传凭据端点。
+
+    声明了 OSS 通道的驱动必须同时声明它 —— 否则框架没法判断「这档通道
+    是不是真的能走」，只能等提交时才发现没有上传端点。
+    """
+
+    oss_upload_supported: bool
+
+
+def declared_channels(provider: Any) -> Mapping[str, frozenset[MediaChannel]]:
+    """读出驱动声明的通道（按素材类型）。
+
+    优先读 `accepted_media_formats`；没声明就按旧的 `inline_references` 兼容推导
+    （`True` = 全部素材类型走 Base64；`False` 或没声明 = 没有声明）。
+
+    ## 为什么要兼容
+
+    `inline_references` 是上一版口径：**所有**素材类型一个开关，不分类型。
+    第三方驱动可能只写了它 —— 直接不认会让它们在启动期被拒绝（声明为空），
+    升级就断。兼容推导把它翻译成「全部类型走 Base64」，与它原来的行为一致。
+
+    ## 为什么不反过来（让新声明覆盖旧开关的一半）
+
+    `inline_references=True` 但 `accepted_media_formats` 只声明了 image：
+    这是**自相矛盾**的声明（说了全都内联，又说 audio 不内联）。
+    这里以更具体的新声明为准，但旧开关的 `True` 不会被自动降级成「只内联 image」
+    —— 那种「部分内联」的语义旧开关表达不了，硬翻译会静默改变行为。
+    """
+    raw = provider.accepted_media_formats if isinstance(provider, MediaChannelsDeclared) else None
+    if isinstance(raw, Mapping):
+        out: dict[str, frozenset[MediaChannel]] = {}
+        for kind, channels in raw.items():
+            key = str(kind).strip().lower()
+            if not key:
+                continue
+            try:
+                out[key] = frozenset(MediaChannel(c) for c in channels)
+            except ValueError as exc:
+                raise BadRequest(
+                    f"{type(provider).__name__} 的 {kind} 声明了未知通道：{channels!r}"
+                ) from exc
+        return out
+
+    if isinstance(provider, InlineReferencesCapable) and provider.inline_references:
+        return {kind.value: frozenset({MediaChannel.BASE64}) for kind in MediaKind}
+    return {}
+
+
+def preferred_channels(provider: Any) -> Mapping[str, MediaChannel]:
+    """读出驱动声明的偏好通道；没声明就是空的（选路走默认优先级）。"""
+    raw = (
+        provider.preferred_media_channels
+        if isinstance(provider, MediaChannelPreferenceDeclared)
+        else None
+    )
+    if not isinstance(raw, Mapping):
+        return {}
+    out: dict[str, MediaChannel] = {}
+    for kind, channel in raw.items():
+        key = str(kind).strip().lower()
+        if not key:
+            continue
+        try:
+            out[key] = MediaChannel(channel)
+        except ValueError as exc:
+            raise BadRequest(
+                f"{type(provider).__name__} 的 {key} 声明了未知偏好通道：{channel!r}"
+            ) from exc
+    return out
+
+
+@dataclass(frozen=True, slots=True)
+class ChannelPlan:
+    """一次选路的结果。
+
+    - `channel`：实际要走的通道
+    - `preferred`：本来该走的通道（声明里的第一档）
+    - `fallback_reason`：非空表示**发生了回退**（首选装不下 / 不可用）
+    """
+
+    kind: str
+    channel: MediaChannel
+    preferred: MediaChannel | None = None
+    fallback_reason: str = ""
+
+    @property
+    def fell_back(self) -> bool:
+        return bool(self.fallback_reason)
+
+
+def plan_channel(
+    *,
+    kind: str,
+    accepted: Mapping[str, frozenset[MediaChannel] | set[MediaChannel]],
+    preferred: Mapping[str, MediaChannel] | None = None,
+    size_bytes: int = 0,
+    base64_max_bytes: int = 12 * 1024 * 1024,
+) -> ChannelPlan:
+    """选路，并说清「有没有回退」。
+
+    与 `choose_channel` 的区别：后者只给结果，这里额外给出**本应首选的那一档**
+    与**回退原因** —— 没有这两样，「素材突然从 Base64 变 OSS」就只能靠猜。
+
+    判定回退的方式：把声明里「本应首选」的档（PREFERRED_ORDER 中第一个可用的）
+    与实际选中的档比。两者相同 = 没回退（正常路径，不产生噪音留痕）。
+    """
+    allowed = set(accepted.get(kind) or ())
+    if not allowed:
+        raise BadRequest(f"没有为 {kind} 声明任何素材通道")
+
+    baseline: MediaChannel | None = None
+    if preferred:
+        want = preferred.get(kind)
+        if want in allowed:
+            baseline = want
+    if baseline is None:
+        baseline = next((c for c in PREFERRED_ORDER if c in allowed), None)
+
+    channel = choose_channel(
+        kind=kind,
+        accepted=accepted,
+        preferred=preferred,
+        size_bytes=size_bytes,
+        base64_max_bytes=base64_max_bytes,
+    )
+    if baseline is None or channel is baseline:
+        return ChannelPlan(kind=kind, channel=channel, preferred=baseline)
+
+    if baseline is MediaChannel.BASE64:
+        reason = (
+            f"素材 {size_bytes} 字节超过 Base64 上限 {base64_max_bytes} 字节，"
+            f"回退到 {channel.value}"
+        )
+    else:
+        reason = f"首选通道 {baseline.value} 不可用，回退到 {channel.value}"
+    return ChannelPlan(
+        kind=kind, channel=channel, preferred=baseline, fallback_reason=reason
+    )
+
+
+async def record_channel_fallbacks(
+    plans: Mapping[str, ChannelPlan],
+    *,
+    target_id: str,
+    actor_id: str | None = None,
+) -> None:
+    """把「通道回退」记成审计事件。
+
+    回退必须是**留痕**的：素材从 Base64 变成 OSS（或反过来）会改变请求体大小、
+    失败点与排查方向，没留痕就只能靠对比上游日志反推。
+    """
+    fell_back = [plan for plan in plans.values() if plan.fell_back]
+    if not fell_back:
+        return
+    from core.audit import record  # 局部导入：审计是可选依赖，不能拖垮选路
+
+    for plan in fell_back:
+        await record(
+            "media.channel_fallback",
+            actor_id=actor_id,
+            target_type="generation",
+            target_id=target_id,
+            detail={
+                "kind": plan.kind,
+                "preferred": plan.preferred.value if plan.preferred else "",
+                "actual": plan.channel.value,
+                "reason": plan.fallback_reason,
+            },
+        )

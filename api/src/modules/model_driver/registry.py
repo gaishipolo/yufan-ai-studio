@@ -26,6 +26,7 @@ from typing import Any
 from fastapi import APIRouter
 from pydantic import BaseModel
 
+from core.exceptions import BadRequest, RegistryError
 from core.logging import get_logger
 from core.ports.model_generation import DriverSummary
 from infra import get_model_router
@@ -52,6 +53,20 @@ class _LoadedDriver:
 _state: dict[str, _LoadedDriver] | None = None
 _registered: set[str] = set()
 _errors: list[str] = []
+
+#: 因**素材通道声明不合法**而加载失败的驱动（与 `_errors` 分开记）：
+#: 这类是「配置错误」，生产环境要启动失败（设计文档 A7），而不是「少一个驱动」。
+_channel_errors: list[str] = []
+
+#: 「素材的公网地址」配置值 —— 恒为空。
+#:
+#: 为什么没有这个配置项可用：素材取件链接是**私签**的（几分钟过期），而本项目的
+#: 存储在内网（MinIO / OSS 内网端点），供应商根本访问不到。`storage_public_base`
+#: 是本地静态挂载路径（默认 "/static"），不是素材的公网地址。
+#:
+#: 所以当前架构**给不出**公网 URL —— 声明 `PUBLIC_URL` 的驱动一律启动失败，
+#: 而不是等到用户提交素材时拿到上游「图片无法访问」（根因在我们这侧）。
+_PUBLIC_BASE_URL = ""
 
 #: 已经挂过的驱动路由（按对象身份）。`include_router` 是**复制**路由，
 #: 挂两次就是同一批端点出现两遍——所以按身份去重，而不是按名字。
@@ -166,11 +181,60 @@ def _module_stamp(module_path: str) -> tuple[int, int] | None:
     return (stat.st_mtime_ns, stat.st_size)
 
 
+class ChannelDeclarationError(TypeError):
+    """驱动的素材通道声明在当前架构下不可行。
+
+    是 `TypeError` 的子类：加载期对「驱动文件本身有问题」统一抛 `TypeError`，
+    这样上游的 `except Exception` 分支照旧处理（该驱动不注册、错误进
+    `load_errors()`）；这里单独一类，是为了能把它挑出来 —— 生产环境要因它
+    **启动失败**（设计文档 A7），而不是「少一个驱动」。
+    """
+
+
+def _check_channel_declaration(provider: Any) -> None:
+    """校验驱动的素材通道声明在当前架构下可行。
+
+    为什么在**加载期**就拒：声明 `PUBLIC_URL` 但我们给不出公网地址、声明
+    `OSS` 但供应商没有上传凭据端点 —— 这类是「配置错误」。等到用户提交参考
+    素材时才发现，报出来的是上游「图片无法访问」，根因在我们这侧。
+
+    失败抛 `ChannelDeclarationError`：该驱动不注册、错误可见；生产环境再由
+    `app.py` 的启动期核对把「有驱动因声明不合法没加载」升级成启动失败。
+
+    没声明通道的驱动不受影响：它本来就不收参考素材（`declared_channels` 返回
+    空），框架不替它猜。
+    """
+    from infra.media_channel import (
+        OssUploadDeclared,
+        declared_channels,
+        validate_declaration,
+    )
+
+    try:
+        accepted = declared_channels(provider)
+    except BadRequest as exc:
+        raise ChannelDeclarationError(str(exc)) from exc
+    if not accepted:
+        return
+    try:
+        validate_declaration(
+            provider=type(provider).__name__,
+            accepted=accepted,
+            public_base_url=_PUBLIC_BASE_URL,
+            oss_upload_supported=isinstance(provider, OssUploadDeclared)
+            and provider.oss_upload_supported,
+        )
+    except BadRequest as exc:
+        raise ChannelDeclarationError(str(exc)) from exc
+
+
 def _load_module(file_name: str, module_path: str) -> _LoadedDriver:
     """import 并校验单个驱动文件。
 
     失败抛异常，由调用方决定「记一条」还是「炸掉」。接口面装配失败抛
-    `ExtrasError`（必须炸），其余是普通的加载失败（只影响这一个驱动）。
+    `ExtrasError`（必须炸），素材通道声明不合法抛 `ChannelDeclarationError`
+    （该驱动不注册，生产环境再升级成启动失败），其余是普通的加载失败
+    （只影响这一个驱动）。
     """
     module = importlib.import_module(module_path)
     factory = getattr(module, "Driver", None)
@@ -180,6 +244,7 @@ def _load_module(file_name: str, module_path: str) -> _LoadedDriver:
     problems = standard.validate_driver(provider)
     if problems:
         raise TypeError("；".join(problems))
+    _check_channel_declaration(provider)
 
     meta = getattr(module, "META", standard.DEFAULT_META)
     if not isinstance(meta, standard.DriverMeta):
@@ -262,6 +327,8 @@ def _discover() -> None:
         except Exception as exc:  # noqa: BLE001 - 第三方驱动文件不该让整个服务起不来
             message = f"{file_name}.py: {exc}"
             _errors.append(message)
+            if isinstance(exc, ChannelDeclarationError) and message not in _channel_errors:
+                _channel_errors.append(message)
             logger.error("模型驱动加载失败 %s", message)
             loaded[f"__failed__{file_name}"] = _failed_driver(file_name, str(exc))
             continue
@@ -335,8 +402,34 @@ def ensure_drivers_registered() -> None:
     """把已发现的驱动补进 `ModelRouter`。可重复调用，路由被重置后能自愈。"""
     if _state is None:
         _discover()
+    _check_channel_declarations_or_fail()
 
     _register_loaded(_state or {}, get_model_router())
+
+
+def _check_channel_declarations_or_fail() -> None:
+    """素材通道声明不合法 → 生产环境**启动失败**（设计文档 A7）。
+
+    为什么在这里炸（而不是等用户提交参考素材）：声明错了是「配置错误」——
+    声明了公网 URL 但我们给不出公网地址、声明了 OSS 但供应商没有上传凭据端点。
+    拖到运行时，报出来的是上游「图片无法访问」，根因在我们这侧，排查方向完全错。
+
+    生产环境启动失败、开发环境只记警告：开发时第三方驱动文件可能还没写完，
+    不该让整个服务起不来（错误在 `load_errors()` / `channel_declaration_errors()`
+    里都看得见）。
+
+    为什么这个检查放在**注册入口**而不是 `app.py`：顶层脚本不允许依赖业务模块
+    （见 `tests/test_architecture.py` 的脚本依赖清单），而这里是业务模块自己的
+    装配点 —— 启动期一定会走到（模块被装配时就会 import 驱动）。
+    """
+    if not _channel_errors:
+        return
+    message = "；".join(_channel_errors)
+    from core.config import settings
+
+    if settings.app_env == "prod":
+        raise RegistryError(f"素材通道声明不合法：{message}")
+    logger.warning("素材通道声明不合法（开发环境不阻断启动）：%s", message)
 
 
 def driver_summaries() -> tuple[DriverSummary, ...]:
@@ -349,6 +442,17 @@ def driver_summaries() -> tuple[DriverSummary, ...]:
 def load_errors() -> tuple[str, ...]:
     ensure_drivers_registered()
     return tuple(_errors)
+
+
+def channel_declaration_errors() -> tuple[str, ...]:
+    """因素材通道声明不合法而**没加载上**的驱动。
+
+    与 `load_errors()` 分开的原因：通道声明不合法是「配置错误」，不是「这个
+    第三方驱动文件写坏了」。生产环境要据此**启动失败**（设计文档 A7：可行性
+    错误在启动期暴露），而不是让服务带着一个缺通道的驱动跑起来。
+    """
+    ensure_drivers_registered()
+    return tuple(_channel_errors)
 
 
 def job_names() -> tuple[str, ...]:
@@ -469,6 +573,8 @@ def refresh(*, operator: str = "") -> RefreshResult:
         except Exception as exc:  # noqa: BLE001 - 单个驱动文件出错不该拖垮整个刷新
             message = f"{file_name}.py: {exc}"
             errors.append(message)
+            if isinstance(exc, ChannelDeclarationError) and message not in _channel_errors:
+                _channel_errors.append(message)
             logger.error("刷新时驱动加载失败 %s", message)
             continue
         if item.provider.name in state:
@@ -521,6 +627,7 @@ def reset_drivers() -> None:
     _state = None
     _registered.clear()
     _errors.clear()
+    _channel_errors.clear()
     # 已加载记录也要清：否则刷新会以为这些文件「已经加载过」，新写的驱动
     # 文件永远接不上（`reset_drivers()` 的语义就是「回到没扫过的状态」）。
     _imported_paths.clear()

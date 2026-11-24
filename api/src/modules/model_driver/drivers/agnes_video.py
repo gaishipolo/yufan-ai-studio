@@ -83,6 +83,7 @@ from infra.ai.base import (
     ReferenceLimit,
 )
 from infra.driver_config import DriverSettings, driver_config
+from infra.media_channel import MediaChannel
 from infra.media_probe import image_size
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
@@ -231,9 +232,15 @@ class AgnesVideoDriver:
     #
     # 结果就是：默认必须落在这个开箱即用的文生视频模型上，由它接任默认。
     preferred_for = frozenset({Capability.VIDEO})
-    # 参考素材以**内联 data URI**交给上游（见 `InlineReferencesCapable`）：
+    # 参考素材以**内联 data URI**交给上游（通道声明见 `infra/media_channel.py`）：
     # 上游只收公网地址或 `data:` URI，我们的存储在内网、拿不出公网地址。
-    inline_references = True
+    #
+    # 旧的 `inline_references` 开关是「所有素材类型一个开关」，分不了类型；
+    # 这里按 image / audio 分别声明走哪条通道。
+    accepted_media_formats = {
+        "image": frozenset({MediaChannel.BASE64}),
+        "audio": frozenset({MediaChannel.BASE64}),
+    }
     # 参考素材的硬性限制（见 `ReferenceLimitsCapable`）：图片最多 5 张、
     # 音频最多 3 段，图片单边 256-5760 像素、单份 15MB，音频 2-12 秒。
     # 受理期与提交前各判一次。

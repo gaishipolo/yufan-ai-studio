@@ -86,6 +86,7 @@ from infra.archive.base import lease
 from infra.archive.runs import check_id
 from infra.driver_config import DriverSettings, driver_config
 from infra.executor_output import EXECUTOR_OUTPUT_RELATIVE, executor_output_url
+from infra.media_channel import MediaChannel
 from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
@@ -315,6 +316,20 @@ class BailianProvider:
     # 不声明 `preferred_for`：替换渠道的模型不该抢通用生成页的默认视频模型，
     # 默认值仍由 echo/libtv 那侧的决定。这里只是「可被显式选中」。
     submit_timeout_sec = _SUBMIT_BUDGET_SEC
+    # 参考素材走**百炼签发的 OSS 临时目录**（见 `prepare_inputs`）：素材先由驱动
+    # 上传到 OSS，再把 `oss://...` 直链拼进请求体。
+    #
+    # 为什么只声明 OSS、不加 Base64：百炼的替换链要的是「可访问的素材地址」，
+    # Base64 要另改请求构造（`input.media[].url` 换字段），那是行为变更，
+    # 留到单独的工作包 —— 这里只把「走哪条通道」显式化，行为保持不变。
+    accepted_media_formats = {
+        "image": frozenset({MediaChannel.OSS}),
+        "video": frozenset({MediaChannel.OSS}),
+        "audio": frozenset({MediaChannel.OSS}),
+    }
+    # 声明 OSS 通道的前提：供应商提供上传凭据端点（`uploads?action=getPolicy`）。
+    # 没有它，声明 OSS 就是空头支票 —— 素材会在提交时才发现传不上去。
+    oss_upload_supported = True
 
     def __init__(
         self,

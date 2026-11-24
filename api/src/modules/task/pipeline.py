@@ -24,13 +24,19 @@ from db.session import get_session_factory
 from generation.pipeline import register_pipeline
 from generation.spec import STATUS_QUEUED, STATUS_RUNNING, GenerationRecord
 from infra import get_model_router, get_storage
-from infra.ai.base import Capability, GenerationRequest, InlineReferencesCapable
+from infra.ai.base import Capability, GenerationRequest
 from infra.archive import get_archive_storage
 from infra.archive.runs import run_dir
 from infra.executor_output import EXECUTOR_OUTPUT_RELATIVE, RUN_OUTPUT_URL
 from infra.http import fetch_to_file, validate_public_url
+from infra.media_channel import (
+    MediaChannel,
+    declared_channels,
+    preferred_channels,
+    record_channel_fallbacks,
+)
 from infra.media_probe import MAX_BYTES
-from infra.reference_inline import MIME_BY_SUFFIX, inline_data_uris
+from infra.reference_inline import MIME_BY_SUFFIX, prepare_inline_payloads
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask, parse_params_json
 
@@ -54,6 +60,18 @@ _RUN_OUTPUT_URL = RUN_OUTPUT_URL
 # `ReferenceLimit.max_bytes` / `max_total_bytes` 判过了；这里写窄了会反过来
 # 把受理期刚放行的素材在物化期杀掉，用户看到的是「提交成功又立刻失败」。
 _MAX_REFERENCE_BYTES = 15 * 1024 * 1024
+
+# 这条链的**落地能力**（框架侧真有哪些通道的实现）：
+#
+# - BASE64：框架读字节 → 编码成 `data:` URI（Agnes 视频 / Grsai 视频走这条）；
+# - OSS / 工作区：框架**不读**字节，素材留在归档侧，由物化器落工作区
+#   （百炼自己上传 OSS、LibTV 读工作区文件）。
+#
+# 供应商声明了不在这个集合里的通道 → 直接报错：没有实现就不能兑现，
+# 静默丢素材会让用户拿到「参考图没生效」的成片。
+_SUPPORTED_CHANNELS = frozenset(
+    {MediaChannel.BASE64, MediaChannel.OSS, MediaChannel.WORKSPACE}
+)
 
 # 任务表的终态用 completed/failed（前端契约），与框架默认的 succeeded 不同，
 # 因此显式声明终态集合。
@@ -280,19 +298,25 @@ class VideoGenerationPipeline:
         return VideoTaskStore(session)
 
     async def build_request(self, record: GenerationRecord) -> GenerationRequest:
-        # 参考素材有两条通道，由**供应商自己**声明走哪条：
+        # 参考素材走哪条通道，由**供应商自己**声明（`infra/media_channel.py`）：
         #
+        # - 内联（Agnes 视频 / Grsai 视频）：上游只收公网地址或 data URI，而我们的
+        #   存储在内网、给不出公网地址，于是把字节读成 data URI 直接进请求体；
         # - 落盘物化（LibTV / 百炼）：`params["referenceKeys"]` 交给物化器写进
-        #   归档工作区，上传时才有地址（那条老路一个字都不动）；
-        # - 内联（Agnes 视频）：上游只收公网地址或 data URI，而我们的存储在内网、
-        #   给不出公网地址，于是把字节读成 data URI 直接进请求体。
+        #   归档工作区，上传时才有地址（那条老路一个字都不动）。
         #
-        # 不声明就走老路：多读一遍素材、把请求体撑大几 MB，纯属白费。
+        # 以前这里是「声明了 `inline_references` 就全内联、否则全走老路」一个开关，
+        # 分不了素材类型；现在按类型分别选路，通道的落地方式还是那两条。
         provider = get_model_router().provider_for(record.model)
-        inline = (
-            isinstance(provider, InlineReferencesCapable) and provider.inline_references
+        references, plans = await prepare_inline_payloads(
+            record.reference_urls,
+            accepted=declared_channels(provider),
+            preferred=preferred_channels(provider),
+            supported=_SUPPORTED_CHANNELS,
+            mime_by_suffix=MIME_BY_SUFFIX,
+            max_bytes=_MAX_REFERENCE_BYTES,
         )
-        references = await _reference_data_uris(record) if inline else ()
+        await record_channel_fallbacks(plans, target_id=record.id, actor_id=record.owner_id)
         return GenerationRequest(
             capability=self.capability,
             model=record.model,
@@ -446,23 +470,6 @@ class VideoGenerationPipeline:
         task.cover_url = cover_key
         task.updated_at = datetime.now(tz=UTC)
         return True
-
-
-async def _reference_data_uris(record: GenerationRecord) -> tuple[str, ...]:
-    """把记录里的参考素材读成内联的 data URI。
-
-    为什么必须内联：Agnes 视频的上游只收公网地址或 `data:` URI，我们的存储
-    在内网（MinIO / OSS 内网端点），供应商根本拉不到 —— 实测内联 data URI
-    上游照收照出片，轮询回包里还有 `usage.input_image_count`。
-
-    读失败就抛：参考素材是提交输入，静默退化成纯文生视频会让用户拿到一段
-    与参考素材毫无关系的成片，而记录里写着「用过参考图」。
-    """
-    return await inline_data_uris(
-        record.reference_urls,
-        mime_by_suffix=MIME_BY_SUFFIX,
-        max_bytes=_MAX_REFERENCE_BYTES,
-    )
 
 
 def _with_suffix(name: str, stored: str) -> str:

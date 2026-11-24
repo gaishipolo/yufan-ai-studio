@@ -40,8 +40,8 @@
 | 阶段 1 第 4 组（libtv） | ✅ 已完成（部分）| 配置 getter 切 kit（**全仓最后一个**自建 `lru_cache` getter）+ 防漂移守卫；**A6 落地**：`MediaChannel.WORKSPACE` 单列一档 + libtv 声明 + 两条正交性守卫 |
 | **A4 假设验证** | ✅ 已完成 | 成立，但带限定条件：**图片链的通道是写死的无条件内联**，声明只在视频链生效 → 通道抽象接线时图片链必须改成按声明分流（见 §1.1 A4 验证结果） |
 | **A6 假设验证** | ✅ 已完成 | **成立**（静态核实代替运行时验证 —— 抽象尚未接线，跑不出「抽象下」的任务）。已用 `WORKSPACE` 档把正交性固定在代码里；连带发现 **libtv 防重复计费强度弱于 bailian**（工作区 `run.json` vs DB 唯一约束）→ 阶段 2 待办 |
-| 通道决策层 | ✅ 已建、⏳ 未接线 | `infra/media_channel.py` + **15 条测试**（含 `WORKSPACE` 档与 libtv 正交性守卫）；接线需改 pipeline 按素材类型分组读字节，风险超出「行为等价迁移」，留待专门评审 |
-| 全量回归 | ✅ 已通过 | **1963 passed, 14 skipped**；ruff 全仓 / mypy 279 文件全绿 |
+| 通道决策层 | ✅ **已接线**（2026-11-24） | `infra/media_channel.py`（决策）+ `infra/reference_inline.py::prepare_inline_payloads`（落地）：**两条链都按声明分流**，图片链不再写死无条件内联；声明不合法 → 生产环境启动失败（A7）；27 条新测试 |
+| 全量回归 | ✅ 已通过 | **2023 passed, 14 skipped**；ruff 全仓 / mypy 281 文件全绿 |
 | **阶段 1（L1 迁移）** | ✅ **四组全部完成** | `grsai`/`grsai_video` → `agnes`/`agnes_video` → `bailian` → `libtv`。kit 四件齐备：`errors.py` / `credentials.py` / `settings.py` + 执行器输出的 `infra/executor_output.py`。**剩余待办**（均需实机验证或超出 L1 范围）：① 通道抽象接线（须同时改图片链，A4 限定条件）② bailian 图片改内联（需真实密钥实测）③ D5 回执提炼为 kit（`receipts.py` 尚未迁入，只有 bailian 在用）④ libtv 防重复计费缺口 |
 
 > ⚠️ **当前仍不能上线**：代码已切 DB，但尚未执行**生产环境**的存量文件回执迁移。直接上线会让「旧任务的文件回执」读不到 → 恢复路径判为无回执 → 二次计费。上线 runbook：①冻结 bailian 提交（运维停入口/下线模型）→ ②`app migrate-receipts --dry-run` 核对 → ③正式迁移，校验 100% → ④解冻。**冻结机制需人工执行，代码不内置开关**（见 §3 冻结小节）。
@@ -59,6 +59,26 @@
 | P7 | 最终目标 | 健壮、**高扩展**、**生产级**系统 —— 不是「能跑就行」的演示实现 |
 
 > P2 同时更正了一个过时的架构前提：文档此前反复写的「替换链 worker 必须读文件回执 / 与替换链耦合不可动」**不成立**。核实见 §6.5。
+
+### L1.5 通道抽象接线（2026-11-24）
+
+**范围**：把通道决策层接进链路，让驱动声明真正生效。整体**行为等价**，只有一处例外（未声明通道却带素材 → 从「静默丢」改成「报错」，见 C-3）。
+
+| 项 | 决定 | 理由 |
+|---|---|---|
+| 百炼图片通道 | **保持 OSS-only**（`image/audio/video = {OSS}`），百炼代码一行不动 | 走 Base64 要改百炼请求构造（`input.media[].url` 换字段），属行为变更，留到单独工作包 |
+| 通道结果落库 | **本次不落库**（回执模型的 `channel_used` 字段已存在，本次不写） | 选路只取决于静态声明 → 同一次任务重试必然同路；回退留痕写审计事件 + 日志，省掉 DB 迁移 |
+| OSS 落地实现 | **不抽到框架** | 百炼的上传凭据由百炼签发，抽进 infra 等于把供应商协议塞进框架，与 `media_channel.py` 自身的边界声明矛盾 |
+| 通道声明不合法 | **生产环境启动失败**，开发环境只记警告 | A7：可行性错误要在启动期暴露，不能拖到运行时变成上游「图片无法访问」 |
+| 未声明通道却带素材 | **明确报错**，不静默丢素材 | C-3：宁可失败不可静默少能力 |
+
+**落地**
+
+- 决策层 `infra/media_channel.py`：`declared_channels` / `preferred_channels` / `plan_channel` / `record_channel_fallbacks`；声明读取走**协议 + isinstance**（不 `getattr` 探测）。旧开关 `inline_references` 保留兼容（等价「所有类型走 Base64」）。
+- 落地层 `infra/reference_inline.py::prepare_inline_payloads`：按声明分流；**零读字节**（只走 OSS / 工作区的素材，框架一个字节都不碰）；**同类型通道必须一致**（一半内联一半不内联会让提示词里的「第一张/第二张」错位 —— 照常出片，只是内容不对）。
+- 两条链 `modules/image/pipeline.py` / `modules/task/pipeline.py`：`build_request` 都改成按声明分流。图片链的 `_SUPPORTED_CHANNELS` 只有 Base64（框架侧只有内联一种实现）；视频链有 Base64 / OSS / 工作区三档。
+- 驱动声明：`agnes`/`grsai`/`agnes_video`/`grsai_video`/两个 mock = Base64；`bailian` = OSS（+ `oss_upload_supported = True`）；`libtv` = 工作区（原样）。
+- 启动期校验 `modules/model_driver/registry.py`：加载期校验声明 → 非法声明的驱动**不注册** → 生产环境启动失败。**顶层脚本（`app.py`）不碰业务模块**（架构守卫禁止），核对放在 registry 自己的装配点。
 
 ---
 

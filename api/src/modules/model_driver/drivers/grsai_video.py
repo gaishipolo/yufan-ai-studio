@@ -46,6 +46,7 @@ from infra.ai.base import (
     ModelSpec,
     ReferenceLimit,
 )
+from infra.media_channel import MediaChannel
 from modules.model_driver.drivers.grsai import (
     GENERATE_PATH,
     RESULT_PATH,
@@ -130,7 +131,13 @@ class GrsaiVideoDriver:
     poll_interval_sec = 5.0
     submit_timeout_sec = 30.0
     # 参考素材直接以 base64 提交，不必落盘物化。
-    inline_references = True
+    #
+    # 通道声明（`infra/media_channel.py`）取代旧的 `inline_references` 开关：
+    # 旧开关是「所有素材类型一个开关」，分不了类型。
+    accepted_media_formats = {
+        "image": frozenset({MediaChannel.BASE64}),
+        "audio": frozenset({MediaChannel.BASE64}),
+    }
     reference_limits = {
         "image": ReferenceLimit(max_count=_MAX_IMAGE_REFERENCES),
         "audio": ReferenceLimit(

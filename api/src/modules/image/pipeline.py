@@ -38,7 +38,13 @@ from generation.spec import (
 from infra import get_storage
 from infra.ai.base import Capability, GenerationRequest, PollCapable
 from infra.driver_config import DriverSettings, driver_config
-from infra.reference_inline import IMAGE_MIME_BY_SUFFIX, inline_data_uris
+from infra.media_channel import (
+    MediaChannel,
+    declared_channels,
+    preferred_channels,
+    record_channel_fallbacks,
+)
+from infra.reference_inline import IMAGE_MIME_BY_SUFFIX, prepare_inline_payloads
 from modules.image.models import ImageJob
 
 logger = get_logger(__name__)
@@ -70,6 +76,12 @@ MAX_REFERENCE_BYTES = 6 * 1024 * 1024
 # 视频链也要把参考素材内联成 data URI，两条链共用同一份白名单与体积上限，
 # 各写一份迟早漂移（多一个后缀、少一个上限，用户只在提交时才发现）。
 REFERENCE_MIME_BY_SUFFIX = IMAGE_MIME_BY_SUFFIX
+
+# 这条链的**落地能力**：框架侧只有「内联」一种实现（读字节 → base64 data URI）。
+#
+# 供应商声明了别的通道也没用 —— 没有实现就不能兑现，只能报错，不能静默丢素材。
+# （视频链多两条：OSS 与工作区都是「不内联、素材留给物化器」那条路。）
+_SUPPORTED_CHANNELS = frozenset({MediaChannel.BASE64})
 _BLOCKED_HOSTNAMES = frozenset(
     {"localhost", "metadata", "metadata.google.internal", "instance-data"}
 )
@@ -325,7 +337,7 @@ def _has_magic(data: bytes, suffix: str) -> bool:
 
 
 async def _reference_data_uris(record: GenerationRecord) -> tuple[str, ...]:
-    """把记录里的参考图快照读成 `data:image/...;base64,...`。
+    """按**供应商声明的通道**把参考图交给上游。
 
     为什么不直接把素材的取件链接交给供应商：那是**私签**地址，几分钟就过期，
     本机的存储供应商根本访问不到。模板链（百炼）能让供应商自己去拉，是因为
@@ -338,12 +350,27 @@ async def _reference_data_uris(record: GenerationRecord) -> tuple[str, ...]:
 
     读失败就抛：参考图是提交输入，静默退化成纯文生图会让用户拿到一张
     完全不相关的图，而记录里写着「用过参考图」。
+
+    ## 为什么现在按声明分流
+
+    以前这条链把参考图**写死**成无条件内联，供应商声明的通道在这条链上完全
+    不生效 —— 声明形同虚设，而且一旦驱动声明了别的通道，它会静默走错通道
+    （参考图被悄悄丢掉，用户看到的是「图没生效」）。现在改成：驱动说清走哪条
+    通道，这条链按声明走；这条链没有该通道的落地实现就直接报错，不静默丢素材。
     """
-    return await inline_data_uris(
+    from infra import get_model_router
+
+    provider = get_model_router().provider_for(record.model)
+    references, plans = await prepare_inline_payloads(
         record.reference_urls,
+        accepted=declared_channels(provider),
+        preferred=preferred_channels(provider),
+        supported=_SUPPORTED_CHANNELS,
         mime_by_suffix=REFERENCE_MIME_BY_SUFFIX,
         max_bytes=MAX_REFERENCE_BYTES,
     )
+    await record_channel_fallbacks(plans, target_id=record.id, actor_id=record.owner_id)
+    return references
 
 
 def _with_suffix(name: str, stored: str) -> str:

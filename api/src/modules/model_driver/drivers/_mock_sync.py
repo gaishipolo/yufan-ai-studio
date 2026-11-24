@@ -21,6 +21,7 @@ from infra.ai.base import (
     GenerationState,
     ModelSpec,
 )
+from infra.media_channel import MediaChannel
 from modules.model_driver.spec import DriverMeta
 
 META = DriverMeta(label="驱动示例·同步", description="离线模拟：提交即出结果", version="1.0.0")
@@ -44,6 +45,9 @@ class MockSyncDriver:
     capabilities = frozenset({Capability.IMAGE})
     models = MODELS
     supports_poll = False
+    # 参考图走内联（与真实生图驱动同口径）。声明了 `max_references` 就得说清
+    # 走哪条通道 —— 否则链路按声明分流时没有可用通道。
+    accepted_media_formats = {"image": frozenset({MediaChannel.BASE64})}
 
     async def submit(self, request: GenerationRequest) -> GenerationProgress:
         digest = hashlib.sha1(request.prompt.encode()).hexdigest()[:12]

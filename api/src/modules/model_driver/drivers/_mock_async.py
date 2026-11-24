@@ -22,6 +22,7 @@ from infra.ai.base import (
     GenerationState,
     ModelSpec,
 )
+from infra.media_channel import MediaChannel
 from modules.model_driver.spec import DriverMeta
 
 META = DriverMeta(
@@ -62,6 +63,11 @@ class MockAsyncDriver:
     capabilities = frozenset({Capability.IMAGE, Capability.VIDEO})
     models = MODELS
     supports_poll = True
+    # 参考素材走内联（与真实驱动同口径）。
+    accepted_media_formats = {
+        "image": frozenset({MediaChannel.BASE64}),
+        "audio": frozenset({MediaChannel.BASE64}),
+    }
 
     async def submit(self, request: GenerationRequest) -> str:
         digest = hashlib.sha1(request.prompt.encode()).hexdigest()[:8]

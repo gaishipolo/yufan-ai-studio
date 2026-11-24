@@ -75,6 +75,7 @@ from infra.ai.base import (
     ModelSpec,
 )
 from infra.driver_config import DriverSettings, driver_config
+from infra.media_channel import MediaChannel
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.spec import DriverMeta
@@ -187,6 +188,13 @@ class AgnesDriver:
     # 等于「谁先 import 谁说了算」——历史上因此把默认生图模型悄悄换成
     # echo 的 seedream-3，而没有任何一处报错。
     preferred_for = frozenset({Capability.IMAGE})
+    # 参考图走**内联 data URI**（通道声明见 `infra/media_channel.py`）：上游只收
+    # 公网地址或 `data:` URI，我们的存储在内网、拿不出公网地址。
+    #
+    # 必须**显式声明**：以前这条链把参考图写死成无条件内联，声明只对视频链
+    # 生效 —— 声明在这条链上形同虚设，而且一旦有人改成「按声明分流」，没声明
+    # 的驱动会静默走错通道（参考图被悄悄丢掉，用户看到的是「图没生效」）。
+    accepted_media_formats = {"image": frozenset({MediaChannel.BASE64})}
 
     @property
     def submit_timeout_sec(self) -> float:

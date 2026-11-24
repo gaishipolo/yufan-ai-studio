@@ -49,6 +49,7 @@ from infra.ai.base import (
     ReferenceLimit,
 )
 from infra.driver_config import DriverSettings, driver_config
+from infra.media_channel import MediaChannel
 from infra.reference_inline import MIME_BY_SUFFIX
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.errors import classify_http_error
@@ -468,7 +469,11 @@ class GrsaiImageDriver:
     # 提交只是一次短往返（replyType=async），30 秒足够。
     submit_timeout_sec = 30.0
     # Grsai 直接收 base64，不必落盘物化再传地址。
-    inline_references = True
+    #
+    # 通道声明（`infra/media_channel.py`）取代了旧的 `inline_references` 开关：
+    # 旧开关是「所有素材类型一个开关」，分不了类型；新声明按 image / audio
+    # 分别说清走哪条通道。
+    accepted_media_formats = {"image": frozenset({MediaChannel.BASE64})}
     reference_limits = {"image": ReferenceLimit(max_count=_MAX_IMAGE_REFERENCES)}
 
     def __init__(self, transport: httpx.AsyncBaseTransport | None = None) -> None:
