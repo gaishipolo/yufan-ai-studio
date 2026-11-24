@@ -22,7 +22,7 @@ from core.exceptions import (
     Unauthorized,
     UpstreamError,
 )
-from modules.model_driver.drivers import agnes, agnes_video, grsai
+from modules.model_driver.drivers import agnes, agnes_video, grsai, grsai_video
 
 
 @pytest.mark.parametrize(
@@ -110,3 +110,36 @@ def test_retryability_follows_the_mapped_status():
     assert agnes._http_error(httpx.Response(500, json={})).retryable is True
     assert agnes._http_error(httpx.Response(404, json={})).retryable is False
     assert agnes._http_error(httpx.Response(401, json={})).retryable is False
+
+
+def test_grsai_video_reuses_the_grsai_error_classification():
+    """Grsai 视频不另写一套 —— 直接复用 `grsai_http_error`。
+
+    两边口径天生一致，钉住它是为了防止有人给视频侧「顺手加个特判」→
+    于是同一个状态码在生图/视频两条链上表现不同。
+    """
+    assert grsai_video.grsai_http_error is grsai.grsai_http_error
+
+
+@pytest.mark.parametrize("status", [402, 405, 409, 422])
+def test_agnes_non_enumerated_4xx_falls_back_to_upstream_error(status):
+    """Agnes 的兜底：**未枚举的 4xx 也落 UpstreamError**（→ 502、可重试）。
+
+    这是全仓**唯一**这么做的口径：kit 默认 4xx→BadRequest、Grsai 一律 4xx→BadRequest。
+
+    ⚠️ **已知缺陷，待拍板**（2026-11-24 复核发现）：`agnes._http_error` 的
+    docstring 明说「4xx 表示供应商明确拒绝（没受理，可安全重试或直接失败）」，
+    404 单列的理由也是「落到 UpstreamError 会被重试三次」—— 但兜底那行
+    `return UpstreamError("Agnes 调用失败…")` 把 402/405/409/422 这类
+    **明确拒绝**也判成了可重试的 502。后果：供应商说「参数错/要付费」，
+    用户看到 502 并被重试 3 次，每次都失败得一样。
+
+    这条测试**钉住现状**（不是认可它）—— 修的时候要改这里的期望值，
+    顺手也把 `agnes._http_error` 的 docstring 与实现对齐。
+    """
+    err = agnes._http_error(httpx.Response(status, json={"error": {"message": "boom"}}))
+
+    assert isinstance(err, UpstreamError)
+    assert err.http_status == 502
+    assert err.retryable is True, "现状：非枚举 4xx 被判成可重试"
+

@@ -111,6 +111,42 @@
 - ⚠️ **待补**：这条约定需要一条测试钉住（当前测试全是新归档），且需要定「旧归档是否值得支持」—— 若产品上存在「历史任务重投」场景，应给旧归档补一个**一次性回填**（从 S3 按原路径找回对象键），而不是让用户重传素材。
 - **两类上传失败要能分开**：「我们的存储里对象没了」（我方问题）与「供应商拒收素材」（上游问题）当前在驱动里被合并成同一条 `UpstreamError` → 运维看到的文案指向供应商，真实原因在我方。建议细分错误类型（可辨识性优先于文案）。
 
+### L1.7 错误分类行为基线 + 阶段完成度复核（2026-11-24）
+
+**范围**：本工作包**不改生产代码**，只做两件事：① 给「各驱动各自的错误映射」补一层**行为基线**（此前只测 kit 的表达能力，不测驱动实际行为）；② 复核「阶段完成度」这个此前被误判的口径。
+
+**复核结论：阶段 1 / 2 / 3 其实都已按 §4 各阶段自己的进度表完成**
+
+| 此前口径 | 实际 |
+| --- | --- |
+| 阶段 2 未完成（`libtv/routes.py`、`libtv/schema.py` 未建） | 两个都已建 → 阶段 2 ✅ |
+| 阶段 1 未完成（`kit/` 只有 3 个模块） | 阶段 1 的验收项是「逐个驱动迁移」，§4 进度表 4 组驱动均已迁完；`kit/http.py` 等是 §9 的**早期预计清单**，不是任何阶段的验收项 |
+
+> 教训：**阶段完成度只认各阶段自己的进度表与验收项**，别用「文件在不在」推断 —— 复核就踩了这个坑，误判了两条阶段。
+
+**新增 `tests/test_driver_error_baseline.py`（22 条）**
+
+此前的 `tests/test_driver_kit_errors.py`（21 条）只测 **kit 的表达能力**（驱动没用 kit，kit 怎么改都不会红）；基线测的是**驱动的实际行为**，两者视角互补：
+
+- **Agnes**：401→`Unauthorized`、403→`Forbidden`、404/400→`BadRequest`、429→`RateLimited`、**未枚举 4xx→`UpstreamError`**；detail 取**嵌套** `error.message`（kit 只看顶层）
+- **Grsai**：4xx 一律 `BadRequest`（含 408）、5xx→`UpstreamError`；**Grsai 视频直接复用同一函数**（钉住，防「顺手给视频侧加个特判」→ 同一状态码在两条链上表现不同）
+- **Agnes 视频**：503 + `code=video_queue_full` → `RateLimited`（业务码例外），其它 503→`UpstreamError`
+- 显式钉住「Agnes 与 Grsai 对同一 429 映射不同」是**业务语义差异**（Agnes=限流可重试 / Grsai=请求错误），不是 bug —— 收敛的是**实现位置**（都走 kit），不是**判定结果**
+
+**另一处口径收紧**：阶段 0 的结论「kit 能还原 4 个驱动各自的 HTTP 状态口径」**只在已枚举的状态码上成立** —— `status_map` 表达不了**兜底口径**（Agnes 未枚举 4xx→`UpstreamError` vs kit 默认 4xx→`BadRequest`）。这是 Agnes 不能直接切到 kit 的**第二层原因**（第一层是逐状态定制文案）。
+
+**⚠️ 复核发现（待拍板）：Agnes 的兜底把「明确拒绝」判成了「可重试的上游故障」**
+
+`agnes._http_error` 的 docstring 明说「4xx 表示供应商明确拒绝（没受理，可安全重试或直接失败）」，404 单列的理由也是「落到 `UpstreamError` 会被重试三次、还把真正的提示盖掉」—— 但兜底那行 `return UpstreamError("Agnes 调用失败…")` 让**未枚举的 4xx**（402 付费失败、405、409、422 参数错）也落成 `UpstreamError` → 对外 **502 且 `retryable=True`**。
+
+| 项 | 内容 |
+| --- | --- |
+| 后果 | 供应商明说「参数错 / 要付费」，用户看到 502 并被重试 3 次，每次失败得一样；文案从「参数校验失败」变成「调用失败」 |
+| 全仓对比 | kit 默认 4xx→`BadRequest`、Grsai 一律 4xx→`BadRequest` → **只有 Agnes 这么判** |
+| 出处 | `drivers/agnes.py` 的 `_http_error` 兜底行（`return UpstreamError(f"Agnes 调用失败{suffix}")`） |
+| **待拍板** | **(A)** 兜底改 `BadRequest`（与自身注释、kit 默认、Grsai 一致；对外 502→400、`retryable` 变 false —— 属**行为变更**，要确认无人依赖 502）<br>**(B)** 保留现状，只把 docstring 改成与实现一致（把注释里的意图改掉） |
+| 现状已钉住 | 基线测试 `test_agnes_non_enumerated_4xx_falls_back_to_upstream_error` 显式记录这个差异 —— 改的时候要同步改期望值 |
+
 ---
 
 ## 0. 摘要
@@ -596,7 +632,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | 项 | 结果 |
 |---|---|
 | A1 逐行比对 | ✅ 完成：4 组里仅两个 `_suffix` 逐字等价，其余不可合并（详见 §1.1 A1） |
-| 黄金样本测试 | ✅ 21 条（`tests/test_driver_kit_errors.py`），逐条还原 4 个驱动各自的 HTTP 状态口径 |
+| 黄金样本测试 | ✅ 21 条（`tests/test_driver_kit_errors.py`），逐条还原 4 个驱动各自的 HTTP 状态口径。⚠️ **2026-11-24 复核收紧**：这批样本只覆盖**已枚举**的状态码 —— `status_map` 表达不了「兜底口径」（Agnes 的未枚举 4xx → `UpstreamError`，kit 默认 4xx → `BadRequest`）→ 「kit 能还原各驱动口径」这句只在枚举范围内成立。补齐由 `tests/test_driver_error_baseline.py`（22 条，测驱动**实际**行为）承担 |
 | `kit/errors.py` | ✅ 框架唯一分类实现 + `suffix()`；驱动用 `status_map` / `code_overrides` 声明口径 |
 | 生产代码 | ✅ 零改动（驱动仍在用自己的函数；kit 尚未被引用） |
 | 408 口径修正 | ✅ kit 默认归 5xx 侧（可能已受理），grsai 用 `status_map={408: BadRequest}` 显式覆盖 |
@@ -636,7 +672,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | 组 | 状态 | 迁了什么 | 没迁什么（及原因） |
 |---|---|---|---|
 | `grsai` / `grsai_video` | ✅ 已完成 | 错误分类 → kit（`status_map` 声明口径）、`_suffix` → kit、配置 getter → kit | 剥模型前缀（grsai 特有）、素材分类（grsai 特有） |
-| `agnes` / `agnes_video` | ✅ 已完成（部分）| 配置 getter → kit、**缺密钥判定 → kit** | **HTTP 错误映射保留私有**：404 有定制文案（「当前密钥分组未开通…可用模型见 GET /api/v1/models」）、401/403/429 各有专门提示、`agnes_video` 还有业务码例外 —— `status_map` 只表达异常类型，表达不了逐状态的定制文案，强迁会破坏行为等价。✅ **2026-11-24 复核：这是刻意保留，不是遗漏**，并已补**行为基线测试** `tests/test_driver_error_baseline.py`（17 条）—— 「保留私有不动」本身要有守卫，否则早晚被当成技术债「统一掉」；同时钉住「Agnes 与 Grsai 对同一 429 映射不同」是业务语义差异（Agnes=限流可重试、Grsai=请求错误），不是 bug |
+| `agnes` / `agnes_video` | ✅ 已完成（部分）| 配置 getter → kit、**缺密钥判定 → kit** | **HTTP 错误映射保留私有**：404 有定制文案（「当前密钥分组未开通…可用模型见 GET /api/v1/models」）、401/403/429 各有专门提示、`agnes_video` 还有业务码例外 —— `status_map` 只表达异常类型，表达不了逐状态的定制文案，强迁会破坏行为等价。⚠️ **2026-11-24 复核又发现第二层原因**：`status_map` 连**兜底口径**也表达不了 —— Agnes 的兜底是「未枚举的 4xx → UpstreamError」，而 kit 的兜底是「4xx → BadRequest」，Grsai 又是「4xx 一律 BadRequest」→ **同一套声明表还原不出 Agnes 的兜底**。✅ **2026-11-24 复核：这是刻意保留，不是遗漏**，并已补**行为基线测试** `tests/test_driver_error_baseline.py`（22 条）—— 「保留私有不动」本身要有守卫，否则早晚被当成技术债「统一掉」；同时钉住「Agnes 与 Grsai 对同一 429 映射不同」是业务语义差异（Agnes=限流可重试、Grsai=请求错误），不是 bug |
 | `bailian` | ✅ 已完成（部分）| 配置 getter → kit（`lru_cache` → mtime 指纹）、缺密钥判定 → kit、**成片落盘路径与输出地址格式 → `infra/executor_output.py`**（消除驱动与框架间的字面量重复）| `_real_model`（精确查表，非剥前缀）、`_validated_inputs`（百炼特有校验）、音频 OSS 直传 —— 均按 A1 结论保留私有；「图片改内联」属行为变更例外，**待实测**（见下） |
 | `libtv` | ✅ 已完成（部分）| 配置 getter → kit（`libtv/executor.py` 的 `@lru_cache` → mtime 指纹，**全仓最后一个**自建缓存 getter） | 无 HTTP 层（调本地 Node 执行器）→ 无 `kit/errors.py` 可切；错误分类全是业务语义（`EXECUTOR_BUSY` = **排队**不是限流、`STALE_LOCK` = 锁不是错误、`EXECUTOR_RELEASE_MISMATCH` = 重试无用）→ 保留私有。**实质产出在 A6**：把「工作区」单列为 `MediaChannel.WORKSPACE` 一档 + 两条防漂移守卫 |
 
@@ -748,6 +784,8 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | 上游 200 + `status: failed` | 4xx | 允许重试 | 明确拒绝 = 没受理 |
 
 > 关键断言：`4xx` 与 `5xx` 两侧**不得互换**。5xx 被降成 4xx → 框架自动重试 → 同一张图计费两次。
+>
+> ⚠️ **这张矩阵是 kit 的目标口径，不是各驱动的现状**（2026-11-24 复核）。现状由 `tests/test_driver_error_baseline.py`（22 条）钉住，与本表的**已知差异只有一处**：**Agnes 的未枚举 4xx 落 5xx 侧**（`UpstreamError` → 502 且可重试）；其余驱动与本表一致。差异原因与处置见 §L1.7。
 
 ### 5.2 素材分类与通道选择（`kit/media.py` + 通道决策器）
 
@@ -1057,7 +1095,7 @@ api/tests/test_reference_inline_channels.py            ← Base64 通道分流
 api/tests/test_pipeline_media_channels.py              ← 两条链按声明分流
 api/tests/test_media_channel.py                        ← 通道决策层
 api/tests/test_architecture.py                         ← 架构守卫（infra 不反向依赖 driver）
-api/tests/test_driver_error_baseline.py               ← 错误分类行为基线（17 条：钉住各驱动刻意保留的逐状态映射差异）
+api/tests/test_driver_error_baseline.py               ← 错误分类行为基线（22 条：钉住各驱动刻意保留的逐状态映射差异）
 ```
 
 > **清单与实际的偏差（2026-11-23 复核）**：`kit/` 里**只建了 `credentials.py` / `errors.py`
