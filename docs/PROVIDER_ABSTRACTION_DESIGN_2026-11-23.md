@@ -636,7 +636,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | 组 | 状态 | 迁了什么 | 没迁什么（及原因） |
 |---|---|---|---|
 | `grsai` / `grsai_video` | ✅ 已完成 | 错误分类 → kit（`status_map` 声明口径）、`_suffix` → kit、配置 getter → kit | 剥模型前缀（grsai 特有）、素材分类（grsai 特有） |
-| `agnes` / `agnes_video` | ✅ 已完成（部分）| 配置 getter → kit、**缺密钥判定 → kit** | **HTTP 错误映射保留私有**：404 有定制文案（「当前密钥分组未开通…可用模型见 GET /api/v1/models」）、401/403/429 各有专门提示、`agnes_video` 还有业务码例外 —— `status_map` 只表达异常类型，表达不了逐状态的定制文案，强迁会破坏行为等价 |
+| `agnes` / `agnes_video` | ✅ 已完成（部分）| 配置 getter → kit、**缺密钥判定 → kit** | **HTTP 错误映射保留私有**：404 有定制文案（「当前密钥分组未开通…可用模型见 GET /api/v1/models」）、401/403/429 各有专门提示、`agnes_video` 还有业务码例外 —— `status_map` 只表达异常类型，表达不了逐状态的定制文案，强迁会破坏行为等价。✅ **2026-11-24 复核：这是刻意保留，不是遗漏**，并已补**行为基线测试** `tests/test_driver_error_baseline.py`（17 条）—— 「保留私有不动」本身要有守卫，否则早晚被当成技术债「统一掉」；同时钉住「Agnes 与 Grsai 对同一 429 映射不同」是业务语义差异（Agnes=限流可重试、Grsai=请求错误），不是 bug |
 | `bailian` | ✅ 已完成（部分）| 配置 getter → kit（`lru_cache` → mtime 指纹）、缺密钥判定 → kit、**成片落盘路径与输出地址格式 → `infra/executor_output.py`**（消除驱动与框架间的字面量重复）| `_real_model`（精确查表，非剥前缀）、`_validated_inputs`（百炼特有校验）、音频 OSS 直传 —— 均按 A1 结论保留私有；「图片改内联」属行为变更例外，**待实测**（见下） |
 | `libtv` | ✅ 已完成（部分）| 配置 getter → kit（`libtv/executor.py` 的 `@lru_cache` → mtime 指纹，**全仓最后一个**自建缓存 getter） | 无 HTTP 层（调本地 Node 执行器）→ 无 `kit/errors.py` 可切；错误分类全是业务语义（`EXECUTOR_BUSY` = **排队**不是限流、`STALE_LOCK` = 锁不是错误、`EXECUTOR_RELEASE_MISMATCH` = 重试无用）→ 保留私有。**实质产出在 A6**：把「工作区」单列为 `MediaChannel.WORKSPACE` 一档 + 两条防漂移守卫 |
 
@@ -1057,6 +1057,7 @@ api/tests/test_reference_inline_channels.py            ← Base64 通道分流
 api/tests/test_pipeline_media_channels.py              ← 两条链按声明分流
 api/tests/test_media_channel.py                        ← 通道决策层
 api/tests/test_architecture.py                         ← 架构守卫（infra 不反向依赖 driver）
+api/tests/test_driver_error_baseline.py               ← 错误分类行为基线（17 条：钉住各驱动刻意保留的逐状态映射差异）
 ```
 
 > **清单与实际的偏差（2026-11-23 复核）**：`kit/` 里**只建了 `credentials.py` / `errors.py`
@@ -1120,10 +1121,10 @@ api/src/modules/model_driver/drivers/{bailian,grsai,grsai_video,agnes,agnes_vide
 ---
 
 > **实施状态（2026-11-24 复核更正）**：阶段 0（固化行为）、阶段 0.5（回执落 DB + 工作区 GC，D6）、
-> 阶段 3（配置热生效）**已实施**；阶段 1（kit 迁移）与阶段 2（供应商专属端点）**未完成** ——
-> `kit/` 只建了 `credentials.py` / `errors.py` / `settings.py`（`classify_http_error` 目前只有 `grsai.py` 在用），
-> `kit/http.py` / `models.py` / `media.py` / `submission_guard.py` 与 `libtv/routes.py` / `libtv/schema.py` 未建。
-> ⚠️ 「已改公共文件」≠「阶段完成」（例：阶段 2 改了公共 5 处，但专属端点文件未建 → 阶段 2 未完成）。
+> 阶段 1（逐驱动迁移）、阶段 2（消除公共硬编码）、阶段 3（配置热生效）**均已按 §4 各阶段自己的进度表完成** ——
+> `kit/` 只有 `credentials.py` / `errors.py` / `settings.py` —— 但**这不是阶段未完成的证据**：阶段 1 的验收项是「逐个驱动迁移」（§4 进度表：4 组驱动均已迁完，剩余项都是**刻意保留**的供应商特有逻辑，如百炼精确查表、逐状态定制文案），`kit/http.py` / `models.py` / `media.py` / `submission_guard.py` 是 §9 的**早期预计清单**，不是任何阶段的验收项；
+> `libtv/routes.py` / `libtv/schema.py` **已建**（阶段 2 ✅，2026-11-24 复核核实）。
+> ⚠️ 反过来也要注意：**别用「文件在不在」推断阶段完成度** —— 2026-11-24 复核就踩了这个坑（据 §9 早期清单误判阶段 1/2 未完成；实际 `libtv/routes.py`、`libtv/schema.py` 早已建好）。阶段完成度只认**各阶段自己的进度表与验收项**。
 > 排期不要按「阶段 N 已实施」这句话取结论 —— 以各阶段的「进度」记录与 §9 的偏差说明为准。各阶段的实际改动见对应小节的
 > 「进度」记录 —— 每阶段独立可发布，其中**阶段 0.5 可独立上线**，
 > 它修的是现网的二次计费风险。
