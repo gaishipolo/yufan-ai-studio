@@ -175,6 +175,26 @@ export const VISIBILITY_LABEL: Record<string, string> = {
 };
 
 /**
+ * 这条素材是不是**所有登录用户**都读得到。
+ *
+ * 判据与后端一致（`modules/library/access.py` 的 `can_read`）：`purpose=case`
+ * 的素材对所有人可读（这一条刻意排在 `visibility` 之前），`visibility=team`
+ * 的素材对所有登录用户可读。
+ *
+ * 刻意**不**把 `visibility=group` 算进来：小组共享只对组内成员可读，而组外
+ * 的人恰恰是复用模板的大多数 —— 它不满足「全员可读」。
+ *
+ * 用在哪：模板的**固定槽位**钉的那条素材要随模板公开给别人用，作者自己的
+ * 私有素材钉进去，别人复用时是拿他的身份再判一次可见性的，必然读不到。
+ */
+export function isPubliclyReadable(asset: {
+  purpose?: string;
+  visibility?: string;
+}): boolean {
+  return asset.purpose === 'case' || asset.visibility === 'team';
+}
+
+/**
  * 展示用的名称：去掉格式后缀。
  *
  * 后缀是**文件自己的属性**，用户改不了（后端 `keep_extension` 会把后缀拼回

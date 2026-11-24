@@ -29,7 +29,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound, StateChanged
 from core.param_schema import resolve_params
-from core.ports.library_lookup import get_library_lookup
+from core.ports.library_lookup import (
+    LibraryAssetRef,
+    LibraryVisibility,
+    get_library_lookup,
+)
 from core.ports.model_generation import ModelSummary, get_model_generation
 from core.template_spec import (
     EXECUTION_PROMPT_LIMIT,
@@ -434,23 +438,72 @@ def _check_model_params(spec: TemplateSpec, model: ModelSummary) -> None:
         )
 
 
+def _is_publicly_readable(ref: LibraryAssetRef) -> bool:
+    """这条素材是否**任何登录用户**都能读。
+
+    判据来自 `modules/library/access.py` 的 `can_read`：`purpose == "case"`
+    的素材对所有人可读（且这一条刻意排在 `visibility` 之前），
+    `visibility == "team"` 的素材对所有登录用户可读。
+
+    刻意**不**在这里重写一遍「共享到小组」的判定：`visibility=group` 只对
+    组内成员可读，而组外的人恰恰是复用模板的大多数 —— 它不满足「全员可读」。
+    """
+    return ref.purpose == "case" or ref.visibility == LibraryVisibility.TEAM
+
+
 async def _check_fixed_refs(
-    session: AsyncSession, actor: CurrentUser, spec: TemplateSpec
+    session: AsyncSession,
+    actor: CurrentUser,
+    spec: TemplateSpec,
+    *,
+    require_public: bool = False,
 ) -> None:
-    """固定槽位在发布时必须**现在就能解释**：资产可读。"""
+    """固定槽位的素材必须**作者读得到**；发布时还必须**所有复用者都读得到**。
+
+    两级判据的分界在**发布**那一刻：草稿是作者自己的工作区，引用自己的
+    私有素材完全正常（既有流程就是这样）；模板一旦发布就要给别人用，
+    那时素材读不到就是坏模板。
+
+    为什么发布时要收紧：模板是**发布出去给别人用**的。只判作者可读时，
+    作者自己的 personal 素材照样放行 —— 但复用者填表时是用**复用者的
+    身份**再判一次（见 `_fills`），必然读不到，于是模板一发布就对所有人
+    不可用，错误还延迟到复用者点「生成」才炸出来。
+
+    `core/template_spec/compile.py` 的 `_assets_of` 规定 fixed 槽位在编译期
+    必须等于 `slot.asset_id`，所以没有「让复用者换一个」的余地：
+    固定槽位的素材读不到，模板就是坏的。发布时拦住，是唯一能拦住的地方。
+    """
     lookup = get_library_lookup()
     asset_ids = [slot.asset_id for slot in spec.slots if slot.asset_id]
-    if asset_ids:
-        readable = await lookup.readable_ids(session, actor, asset_ids)
-        missing = [item for item in asset_ids if item not in readable]
-        if missing:
-            raise BadRequest(f"固定素材不可用或无权访问：{'、'.join(missing)}")
+    if not asset_ids:
+        return
+    readable = await lookup.readable_ids(session, actor, asset_ids)
+    missing = [item for item in asset_ids if item not in readable]
+    if missing:
+        raise BadRequest(f"固定素材不可用或无权访问：{'、'.join(missing)}")
+    if not require_public:
+        return
+    refs = await lookup.get_many(session, asset_ids)
+    private = [
+        item
+        for item in asset_ids
+        if item in refs and not _is_publicly_readable(refs[item])
+    ]
+    if private:
+        raise BadRequest(
+            f"固定素材只有你自己能看到，发布后别人用不了：{'、'.join(private)}。"
+            "请把它移进案例池，或改成团队可见。"
+        )
 
 
 async def _check_demo_ref(
-    session: AsyncSession, actor: CurrentUser, spec: TemplateSpec
+    session: AsyncSession,
+    actor: CurrentUser,
+    spec: TemplateSpec,
+    *,
+    require_public: bool = False,
 ) -> None:
-    """展示案例必须**现在就能读**。
+    """展示案例必须**现在就能读**；发布时还必须**所有复用者都读得到**。
 
     为什么这一条不能省：`demoAssetId` 是删除保护的依据（见
     `SpecDemoCases`）。零校验时，写一个**别人的私有 id** 进去就能让那条
@@ -459,6 +512,10 @@ async def _check_demo_ref(
 
     读不到就拒绝保存（fail-closed）：宁可保存不进去，也不能留一条查不出来的
     引用 —— 后者会让 owner 在回收站里卡死，且没有任何线索能定位到是谁占的。
+
+    为什么发布时还要「全员可读」：展示案例是**模板库卡片上的那一帧**。
+    别人打开模板库看到的封面就是它 —— 素材只有作者可见时，
+    别人那里安静退化成「暂无案例」，卡片看着像没加载出来。
     """
     asset_id = spec.demo_asset_id
     if not asset_id:
@@ -467,6 +524,15 @@ async def _check_demo_ref(
     readable = await lookup.readable_ids(session, actor, [asset_id])
     if asset_id not in readable:
         raise BadRequest("展示案例不可用或无权访问")
+    if not require_public:
+        return
+    refs = await lookup.get_many(session, [asset_id])
+    ref = refs.get(asset_id)
+    if ref is not None and not _is_publicly_readable(ref):
+        raise BadRequest(
+            "展示案例只有你自己能看到，别人打开模板库看不到。"
+            "请把它移进案例池，或改成团队可见。"
+        )
 
 
 async def validate_draft(
@@ -556,7 +622,10 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     validate_spec(spec)
     _check_executable(spec)
     await _check_model(spec)
-    await _check_fixed_refs(session, actor, spec)
+    # 发布 = 对外公开的那一刻：固定素材与展示案例必须**所有复用者都读得到**。
+    # 草稿阶段不这么判（见 `_check_fixed_refs` 的两级判据说明）。
+    await _check_fixed_refs(session, actor, spec, require_public=True)
+    await _check_demo_ref(session, actor, spec, require_public=True)
 
     latest = await _latest(session, head)
     fingerprint = fingerprint_of(payload)
@@ -1039,6 +1108,15 @@ async def _fills(
         readable = await lookup.readable_ids(session, actor, asset_ids)
         denied = [item for item in asset_ids if item not in readable]
         if denied:
+            if slot.binding == "fixed" and slot.asset_id in denied:
+                # fixed 槽位在编译期必须等于 slot.asset_id（core/template_spec/compile.py
+                # 的 _assets_of），复用者**无法**自己换一张 —— 所以这条不是
+                # 「你没权限」那种自己能解决的事，得说清该找谁、怎么改。
+                raise BadRequest(
+                    f"槽位「{slot.label or slot.key}」是模板作者固定好的素材，"
+                    f"但它对其他人不可见：{'、'.join(denied)}。"
+                    "请让作者把这条素材移进案例池或改成团队可见后再用。"
+                )
             raise BadRequest(f"槽位「{slot.label or slot.key}」的素材无权访问：{'、'.join(denied)}")
         fills[slot.key] = FilledSlot(
             slot_key=slot.key,

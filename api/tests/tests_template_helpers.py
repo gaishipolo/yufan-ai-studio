@@ -92,6 +92,9 @@ def upload(
     `category` 保留旧签名，只为让几十条用例不用一起改：v2 只认 `kind`
     （图片 / 音频 / 文本走 `/library/assets/upload`，视频原片走模板库专用的
     `/library/source-videos`）。
+
+    上传出来的素材是**仅自己可见**的（资产库的默认）。造「模板里给别人用
+    的素材」请用 `upload_shared`。
     """
     kind = _UPLOAD_KIND.get(category, "image")
     if kind == "video":
@@ -112,6 +115,29 @@ def upload(
     data = response.json()["data"]
     assert isinstance(data, dict)
     return data
+
+
+def upload_shared(
+    client: TestClient,
+    filename: str,
+    category: str,
+    content: bytes,
+    headers: dict[str, str] | None = None,
+) -> dict[str, Any]:
+    """登记一条**别人也读得到**的素材（团队可见）。
+
+    模板发布时固定槽位的素材必须**所有复用者都读得到**（发布闸，见
+    `spec_service._check_fixed_refs`）：复用者填表时是用自己的身份再判一次
+    可见性的，作者自己的私有素材一发布就注定谁也用不了。
+
+    所以「造一份能发布的模板」的夹具必须给团队可见素材 —— 否则用例红在
+    发布上，看不出是模板行为变了还是夹具素材本来就不给外人看。
+    """
+    from library_support import set_visibility
+
+    row = upload(client, filename, category, content, headers=headers)
+    set_visibility(str(row["id"]), "team")
+    return row
 
 
 def login(

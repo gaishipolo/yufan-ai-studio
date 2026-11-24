@@ -3,7 +3,8 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
+import type { LibraryAssetOut, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
+import { libraryApi } from '@/entities/library/api/library.api';
 import { useToastStore } from '@/shared/lib/toast';
 import { Toaster } from '@/shared/ui/Toaster';
 import { SpecWorkspace } from './SpecWorkspace';
@@ -1116,5 +1117,116 @@ describe('模板封装 · 删除前先问一句', () => {
       listState.isError = false;
       listState.error = null;
     }
+  });
+});
+
+/**
+ * 固定槽位的素材会**随模板发布给所有人**。
+ *
+ * 别人复用时是拿**他的身份**再判一次可见性的（后端 `_fills`），而固定槽位在
+ * 编译期必须等于作者钉的那一条，复用者没法自己换一张 —— 所以作者挑到一条
+ * 只有自己能看的素材时，这个模板一发布对所有人就是坏的，错误还延迟到别人
+ * 点「生成」才炸出来。
+ *
+ * 界面要给出路：把这条素材移进案例池（与「展示案例」同一条路），而不是让
+ * 作者在点发布时吃一个 400 却不知道该改哪条。
+ */
+describe('模板封装 · 固定槽位的素材要能随模板公开', () => {
+  const draft = (): TemplateSpecIn => ({
+    key: 'spec-1',
+    name: '商品图模板',
+    model: 'bailian-wan3-prime-replacement',
+    prompt: '把{{Mixed 1}}左右拼接为一张图',
+    slots: [
+      {
+        key: 'pinned',
+        type: 'image',
+        binding: 'fixed',
+        minCount: 1,
+        maxCount: 1,
+        label: '固定图',
+        position: 0,
+      },
+    ],
+  });
+
+  beforeEach(() => {
+    vi.mocked(libraryApi.setPurpose).mockClear();
+    vi.mocked(libraryApi.selection).mockReset();
+  });
+
+  /** 进编辑器，并把素材选择器里的内容摆好。 */
+  async function enter(items: LibraryAssetOut[]) {
+    vi.mocked(libraryApi.selection).mockResolvedValue({
+      items,
+      total: items.length,
+      page: 1,
+      pageSize: 20,
+    });
+    const user = userEvent.setup();
+    renderWorkspace([specOf({ status: 'draft', draft: draft() })]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+    return user;
+  }
+
+  const asset = (
+    id: string,
+    name: string,
+    over: Partial<LibraryAssetOut> = {},
+  ): LibraryAssetOut => ({
+    id,
+    name,
+    kind: 'image',
+    origin: 'upload',
+    ownerId: 'u-1',
+    visibility: 'personal',
+    state: 'active',
+    ...over,
+  });
+
+  it('挑到只有自己能看的素材：先问「设为案例」，确认后才钉进槽位', async () => {
+    const user = await enter([asset('a-1', '我的图')]);
+
+    await user.click(screen.getByRole('button', { name: '选择素材' }));
+    const picker = await screen.findByRole('dialog', { name: '选择固定素材' });
+    await user.click(within(picker).getByRole('button', { name: /我的图/ }));
+
+    // 先问一句 —— 这一步会改变素材的可见范围
+    expect(screen.getByRole('dialog', { name: '把这条素材设为案例' })).toBeInTheDocument();
+    expect(libraryApi.setPurpose).not.toHaveBeenCalled();
+
+    await user.click(screen.getByRole('button', { name: '确认设为案例' }));
+    await waitFor(() => expect(libraryApi.setPurpose).toHaveBeenCalledWith('a-1', 'case'));
+
+    // 钉进槽位了：按钮从「选择素材」变成「更换」
+    expect(await screen.findByRole('button', { name: '更换' })).toBeInTheDocument();
+  });
+
+  it('挑到案例池里的素材：直接钉进槽位，不多问一句', async () => {
+    const user = await enter([asset('a-2', '案例图', { purpose: 'case' })]);
+
+    await user.click(screen.getByRole('button', { name: '选择素材' }));
+    const picker = await screen.findByRole('dialog', { name: '选择固定素材' });
+    await user.click(within(picker).getByRole('button', { name: /案例图/ }));
+
+    expect(
+      screen.queryByRole('dialog', { name: '把这条素材设为案例' }),
+    ).not.toBeInTheDocument();
+    expect(libraryApi.setPurpose).not.toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: '更换' })).toBeInTheDocument();
+  });
+
+  it('挑到团队可见的素材：不用移进案例池，直接钉进槽位', async () => {
+    const user = await enter([asset('a-3', '团队图', { visibility: 'team' })]);
+
+    await user.click(screen.getByRole('button', { name: '选择素材' }));
+    const picker = await screen.findByRole('dialog', { name: '选择固定素材' });
+    await user.click(within(picker).getByRole('button', { name: /团队图/ }));
+
+    expect(
+      screen.queryByRole('dialog', { name: '把这条素材设为案例' }),
+    ).not.toBeInTheDocument();
+    expect(libraryApi.setPurpose).not.toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: '更换' })).toBeInTheDocument();
   });
 });

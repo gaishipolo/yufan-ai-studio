@@ -13,7 +13,14 @@ import asyncio
 from typing import Any
 
 from fastapi.testclient import TestClient
-from library_support import LIB_RW, admin_headers, make_user, suffix, upload_image
+from library_support import (
+    LIB_RW,
+    admin_headers,
+    make_user,
+    set_visibility,
+    suffix,
+    upload_image,
+)
 
 API = "/api/v1/template-specs"
 PERMS = [
@@ -89,6 +96,8 @@ def test_legacy_pack_field_does_not_break_the_template_list(
     """老草稿带着 `packId` 也要能读：列表不能 500，模板不能消失。"""
     headers = _headers(client)
     asset = upload_image(client, api, headers, name=f"legacy-{suffix()}.png")
+    # 团队可见：固定槽位的素材要所有复用者都读得到才发得出去（发布闸）。
+    set_visibility(str(asset["id"]), "team")
     draft = _draft(asset["id"])
 
     saved = client.post(API, json=draft, headers=headers)

@@ -9,8 +9,8 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi.testclient import TestClient
-from library_support import LIB_RW, admin_headers, make_user, suffix
-from tests_template_helpers import png_bytes, upload, video_bytes
+from library_support import LIB_RW, admin_headers, make_user, set_visibility, suffix
+from tests_template_helpers import png_bytes, upload, upload_shared, video_bytes
 
 from core.template_spec import EXECUTION_PROMPT_LIMIT, MAX_PROMPT
 
@@ -33,11 +33,13 @@ def _headers(client: TestClient) -> dict[str, str]:
 
 
 def _media(client: TestClient, headers: dict[str, str]) -> tuple[str, str, str]:
-    video = upload(
+    # 团队可见：模板发布时固定槽位的素材必须所有复用者都读得到（发布闸）。
+    # 给私有素材的话，用例红在「发布被拒」上，测不到本来要测的那件事。
+    video = upload_shared(
         client, f"clip-{suffix()}.mp4", "source", video_bytes(2, audio=True), headers=headers
     )
-    first = upload(client, f"a-{suffix()}.png", "image", png_bytes(), headers=headers)
-    second = upload(client, f"b-{suffix()}.png", "image", png_bytes(), headers=headers)
+    first = upload_shared(client, f"a-{suffix()}.png", "image", png_bytes(), headers=headers)
+    second = upload_shared(client, f"b-{suffix()}.png", "image", png_bytes(), headers=headers)
     return str(video["id"]), str(first["id"]), str(second["id"])
 
 
@@ -854,6 +856,62 @@ def test_demo_asset_must_be_readable_by_the_author(client: TestClient) -> None:
     missing = client.post(API, json=dict(draft, demoAssetId="0" * 32), headers=headers)
     assert missing.status_code == 400, missing.text
     assert "展示案例" in missing.json()["message"]
+
+
+def test_a_draft_may_reference_a_private_fixed_asset(client: TestClient) -> None:
+    """草稿阶段**不**要求素材对外可见：那是作者自己的工作区。
+
+    收紧的是**发布**那一刻。草稿里引用自己的私有素材完全正常，把它一起
+    拦掉就等于逼作者在还没写完模板时就先处理素材的可见范围。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    set_visibility(video, "personal")
+    draft = _draft(video, first, second)
+
+    saved = client.post(API, json=draft, headers=headers)
+    assert saved.status_code == 200, saved.text
+
+
+def test_publish_rejects_a_fixed_asset_only_the_author_can_see(
+    client: TestClient,
+) -> None:
+    """固定槽位的素材只有作者能看到 → **发布**被拒。
+
+    复用者填表时是用**复用者的身份**再判一次可见性的（`_fills`），而固定
+    槽位在编译期必须等于作者钉的那一条（core 的 `_assets_of`），复用者
+    没法自己换一张。所以作者自己的私有素材一发布，模板对所有人就是坏的 ——
+    错误还要延迟到别人点「生成」才炸出来。
+
+    发布是唯一能拦住的那一刻。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    set_visibility(video, "personal")
+    draft = _draft(video, first, second)
+    _save(client, headers, draft)
+
+    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert published.status_code == 400, published.text
+    assert "只有你自己能看到" in published.json()["message"]
+
+
+def test_publish_rejects_a_demo_only_the_author_can_see(client: TestClient) -> None:
+    """展示案例只有作者能看到 → **发布**被拒。
+
+    展示案例是模板库卡片上的那一帧：别人打开模板库看到的封面就是它。
+    素材只有作者可见时，别人那里安静退化成「暂无案例」，卡片看着像没加载
+    出来 —— 比明确报错更难查。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    set_visibility(first, "personal")
+    draft = _draft(video, first, second, demoAssetId=first)
+    _save(client, headers, draft)
+
+    published = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert published.status_code == 400, published.text
+    assert "只有你自己能看到" in published.json()["message"]
 
 
 def test_other_users_cannot_read_a_draft_spec(client: TestClient) -> None:

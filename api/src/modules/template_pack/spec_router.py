@@ -167,6 +167,17 @@ async def get_spec(
 async def publish_spec(
     key: str, session: SessionDep, actor: TemplatePackPublishDep
 ) -> ApiResponse[SpecPublishOut]:
+    """发布是**对外公开**的那一刻：从这里起，固定槽位的素材与展示案例必须
+    **所有登录用户都读得到**（`purpose=case` 或 `visibility=team`），否则 400。
+
+    草稿阶段不这么判 —— 作者在自己的工作区里引用自己的私有素材完全正常。
+    收紧的理由见 `spec_service._check_fixed_refs`：复用者填表时是用**复用者的
+    身份**再判一次可见性的，而固定槽位在编译期必须等于作者钉的那一条
+    （复用者没法自己换一张），所以作者的私有素材一发布，这个模板对所有人
+    就是坏的 —— 错误还要延迟到别人点「生成」才炸出来。
+
+    草稿里已经钉了私有素材的作者有两条出路：把素材移进案例池，或改成团队可见。
+    """
     return ApiResponse.ok(await publish(session, actor, key))
 
 

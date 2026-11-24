@@ -16,6 +16,13 @@ export interface PickedAsset {
   coverUrl?: string;
   /** 资产用途：`case` 表示已经在案例池里。模板案例要据此决定是否弹二次确认。 */
   purpose?: string;
+  /**
+   * 可见范围（`personal` / `group` / `team`）。
+   *
+   * 固定槽位据此判断这条素材能不能**随模板公开**：只有全员可读的素材才能
+   * 钉进固定槽位（见 `isPubliclyReadable`）。
+   */
+  visibility?: string;
 }
 
 /** 选择器支持的素材类型。 */
@@ -222,6 +229,7 @@ export function AssetPicker({
                     name: item.name,
                     coverUrl: item.coverUrl ?? undefined,
                     purpose: item.purpose,
+                    visibility: item.visibility,
                   })}
                   className={cn(
                     'group relative flex flex-col gap-1 rounded-xl border p-1.5 text-left transition-colors',

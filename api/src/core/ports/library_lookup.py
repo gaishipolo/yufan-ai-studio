@@ -95,6 +95,14 @@ class LibraryAssetRef:
     name: str
     state: LibraryAssetState
     visibility: LibraryVisibility
+    #: 用途。`case` = 在案例池里，**任何登录用户都能读**（`access.can_read`
+    #: 的第 4 条，刻意放在 `visibility` 之前）。
+    #:
+    #: 为什么消费方需要它：`visibility` 说「在谁的范围内」，`purpose` 说「给谁用」。
+    #: 发布共享物（模板的固定槽位、展示案例）时，「所有人都读得到」这个判据
+    #: 缺了 `purpose` 就无法表达——只能看到 `visibility=personal` 就以为别人读不到，
+    #: 或者反过来把 `visibility=team` 当成「全员可读」而误判。
+    purpose: str = ""
     mime_type: str = ""
     storage_key: str = ""
     #: 我们托管的缩略图 key（音轨 / 文本没有）。模板包内预览优先用它：

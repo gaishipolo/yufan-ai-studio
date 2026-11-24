@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from library_support import LIB_RW, admin_headers, make_user, set_visibility, suffix
-from tests_template_helpers import png_bytes, upload, video_bytes
+from tests_template_helpers import png_bytes, upload, upload_shared, video_bytes
 
 API = "/api/v1/template-cases"
 SPECS = "/api/v1/template-specs"
@@ -46,11 +46,13 @@ def _user(client: TestClient, perms: list[str]) -> dict[str, str]:
 
 
 def _media(client: TestClient, headers: dict[str, str]) -> tuple[str, str, str]:
-    video = upload(
+    # 团队可见：模板发布时固定槽位的素材必须所有复用者都读得到（发布闸）。
+    # 案例是「发布出去给别人复用」的，素材对外不可见的话案例一发布就是坏的。
+    video = upload_shared(
         client, f"case-{suffix()}.mp4", "source", video_bytes(2, audio=True), headers=headers
     )
-    first = upload(client, f"c-{suffix()}.png", "image", png_bytes(), headers=headers)
-    second = upload(client, f"d-{suffix()}.png", "image", png_bytes(), headers=headers)
+    first = upload_shared(client, f"c-{suffix()}.png", "image", png_bytes(), headers=headers)
+    second = upload_shared(client, f"d-{suffix()}.png", "image", png_bytes(), headers=headers)
     return str(video["id"]), str(first["id"]), str(second["id"])
 
 

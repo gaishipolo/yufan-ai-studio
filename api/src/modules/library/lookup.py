@@ -69,6 +69,7 @@ class SqlLibraryLookup(LibraryLookup):
                 name=row.name,
                 state=LibraryAssetState(row.state),
                 visibility=LibraryVisibility(row.visibility),
+                purpose=row.purpose or "",
                 mime_type=row.mime_type,
                 storage_key=row.storage_key,
                 cover_key=row.cover_key,

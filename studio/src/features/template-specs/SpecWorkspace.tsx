@@ -22,7 +22,7 @@ import {
 } from '@/entities/model/lib/paramForm';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail, useLibraryTags } from '@/entities/library/api/library.queries';
-import { viewQuery } from '@/entities/library/model/types';
+import { isPubliclyReadable, viewQuery } from '@/entities/library/model/types';
 import { scopeTagOptions } from '@/entities/library/model/tagTree';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
@@ -137,6 +137,19 @@ type DragState = {kind: 'slot'; key: string} | {kind: 'group'; group: string} | 
 /** 素材选择器的目标：某个槽位，或展示案例。 */
 type PickTarget = {target: 'slot'; index: number} | {target: 'demo'; kind: PickKind};
 
+/**
+ * 待确认的「设为案例」：确认之后要把这条素材落到哪儿。
+ *
+ * `target` 决定落点（展示案例 / 某个固定槽位），`index` 与 `label` 是槽位那边的
+ * 上下文 —— 确认后要按普通挑素材的同一套逻辑把素材钉进那个槽位。
+ */
+type PendingCase = {
+  asset: PickedAsset;
+  target: 'demo' | 'slot';
+  index: number;
+  label: string;
+};
+
 export function SpecWorkspace() {
   const list = useSpecs();
   const trash = useTrashedSpecs();
@@ -188,8 +201,10 @@ export function SpecWorkspace() {
   const [uploading, setUploading] = useState(false);
   /* 选了一条还不在案例池里的素材：先问一句再动它。
      「设为案例」= 把这条素材**移出**个人库（普通列表默认不再显示它），
-     不是复制一份，所以要让人看见这件事再确认。 */
-  const [pendingCase, setPendingCase] = useState<PickedAsset | null>(null);
+     不是复制一份，所以要让人看见这件事再确认。
+
+     `target` 记着确认之后要把素材落到哪儿：展示案例，还是某个固定槽位。 */
+  const [pendingCase, setPendingCase] = useState<PendingCase | null>(null);
   const [drag, setDrag] = useState<DragState>(null);
   /* 拖动时的落点，存成字符串 id（`row:<key>:before` / `box:<group>` / `tail`）：
      每条 dragover 都会重算一次，用字符串才比得动 —— 对象字面量每次都是新引用，
@@ -200,11 +215,18 @@ export function SpecWorkspace() {
   const fileRef = useRef<HTMLInputElement>(null);
 
   const promoteCase = useMutation({
-    mutationFn: (asset: PickedAsset) => libraryApi.setPurpose(asset.id, 'case'),
-    onSuccess: (_row, asset) => {
-      setDraft(current => (current ? {...current, demoAssetId: asset.id} : current));
+    mutationFn: (pending: PendingCase) => libraryApi.setPurpose(pending.asset.id, 'case'),
+    onSuccess: (_row, pending) => {
+      if (pending.target === 'demo') {
+        setDraft(current => (current ? {...current, demoAssetId: pending.asset.id} : current));
+      } else {
+        patchSlot(pending.index, {assetId: pending.asset.id, label: pending.label});
+      }
       setPendingCase(null);
-      toast('已移入案例池并设为展示案例', 'success');
+      toast(
+        pending.target === 'demo' ? '已移入案例池并设为展示案例' : '已移入案例池，可随模板发布',
+        'success',
+      );
     },
     onError: (reason: unknown) => {
       setPendingCase(null);
@@ -718,14 +740,26 @@ export function SpecWorkspace() {
       setPicker(null);
       // 已经在案例池里的直接引用；否则先确认 —— 这一步会改变素材的可见范围。
       if (asset.purpose === 'case') setDraft({...draft, demoAssetId: asset.id});
-      else setPendingCase(asset);
+      else setPendingCase({asset, target: 'demo', index: 0, label: ''});
       return;
     }
     const id = picker.index;
     const slot = slots[id];
+    const label = slot.label?.trim() ? slot.label : asset.name;
+    /* 固定槽位钉的那条素材会**随模板发布给所有人**。
+       别人复用时是拿**他的身份**再判一次可见性的（后端 `_fills`），而固定槽位
+       在编译期必须等于作者钉的那条，复用者没法自己换一张 —— 所以作者自己的
+       私有素材一钉进去，这个模板对所有人就是坏的。
+
+       与「展示案例」同一条出路：先移进案例池。 */
+    if ((slot.binding ?? 'user') === 'fixed' && !isPubliclyReadable(asset)) {
+      setPicker(null);
+      setPendingCase({asset, target: 'slot', index: id, label});
+      return;
+    }
     patchSlot(id, {
       assetId: asset.id,
-      label: slot.label?.trim() ? slot.label : asset.name,
+      label,
     });
     setPicker(null);
   };
@@ -1457,10 +1491,17 @@ export function SpecWorkspace() {
             ? picker.kind
             : slotTypeOf(pickerSlot?.type ?? 'image')
         }
-        /* 选展示案例时才出「我的素材 / 案例池」两档：
-           案例不进普通列表，没有这一档的话作者传过的案例第二次就挑不到了。 */
-        casePool={picker?.target === 'demo'}
-        title={picker?.target === 'demo' ? '选择展示案例' : undefined}
+        /* 出「我的素材 / 案例池」两档的两种场合：
+           - 选展示案例：案例不进普通列表，没有这一档作者传过的案例第二次就挑不到；
+           - 挑固定素材：固定槽位钉的那条要**随模板公开**，公开的素材就在案例池里。 */
+        casePool={picker?.target === 'demo' || pickerSlot?.binding === 'fixed'}
+        title={
+          picker?.target === 'demo'
+            ? '选择展示案例'
+            : pickerSlot?.binding === 'fixed'
+              ? '选择固定素材'
+              : undefined
+        }
         /* 槽位的标签就是候选集范围：封装页挑固定素材时也要收窄，
            否则作者能选到模板使用者那边根本看不到的东西。 */
         tagIds={picker?.target === 'slot' ? (pickerSlot?.tagIds ?? []) : []}
@@ -1488,8 +1529,8 @@ export function SpecWorkspace() {
               平时素材列表里也是这么一条一行，形状认得出来。 */}
           <div className="flex items-center gap-2 rounded-lg border border-line-soft bg-panel-soft px-2.5 py-2">
             <FolderInput size={14} className="shrink-0 text-ink-mute" aria-hidden />
-            <span className="min-w-0 flex-1 truncate text-body text-ink" title={pendingCase?.name}>
-              {pendingCase?.name}
+            <span className="min-w-0 flex-1 truncate text-body text-ink" title={pendingCase?.asset.name}>
+              {pendingCase?.asset.name}
             </span>
           </div>
 
@@ -1499,7 +1540,8 @@ export function SpecWorkspace() {
               <span className="mt-[8px] size-[5px] shrink-0 rounded-full bg-ink-mute/45" />
               <span className="min-w-0">
                 移入<span className="font-medium text-ink">案例池</span>
-                ：模板库的所有人都能看到它
+                ：{pendingCase?.target === 'slot' ? '所有复用这个模板的人' : '模板库的所有人'}
+                都能看到它
               </span>
             </li>
             <li className="flex gap-2">
