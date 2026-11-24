@@ -78,6 +78,7 @@ from infra.driver_config import DriverSettings, driver_config
 from infra.media_channel import MediaChannel
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
+from modules.model_driver.kit.submission_guard import guarded_submit
 from modules.model_driver.spec import DriverMeta
 
 logger = get_logger(__name__)
@@ -208,6 +209,16 @@ class AgnesDriver:
         return get_agnes_settings().timeout_sec
 
     async def submit(self, request: GenerationRequest) -> GenerationProgress:
+        """提交生图任务：轮次键与三态落库交给 kit 的 `guarded_submit` 统一处理。"""
+        return await guarded_submit(
+            provider="agnes",
+            record_id=request.request_id,
+            model=request.model,
+            channel_used=request.channel_used or None,
+            call=lambda: self._submit_once(request),
+        )
+
+    async def _submit_once(self, request: GenerationRequest) -> GenerationProgress:
         config = get_agnes_settings()
         # 缺密钥 = 请求根本没发出 = 确定没送达 → 4xx（kit 唯一判定口径）。
         # 原来这里抛 UpstreamError(502)，落进框架「可能已受理」那一侧，

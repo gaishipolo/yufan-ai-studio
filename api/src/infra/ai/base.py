@@ -45,6 +45,11 @@ class GenerationRequest:
     reference_urls: tuple[str, ...] = ()
     # 业务侧记录 ID，便于供应商账单/日志对账；供应商可忽略
     request_id: str = ""
+    # 本次提交**实际走的素材通道**（逐素材选路结果的汇总，逗号分隔；无素材时为空）。
+    # 提交台账（`kit/submission_guard.py`）把它记进 `channel_used` —— 选路是
+    # **运行期**结果（有显式偏好、也有尺寸超限自动回退），同一批素材两次提交
+    # 可能走不同通道，不落库就无法解释「同一份素材为什么这次走了 OSS」。
+    channel_used: str = ""
 
 
 @dataclass(frozen=True, slots=True)

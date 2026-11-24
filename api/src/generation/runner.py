@@ -27,7 +27,6 @@ import contextlib
 from datetime import UTC, datetime
 from typing import Any
 
-import httpx
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.audit import record as audit
@@ -69,6 +68,7 @@ from infra.ai.base import (
 )
 from infra.ai.router import ModelUnavailable
 from infra.artifacts import artifact_urls
+from infra.delivery import possibly_delivered as _possibly_delivered
 from infra.queue.base import Job, JobQueue
 
 logger = get_logger(__name__)
@@ -154,31 +154,17 @@ def _throttle_delays() -> tuple[float, ...]:
     return tuple(delays)
 
 
-def _possibly_delivered(exc: BaseException) -> bool:
-    """这次提交失败有没有可能「供应商已经受理」。
+# 「这次提交有没有可能已被上游受理」由 `infra/delivery.py` **统一**判定。
+#
+# 为什么必须共用一份：提交台账（`modules/model_driver/kit/submission_guard.py`）
+# 要把每一轮提交记成「明确拒绝」还是「可能已受理」，用的必须是同一套规则 ——
+# 否则两边结论打架（框架判「可安全重试」、台账判「可能已受理」）时，人会同时
+# 看到「任务失败」与「可能已计费」两句矛盾的话。
+#
+# 保留 `_possibly_delivered` 这个名字：既有测试直接 `from generation.runner
+# import _possibly_delivered`，改名会让它们静默失去被测对象。
+# import _possibly_delivered
 
-    按 **HTTP 语义**分类，而不是按异常类（R4-01 的修正）：
-
-    - 连接都没建立（DNS 解析 / 握手 / 被拒绝）：请求必然没送达 → False。
-    - `AppError` 4xx（含 429）：供应商明确拒绝，没受理 → False。
-    - `AppError` 5xx / 408：**可能已受理**。网关 502 的典型成因就是
-      「上游已经受理、回程失败」，把它当「确定没送达」等于用一次自动重提
-      去赌对方没收到，赌错就是第二份账单。
-    - `AppError` 501：功能没实现，请求根本没发出去 → False（否则脚手架
-      生成的第一条任务会顶着「可能已计费」的文案失败）。
-    - 读/写超时、连接中途被重置、其它未知异常：按「可能已送达」处理。
-      宁可让一条任务失败等人核对，也不能赌它没送达。
-
-    注：这里只识别 httpx 的异常类别；用别的 HTTP 客户端的供应商抛出的
-    超时不会被精确归类，会落到「可能已送达」这个安全默认值。
-    """
-    if isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout)):
-        return False
-    if isinstance(exc, AppError):
-        if exc.http_status == 501:
-            return False
-        return exc.http_status == 408 or exc.http_status >= 500
-    return True
 
 
 class GenerationRunner:

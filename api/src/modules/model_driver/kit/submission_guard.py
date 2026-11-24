@@ -39,11 +39,37 @@
 与 `error` 原文），以及**在驱动拿到 task_id 的瞬间就落库**（而不是等框架收到
 submit 返回值再落）—— 后者把「上游已受理、进程在写库前崩了」的窗口消掉了。
 
-## 同步生图为什么不用台账
+## 两种结算形态（同步 / 异步）
 
-同步生图（`agnes` / `grsai` 生图）拿到响应即终态，没有 `task_id`、没有轮询，
-框架的 `mark_submitted` 已经足够。台账的三态与 `task_id` 语义是为**异步提交**
-设计的，硬套只会多一份冗余账。
+台账不只服务异步提交：
+
+| 形态 | 驱动返回 | `task_id` | `external_id` |
+| --- | --- | --- | --- |
+| 异步 | 上游任务号（字符串） | 任务号 | 同一个值 |
+| 同步 | 终态快照（`GenerationProgress`） | 空 | 快照自带的标识 |
+
+两种形态都**必须有 `external_id`** —— 它是「恢复时能续接」的凭证，缺了这行台账
+就等于没提交过。
+
+## 轮次键：为什么不是 `record_id` 本身
+
+台账唯一键是 `(provider, run_id)`。百炼的 `run_id` 是**归档 run id = 幂等键**；
+其余驱动没有归档 run，能用的只有业务记录 id，而**同一份记录会被提交多次**：
+
+- 4xx 之后框架自动重试 3 次；
+- 人工重提（`modules/image/service.py::retry`）**复用同一 `job_id`**，清掉
+  `external_id` 后重新提交。
+
+所以这些驱动的键是 `{record_id}#{轮次}`：**每一轮一行**，上一轮的历史留着可查。
+若直接拿 `record_id` 当键，人工重提会被上一轮的台账误挡（返回旧 external_id
+→ 用户拿回上一轮的图）。
+
+## 「这一轮有没有可能被受理」用哪份判定
+
+用 `infra/delivery.py::possibly_delivered` —— 与框架
+（`generation/runner.py::_possibly_delivered`）**同一份实现**。两边判定必须一致：
+框架判「可安全重试」而台账判「可能已受理」时，人会同时看到「任务失败」与
+「可能已计费」两句矛盾的话。
 
 ## 冻结窗口
 
@@ -53,14 +79,22 @@ submit 返回值再落）—— 后者把「上游已受理、进程在写库前
 
 from __future__ import annotations
 
-from sqlalchemy import select
+from collections.abc import Awaitable, Callable
+from typing import TypeVar
+
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from core.exceptions import BadRequest, UpstreamError
+from core.logging import get_logger
 from db.base import utcnow
 from db.session import get_session_factory
+from infra.ai.base import GenerationProgress
+from infra.delivery import possibly_delivered
 from modules.model_driver.models import SubmissionReceipt
+
+logger = get_logger(__name__)
 
 # 与 bailian.py 既有取值逐字一致，迁移时才不会丢语义
 STATUS_SUBMITTING = "submitting"
@@ -289,3 +323,159 @@ async def settle_submission(
         else:
             raise ReceiptConflict(f"{provider} 未知回执状态 {status}")
         await session.commit()
+
+
+#: 轮次键的分隔符：`{record_id}#{轮次}`
+_ATTEMPT_SEPARATOR = "#"
+
+R = TypeVar("R")
+
+
+async def _next_attempt(
+    factory: async_sessionmaker[AsyncSession], *, provider: str, record_id: str
+) -> int:
+    """这个业务记录已经提交过几轮 → 下一轮的轮次号。
+
+    按**已有台账行数**算。台账是**追加式**的历史 —— 每一轮都留一行（包括被
+    明确拒绝的那几轮），所以行数就是「已经发生过几轮」。轮次号只保证同一记录
+    的行不撞键，不承担幂等职责（幂等由框架层的 `submit_attempts` + 本台账的
+    唯一约束共同承担）。
+    """
+    async with factory() as session:
+        result = await session.execute(
+            select(func.count())
+            .select_from(SubmissionReceipt)
+            .where(
+                SubmissionReceipt.provider == provider,
+                SubmissionReceipt.record_id == record_id,
+            )
+        )
+        return int(result.scalar_one()) + 1
+
+
+def _identifiers(result: object) -> tuple[str | None, str | None]:
+    """从驱动的返回值里取出 `(task_id, external_id)`。
+
+    - **字符串**：驱动返回的是上游任务号（异步形态）→ 它既是 `task_id` 也是
+      续接凭证，所以两者是同一个值。
+    - **`GenerationProgress`**：终态快照（同步形态）→ 没有独立任务号，
+      `task_id` 留空，`external_id` 取快照自带的标识。
+    """
+    if isinstance(result, str):
+        return result, result
+    if isinstance(result, GenerationProgress):
+        return None, result.external_id
+    return None, None
+
+
+async def guarded_submit(
+    *,
+    provider: str,
+    record_id: str,
+    model: str,
+    channel_used: str | None = None,
+    call: Callable[[], Awaitable[R]],
+    factory: async_sessionmaker[AsyncSession] | None = None,
+) -> R:
+    """把一次提交尝试纳入台账，并在拿到上游标识的**第一时间**落库。
+
+    ## 为什么要它
+
+    框架的 `mark_submitted` 是**拿到 submit 返回值之后**才写 `external_id`。
+    那段窗口里上游可能已经受理并计费，而进程崩了 → 用户付了钱、任务却永远停在
+    「结果未知」。这里在驱动拿到标识的**同一个瞬间**就落库，把这段窗口消掉
+    （台账里留着 task_id，恢复器据此续接 —— 接线在恢复器那一步）。
+
+    ## 三态怎么判
+
+    失败时用 `infra/delivery.py::possibly_delivered`（与框架同一份实现）：
+
+    - 「确定没送达」（4xx / 连接都没建起来）→ 记 `rejected`：**可以安全重试**。
+    - 「可能已受理」（5xx / 超时 / 读响应失败）→ 记 `submission_unknown`：
+      **禁止自动重提**，只能人工核对。
+
+    ## 轮次
+
+    键是 `{record_id}#{轮次}`，轮次 = 该记录已有的台账行数 + 1。每轮一行，
+    上一轮的历史留着可查；人工重提会开新的一轮，不会被旧行挡住。
+
+    ## 抢占失败
+
+    `(provider, run_id)` 唯一约束冲突 = 同一轮已经有人在提交 → 抛
+    `ReceiptConflict`，**不重试**。宁可让这一次提交失败（框架按「可能已受理」
+    处理，转人工核对），也不要并发发两次付费请求。
+    """
+    factory = factory or get_session_factory()
+    if not record_id.strip():
+        # 没有业务记录 id → 入不了账（台账的键就是它）。这时**不做台账**、
+        # 直接提交：台账是账本，不该拦停正常业务。
+        logger.warning(f"{provider} 提交缺少 record_id，本次提交不记入台账")
+        return await call()
+
+    attempt = await _next_attempt(factory, provider=provider, record_id=record_id)
+    run_id = f"{record_id}{_ATTEMPT_SEPARATOR}{attempt}"
+
+    async with factory() as session:
+        receipt = await claim_receipt(
+            session,
+            provider=provider,
+            run_id=run_id,
+            model=model,
+            channel_used=channel_used,
+        )
+        receipt.record_id = record_id
+        await session.commit()
+
+    try:
+        result = await call()
+    except Exception as exc:
+        await _settle_failure(factory, provider=provider, run_id=run_id, exc=exc)
+        raise
+
+    task_id, external_id = _identifiers(result)
+    if not external_id:
+        # 提交成功却没拿到可续接的标识：不能记「已提交」（缺凭证的行等于没提交过），
+        # 也不能记「已拒绝」（上游确实受理了）→ 记「可能已受理」，让人来核对。
+        await settle_submission(
+            provider=provider,
+            run_id=run_id,
+            status=STATUS_UNKNOWN,
+            error="提交返回成功，但没有可续接的标识",
+            factory=factory,
+        )
+        return result
+
+    await settle_submission(
+        provider=provider,
+        run_id=run_id,
+        status=STATUS_SUBMITTED,
+        task_id=task_id,
+        external_id=external_id,
+        factory=factory,
+    )
+    return result
+
+
+async def _settle_failure(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    provider: str,
+    run_id: str,
+    exc: Exception,
+) -> None:
+    """把失败那一轮记成 `rejected` / `submission_unknown`。
+
+    落库失败**不能掩盖原始异常** —— 上游的错误信息比「台账写不进去」重要得多。
+    """
+    status = STATUS_UNKNOWN if possibly_delivered(exc) else STATUS_REJECTED
+    error = f"{type(exc).__name__}: {exc}"
+    try:
+        await settle_submission(
+            provider=provider,
+            run_id=run_id,
+            status=status,
+            error=error,
+            factory=factory,
+        )
+    except Exception:
+        logger.exception(f"{provider} 提交失败后写入台账失败 run={run_id}")

@@ -10,13 +10,16 @@
 
 from __future__ import annotations
 
+import httpx
 import pytest
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 import modules.model_driver.kit.submission_guard as guard_mod
 import modules.model_driver.receipts as receipts_mod
-from core.exceptions import BadRequest
+from core.exceptions import BadRequest, UpstreamError
 from db.base import Base
+from infra.delivery import possibly_delivered
 from modules.model_driver import models as driver_models  # noqa: F401 — 注册表副作用
 from modules.model_driver.kit.submission_guard import (
     STATUS_REJECTED,
@@ -25,9 +28,11 @@ from modules.model_driver.kit.submission_guard import (
     ReceiptConflict,
     decide_before_submit,
     get_receipt,
+    guarded_submit,
     recover_external_id,
     settle_submission,
 )
+from modules.model_driver.models import SubmissionReceipt
 
 RUN_ID = "r" * 32
 MODEL = "bailian-wan-3.0"
@@ -214,3 +219,180 @@ async def test_compat_layer_and_kit_behave_identically(
     assert (await recover_external_id(
         provider="bailian", run_id="k" * 32, model=MODEL
     )) == "ext-k"
+
+
+# ---------------------------------------------------------------------------
+# `guarded_submit`：各驱动接入台账的入口
+# ---------------------------------------------------------------------------
+
+
+async def test_guarded_submit_records_success_with_attempt_key(
+    session: AsyncSession,
+) -> None:
+    """成功提交 → 台账一行：轮次键 + 真实通道 + 上游标识。"""
+    record_id = "rec-1"
+
+    async def call() -> str:
+        return "task-42"
+
+    result = await guarded_submit(
+        provider="agnes",
+        record_id=record_id,
+        model=MODEL,
+        channel_used="base64",
+        call=call,
+    )
+    assert result == "task-42"
+
+    receipt = await get_receipt(session, provider="agnes", run_id=f"{record_id}#1")
+    assert receipt is not None
+    assert receipt.record_id == record_id
+    assert receipt.status == STATUS_SUBMITTED
+    assert receipt.task_id == "task-42"
+    assert receipt.external_id == "task-42"
+    assert receipt.channel_used == "base64"
+
+
+async def test_guarded_submit_records_rejected_on_4xx(session: AsyncSession) -> None:
+    """4xx：上游明确拒绝、没受理 → 记 `rejected`（可安全重试），异常照抛。"""
+    record_id = "rec-2"
+
+    async def call() -> str:
+        raise BadRequest("参数错")
+
+    with pytest.raises(BadRequest):
+        await guarded_submit(provider="agnes", record_id=record_id, model=MODEL, call=call)
+
+    receipt = await get_receipt(session, provider="agnes", run_id=f"{record_id}#1")
+    assert receipt is not None
+    assert receipt.status == STATUS_REJECTED
+    assert receipt.error is not None
+    assert "参数错" in receipt.error
+
+
+async def test_guarded_submit_records_unknown_on_5xx(session: AsyncSession) -> None:
+    """5xx：可能已受理 → 记 `submission_unknown`（禁止自动重提）。"""
+    record_id = "rec-3"
+
+    async def call() -> str:
+        raise UpstreamError("上游 502")
+
+    with pytest.raises(UpstreamError):
+        await guarded_submit(provider="agnes", record_id=record_id, model=MODEL, call=call)
+
+    receipt = await get_receipt(session, provider="agnes", run_id=f"{record_id}#1")
+    assert receipt is not None
+    assert receipt.status == STATUS_UNKNOWN
+
+
+async def test_guarded_submit_uses_the_same_verdict_as_the_framework(
+    session: AsyncSession,
+) -> None:
+    """台账的三态判定必须与框架**同一份**判定（`infra/delivery.py`）。
+
+    两边判定不一致的后果很具体：框架判「可安全重试」而台账判「可能已受理」时，
+    人会同时看到「任务失败」与「可能已计费」两句矛盾的话。
+    """
+    cases = [
+        (BadRequest("4xx"), STATUS_REJECTED),
+        (UpstreamError("5xx"), STATUS_UNKNOWN),
+        (httpx.ConnectTimeout("连不上"), STATUS_REJECTED),
+        (httpx.ReadTimeout("读超时"), STATUS_UNKNOWN),
+    ]
+    for index, (exc, expected) in enumerate(cases):
+        record_id = f"rec-verdict-{index}"
+
+        async def call(exc: Exception = exc) -> str:
+            raise exc
+
+        with pytest.raises(type(exc)):
+            await guarded_submit(provider="agnes", record_id=record_id, model=MODEL, call=call)
+
+        receipt = await get_receipt(session, provider="agnes", run_id=f"{record_id}#1")
+        assert receipt is not None
+        assert receipt.status == expected
+        # 台账的判定 = 框架的判定（同一份实现，不是抄一遍）
+        assert (receipt.status == STATUS_UNKNOWN) == possibly_delivered(exc)
+
+
+async def test_guarded_submit_starts_a_new_attempt_each_time(
+    session: AsyncSession,
+) -> None:
+    """同一记录多次提交 → 每轮一行（轮次键递增），历史留着可查。"""
+    record_id = "rec-4"
+
+    async def call() -> str:
+        return "task-x"
+
+    await guarded_submit(provider="agnes", record_id=record_id, model=MODEL, call=call)
+    await guarded_submit(provider="agnes", record_id=record_id, model=MODEL, call=call)
+
+    rows = (await session.execute(select(SubmissionReceipt))).scalars().all()
+    assert sorted(row.run_id for row in rows) == [f"{record_id}#1", f"{record_id}#2"]
+
+
+async def test_guarded_submit_does_not_block_manual_resubmit(
+    session: AsyncSession,
+) -> None:
+    """人工重提（复用同一 record id）不被旧行挡住，也不会拿回上一轮的结果。
+
+    这正是「轮次键」存在的理由：若拿 record id 直接当键，人工重提会被上一轮的
+    台账挡住 → 用户拿回上一轮的图。
+    """
+    record_id = "rec-5"
+
+    async def failing() -> str:
+        raise BadRequest("第一次没过")
+
+    with pytest.raises(BadRequest):
+        await guarded_submit(provider="agnes", record_id=record_id, model=MODEL, call=failing)
+
+    async def succeeding() -> str:
+        return "task-second"
+
+    result = await guarded_submit(
+        provider="agnes", record_id=record_id, model=MODEL, call=succeeding
+    )
+    assert result == "task-second"
+
+    receipt = await get_receipt(session, provider="agnes", run_id=f"{record_id}#2")
+    assert receipt is not None
+    assert receipt.status == STATUS_SUBMITTED
+    assert receipt.external_id == "task-second"
+
+
+async def test_guarded_submit_without_record_id_skips_the_ledger(
+    session: AsyncSession,
+) -> None:
+    """没有业务记录 id → 入不了账（台账的键就是它）。
+
+    这时**不该拦停业务**：台账是账本，不是门禁 → 直接提交，只是不记。
+    """
+    async def call() -> str:
+        return "task-noid"
+
+    result = await guarded_submit(provider="agnes", record_id="", model=MODEL, call=call)
+    assert result == "task-noid"
+
+    rows = (await session.execute(select(SubmissionReceipt))).scalars().all()
+    assert rows == []
+
+
+async def test_guarded_submit_marks_unknown_when_no_identifier(
+    session: AsyncSession,
+) -> None:
+    """提交成功却没拿到可续接的标识 → 记「可能已受理」。
+
+    不能记「已提交」（缺凭证的行等于没提交过），也不能记「已拒绝」（上游确实
+    受理了）→ 只能记成待人工核对。
+    """
+    record_id = "rec-6"
+
+    async def call() -> None:
+        return None
+
+    await guarded_submit(provider="agnes", record_id=record_id, model=MODEL, call=call)
+
+    receipt = await get_receipt(session, provider="agnes", run_id=f"{record_id}#1")
+    assert receipt is not None
+    assert receipt.status == STATUS_UNKNOWN

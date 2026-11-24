@@ -102,6 +102,19 @@ class SubmissionReceipt(Base, UUIDMixin, TimestampMixin):
     - `submitted`           拿到 task_id，恢复时直接复用 external_id
     - `rejected`            上游明确拒绝（4xx），允许人工重提
     - `submission_unknown`  超时 / 5xx / 响应畸形，**禁止自动重提**（可能已受理）
+
+    `run_id` 的两种语义（2026-11-24，D5.2）—— 台账推广到所有驱动后，一个键
+    装不下两种东西，所以拆成「键 + 反查列」：
+
+    - `bailian` 的 `run_id` 是**归档 run id** = **幂等键**：一个逻辑提交一个 run，
+      重放时必须复用既有 external_id，绝不能再发一次付费 POST。
+    - 其余驱动没有归档 run，只能用业务记录 id，而**同一份记录会被提交多次**
+      （4xx 后框架自动重试 3 次；人工重提 `image/service.py::retry` 复用同一
+      `job_id`）→ 必须**按轮次分行**，轮次键的形状是 `{record_id}#{轮次}`。
+
+    `record_id` 就是那条业务记录 id（`ImageJob.id` / `VideoTask.id` 等）：让
+    「按业务记录反查台账」成为可能 —— 恢复器只认 `record.external_id`，它得能
+    反查回执才知道这条记录提交过什么、走的哪条通道。
     """
 
     __tablename__ = "submission_receipts"
@@ -110,7 +123,8 @@ class SubmissionReceipt(Base, UUIDMixin, TimestampMixin):
     )
 
     provider: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
-    run_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    run_id: Mapped[str] = mapped_column(String(64), nullable=False, index=True)
+    record_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
     model: Mapped[str] = mapped_column(String(128), nullable=False)
     status: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
 

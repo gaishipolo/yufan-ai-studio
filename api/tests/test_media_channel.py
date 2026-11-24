@@ -6,8 +6,11 @@ import pytest
 
 from core.exceptions import BadRequest
 from infra.media_channel import (
+    ChannelPlan,
     MediaChannel,
+    MediaKind,
     choose_channel,
+    summarize_channels,
     validate_declaration,
 )
 
@@ -159,3 +162,21 @@ def test_libtv_never_declares_inline_references() -> None:
     assert not hasattr(LibTVProvider, "inline_references"), (
         "libtv 依赖工作区里的真实文件，声明 inline_references 会让框架改走内联"
     )
+
+
+# --- 通道汇总（提交台账落 channel_used 用）---
+
+
+def test_summarize_channels_collects_unique_channels() -> None:
+    """多条素材可能走不同通道 → 汇总成去重后的集合（排序后拼接）。"""
+    plans = {
+        "a.png": ChannelPlan(kind=MediaKind.IMAGE, channel=MediaChannel.BASE64),
+        "b.png": ChannelPlan(kind=MediaKind.IMAGE, channel=MediaChannel.BASE64),
+        "c.wav": ChannelPlan(kind=MediaKind.AUDIO, channel=MediaChannel.OSS),
+    }
+    assert summarize_channels(plans) == "base64,oss"
+
+
+def test_summarize_channels_is_empty_without_materials() -> None:
+    """没有素材就没有通道 → 空串。编一个值会让「重试复用原通道」走错通道。"""
+    assert summarize_channels({}) == ""

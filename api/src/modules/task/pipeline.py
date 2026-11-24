@@ -34,6 +34,7 @@ from infra.media_channel import (
     declared_channels,
     preferred_channels,
     record_channel_fallbacks,
+    summarize_channels,
 )
 from infra.media_probe import MAX_BYTES
 from infra.reference_inline import MIME_BY_SUFFIX, prepare_inline_payloads
@@ -324,6 +325,7 @@ class VideoGenerationPipeline:
             params=record.params,
             reference_urls=references,
             request_id=record.id,
+            channel_used=summarize_channels(plans),
         )
 
     async def persist_output(self, record_id: str, url: str) -> str:

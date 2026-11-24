@@ -137,7 +137,7 @@ async def test_reference_bytes_are_inlined_as_data_uri() -> None:
     payload = png_bytes("orange")
     await get_storage().put("tests/ref-orange.png", payload, "image/png")
 
-    uris = await _reference_data_uris(
+    uris, channel_used = await _reference_data_uris(
         ImageJobStore._to_record(
             _job(
                 reference_json=dumps_references(
@@ -157,6 +157,8 @@ async def test_reference_bytes_are_inlined_as_data_uri() -> None:
     prefix, _, encoded = uris[0].partition(",")
     assert prefix == "data:image/png;base64"
     assert base64.b64decode(encoded) == payload
+    # 第二个返回值是「本次实际走的通道」—— 内联成 data URI 就是 base64 通道
+    assert channel_used == "base64"
 
 
 async def test_unsupported_suffix_is_rejected_before_submit() -> None:
@@ -179,7 +181,10 @@ async def test_unsupported_suffix_is_rejected_before_submit() -> None:
 
 
 async def test_no_references_means_no_conversion() -> None:
-    assert await _reference_data_uris(ImageJobStore._to_record(_job())) == ()
+    uris, channel_used = await _reference_data_uris(ImageJobStore._to_record(_job()))
+    assert uris == ()
+    # 没有素材就没有通道 → 留空，**不要编一个值**
+    assert channel_used == ""
 
 
 # --------------------------------------------------------------------------- 受理前校验

@@ -43,6 +43,7 @@ from infra.media_channel import (
     declared_channels,
     preferred_channels,
     record_channel_fallbacks,
+    summarize_channels,
 )
 from infra.reference_inline import IMAGE_MIME_BY_SUFFIX, prepare_inline_payloads
 from modules.image.models import ImageJob
@@ -336,7 +337,7 @@ def _has_magic(data: bytes, suffix: str) -> bool:
     return False
 
 
-async def _reference_data_uris(record: GenerationRecord) -> tuple[str, ...]:
+async def _reference_data_uris(record: GenerationRecord) -> tuple[tuple[str, ...], str]:
     """按**供应商声明的通道**把参考图交给上游。
 
     为什么不直接把素材的取件链接交给供应商：那是**私签**地址，几分钟就过期，
@@ -370,7 +371,8 @@ async def _reference_data_uris(record: GenerationRecord) -> tuple[str, ...]:
         max_bytes=MAX_REFERENCE_BYTES,
     )
     await record_channel_fallbacks(plans, target_id=record.id, actor_id=record.owner_id)
-    return references
+    # 第二个返回值是**本次实际走的通道**（逐素材选路结果的汇总）—— 提交台账要落它。
+    return references, summarize_channels(plans)
 
 
 def _with_suffix(name: str, stored: str) -> str:
@@ -410,13 +412,15 @@ class ImageGenerationPipeline:
         return await self.store(session).list_unfinished(session, limit)
 
     async def build_request(self, record: GenerationRecord) -> GenerationRequest:
+        references, channel_used = await _reference_data_uris(record)
         return GenerationRequest(
             capability=self.capability,
             model=record.model,
             prompt=record.prompt,
             params=record.params,
-            reference_urls=await _reference_data_uris(record),
+            reference_urls=references,
             request_id=record.id,
+            channel_used=channel_used,
         )
 
     async def archive_request(

@@ -59,6 +59,7 @@ from modules.model_driver.drivers.grsai import (
     grsai_reference_media,
     grsai_root,
 )
+from modules.model_driver.kit.submission_guard import guarded_submit
 from modules.model_driver.spec import DriverMeta
 
 logger = get_logger(__name__)
@@ -151,6 +152,16 @@ class GrsaiVideoDriver:
 
     # ------------------------------------------------------------------ 提交
     async def submit(self, request: GenerationRequest) -> Any:
+        """提交视频任务：轮次键与三态落库交给 kit 的 `guarded_submit` 统一处理。"""
+        return await guarded_submit(
+            provider=PROVIDER,
+            record_id=request.request_id,
+            model=request.model,
+            channel_used=request.channel_used or None,
+            call=lambda: self._submit_once(request),
+        )
+
+    async def _submit_once(self, request: GenerationRequest) -> Any:
         if request.capability is not Capability.VIDEO:
             raise BadRequest("grsai_video 只负责视频生成；图片请走 grsai 驱动")
 

@@ -68,6 +68,8 @@ async def test_image_chain_inlines_when_driver_declares_base64(
     assert len(request.reference_urls) == 1
     assert request.reference_urls[0].startswith("data:image/png;base64,")
     assert storage.reads == ["refs/a.png"]
+    # 选路结果随请求一起传下去 → 提交台账能落「这次实际走了哪条通道」
+    assert request.channel_used == "base64"
 
 
 async def test_image_chain_rejects_driver_without_declaration(
@@ -100,6 +102,7 @@ async def test_video_chain_keeps_material_out_of_the_body_for_workspace_driver(
 
     assert request.reference_urls == ()
     assert storage.reads == []
+    assert request.channel_used == "workspace"
 
 
 async def test_video_chain_inlines_when_driver_declares_base64(
@@ -122,3 +125,4 @@ async def test_video_chain_inlines_when_driver_declares_base64(
     assert len(request.reference_urls) == 1
     assert request.reference_urls[0].startswith("data:image/png;base64,")
     assert storage.reads == ["refs/a.png"]
+    assert request.channel_used == "base64"

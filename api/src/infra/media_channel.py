@@ -68,6 +68,7 @@ __all__ = [
     "plan_channel",
     "preferred_channels",
     "record_channel_fallbacks",
+    "summarize_channels",
     "validate_declaration",
 ]
 
@@ -369,3 +370,17 @@ async def record_channel_fallbacks(
                 "reason": plan.fallback_reason,
             },
         )
+
+
+def summarize_channels(plans: Mapping[str, ChannelPlan]) -> str:
+    """把逐素材的选路结果汇总成一个字符串，落进提交台账的 `channel_used`。
+
+    为什么是「汇总」而不是单值：一条任务可以带多份素材（image + audio），
+    各自走各自的通道；而台账只有一列 `channel_used` → 记**去重后的通道集合**
+    （逗号分隔，如 `base64` / `base64,oss`）。排序后拼接，保证同一批通道
+    每次汇总出的字符串一致（可直接用于比对）。
+
+    ⚠️ 纯文本生图（没有素材）没有通道 → 返回空串。台账里就留空，**不要编一个
+    值** —— 编出来的通道会让「重试复用原通道」按着一条不存在的通道走。
+    """
+    return ",".join(sorted({plan.channel.value for plan in plans.values()}))
