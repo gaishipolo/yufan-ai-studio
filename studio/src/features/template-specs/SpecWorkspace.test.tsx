@@ -1181,6 +1181,9 @@ describe('模板封装 · 固定槽位的素材要能随模板公开', () => {
     ownerId: 'u-1',
     visibility: 'personal',
     state: 'active',
+    // `createdAt` 在契约里是必填（其余时间戳可以缺省）；漏掉时这里会先
+    // 报一个类型错，门禁到不了真正要验的可见性行为。
+    createdAt: '2026-11-01T00:00:00Z',
     ...over,
   });
 

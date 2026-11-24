@@ -220,7 +220,11 @@ export function SpecWorkspace() {
       if (pending.target === 'demo') {
         setDraft(current => (current ? {...current, demoAssetId: pending.asset.id} : current));
       } else {
-        patchSlot(pending.index, {assetId: pending.asset.id, label: pending.label});
+        patchSlot(pending.index, {
+          assetId: pending.asset.id,
+          label: pending.label,
+          binding: 'fixed',
+        });
       }
       setPendingCase(null);
       toast(
@@ -465,6 +469,25 @@ export function SpecWorkspace() {
         toast(
           `「${next.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(next.type)]}」改成必填了，` +
             '两段文案已清空（必填槽位一定是直接插入素材编号）',
+          'success',
+        );
+      }
+    }
+    /* 切成**已固定**时也清掉两段文案 —— 与「改成必填」是同一件事的两种说法：
+       素材一定在 → 直接插编号，没有「填了 / 没填」两种说法。
+       固定槽位的素材在封装时就定死了，一定有素材，所以两段文案对它没有意义。
+
+       而且固定槽位上界面**不再显示**这两个框（SlotCard 的 `!fixed && showTexts`），
+       留着就成了「看不见却还在生效」：编译期固定槽位有素材 → 确实走
+       filled_text（compile.py），作者会以为那句话已经没了。
+    */
+    if (next.binding === 'fixed' && nextSlots[index].binding !== 'fixed') {
+      const cleared = textsToClearForRequired(next);
+      if (cleared) {
+        Object.assign(next, cleared);
+        toast(
+          `「${next.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(next.type)]}」改成已固定了，` +
+            '两段文案已清空（固定槽位的素材是定死的，只有一种说法）',
           'success',
         );
       }
@@ -746,13 +769,18 @@ export function SpecWorkspace() {
     const id = picker.index;
     const slot = slots[id];
     const label = slot.label?.trim() ? slot.label : asset.name;
+    /* 挑了素材 = 钉住了：这个槽位从此是「已固定」。
+       别的槽位本来就是这样 —— 素材只能钉在固定槽位上（SlotCard 的「选择素材」
+       按钮也只在固定槽位上出现，切回「用户填」会把素材清掉）；文本槽位新增后
+       直接弹选择器，原来落在「用户填」上，于是素材钉在一个「用户填」的槽位上，
+       后端规则「由用户选择时不能预置 assetId」会让整份草稿存不下去。 */
     /* 固定槽位钉的那条素材会**随模板发布给所有人**。
        别人复用时是拿**他的身份**再判一次可见性的（后端 `_fills`），而固定槽位
        在编译期必须等于作者钉的那条，复用者没法自己换一张 —— 所以作者自己的
        私有素材一钉进去，这个模板对所有人就是坏的。
 
        与「展示案例」同一条出路：先移进案例池。 */
-    if ((slot.binding ?? 'user') === 'fixed' && !isPubliclyReadable(asset)) {
+    if (!isPubliclyReadable(asset)) {
       setPicker(null);
       setPendingCase({asset, target: 'slot', index: id, label});
       return;
@@ -760,6 +788,7 @@ export function SpecWorkspace() {
     patchSlot(id, {
       assetId: asset.id,
       label,
+      binding: 'fixed',
     });
     setPicker(null);
   };
@@ -1493,14 +1522,14 @@ export function SpecWorkspace() {
         }
         /* 出「我的素材 / 案例池」两档的两种场合：
            - 选展示案例：案例不进普通列表，没有这一档作者传过的案例第二次就挑不到；
-           - 挑固定素材：固定槽位钉的那条要**随模板公开**，公开的素材就在案例池里。 */
-        casePool={picker?.target === 'demo' || pickerSlot?.binding === 'fixed'}
+           - 挑槽位素材：挑了就是钉住，钉住的那条要**随模板公开**，公开的素材就在案例池里。 */
+        casePool={picker !== null}
         title={
           picker?.target === 'demo'
             ? '选择展示案例'
-            : pickerSlot?.binding === 'fixed'
-              ? '选择固定素材'
-              : undefined
+            : slotTypeOf(pickerSlot?.type ?? 'image') === 'text'
+              ? undefined
+              : '选择固定素材'
         }
         /* 槽位的标签就是候选集范围：封装页挑固定素材时也要收窄，
            否则作者能选到模板使用者那边根本看不到的东西。 */

@@ -45,8 +45,9 @@ export interface AssetPickerProps {
   /**
    * 允许在「我的素材」与「案例池」之间切。
    *
-   * 只有设置**展示案例**时要开：案例不进普通列表，选择器默认也把它排掉，
-   * 所以作者传过的案例第二次根本挑不到（只能用一次）。切到案例池的那一档
+   * 两处要开：设置**展示案例**（案例不进普通列表，选择器默认也把它排掉，
+   * 作者传过的案例第二次根本挑不到），以及**给槽位挑素材**（挑了就是钉住，
+   * 钉住的那条要随模板公开，而公开的素材正是在案例池里）。切到案例池的那一档
    * 只列 `purpose=case` 的素材（服务端要 `library:case:read`）。
    */
   casePool?: boolean;
@@ -161,9 +162,9 @@ export function AssetPicker({
   return (
     <Modal open={open} onClose={onClose} title={title ?? TITLES[kind]} width={880}>
       <div className="flex flex-col gap-3">
-        {/* 「我的素材 / 案例池」两档。只在设置展示案例时出现：其他入口
-            （槽位挑参考图）没有案例池这回事，摆一个永远灰的档只会让人问
-            「案例为什么不在这里」。 */}
+        {/* 「我的素材 / 案例池」两档。设置展示案例、给槽位挑素材时都出现：
+            前者是作者传过的案例第二次挑不到，后者是钉住的那条要随模板公开，
+            公开的素材就在案例池里。 */}
         {casePool && canReadCases && (
           <div className="inline-flex w-fit items-center gap-0.5 rounded-xl bg-canvas/90 p-0.5 ring-1 ring-inset ring-[rgba(203,218,224,.8)]">
             {(
