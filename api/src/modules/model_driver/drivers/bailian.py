@@ -87,6 +87,12 @@ from infra.archive.runs import check_id
 from infra.driver_config import DriverSettings, driver_config
 from infra.executor_output import EXECUTOR_OUTPUT_RELATIVE, executor_output_url
 from infra.media_channel import MediaChannel
+from infra.oss_channel import (
+    OssUploadTarget,
+    load_media_bytes,
+    upload_media_bytes,
+)
+from infra.storage.base import StorageError
 from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
@@ -217,7 +223,12 @@ def _fps(file: Path) -> float | None:
     return float(result[1]) if result else None
 
 
-def _validated_inputs(folder: Path, model: str) -> tuple[dict, list[Path], list[str]]:
+def _validated_inputs(folder: Path, model: str) -> tuple[dict, list[Path], list[str], list[dict]]:
+    """校验归档里的素材与参数，返回 (payload, 素材文件, 素材类型, 素材条目)。
+
+    素材条目（`inputs/input-map.json` 的原始项）一并返回：上传时从条目里取
+    `storage_key`（去**我们的存储**取字节）与 `sha256`（核对真正上传的字节）。
+    """
     entries = _read(folder / "inputs/input-map.json")
     spec = _read(folder / "inputs/prompt-spec.json")
     if not isinstance(entries, list) or not isinstance(spec, dict):
@@ -303,7 +314,7 @@ def _validated_inputs(folder: Path, model: str) -> tuple[dict, list[Path], list[
             "audio": True,
         },
     }
-    return payload, files, types
+    return payload, files, types, entries
 
 
 class BailianProvider:
@@ -374,61 +385,100 @@ class BailianProvider:
         except (httpx.HTTPError, ValueError) as exc:
             raise UpstreamError("百炼接口暂不可用，请核对调用档案") from exc
 
-    async def prepare_inputs(self, run_id: str, model: str = MODEL_ID) -> dict:
-        _real_model(model)
+    async def oss_upload_target(
+        self,
+        *,
+        model: str,
+        filename: str,
+        client: httpx.AsyncClient | None = None,
+    ) -> OssUploadTarget:
+        """向百炼要一份 OSS 表单直传凭据（**供应商特有的部分留在驱动**）。
+
+        凭据只说明「往哪传、带着什么表单字段」，怎么传、传成什么链接，都是
+        通道层的事（`infra/oss_channel.py`）。
+        """
         headers = self._headers()
-        folder = await asyncio.to_thread(run_path, run_id)
-        payload, files, types = await asyncio.to_thread(_validated_inputs, folder, model)
-        media: list[dict] = []
-        async with self._client() as client:
-            for file, kind in zip(files, types, strict=True):
+        if client is None:
+            async with self._client() as own:
                 result = await self._json(
-                    client,
+                    own,
                     "GET",
                     "/uploads",
                     headers=headers,
-                    params={"action": "getPolicy", "model": payload["model"]},
+                    params={"action": "getPolicy", "model": model},
                 )
+        else:
+            result = await self._json(
+                client,
+                "GET",
+                "/uploads",
+                headers=headers,
+                params={"action": "getPolicy", "model": model},
+            )
+        policy = result["data"]
+        return OssUploadTarget(
+            upload_host=policy["upload_host"],
+            fields={
+                "OSSAccessKeyId": policy["oss_access_key_id"],
+                "Signature": policy["signature"],
+                "policy": policy["policy"],
+                "x-oss-object-acl": policy["x_oss_object_acl"],
+                "x-oss-forbid-overwrite": policy["x_oss_forbid_overwrite"],
+            },
+            key_prefix=policy["upload_dir"],
+        )
+
+    async def prepare_inputs(self, run_id: str, model: str = MODEL_ID) -> dict:
+        """把参考素材送进百炼签发的 OSS 临时目录，拼出 `oss://` 直链。
+
+        **上传由通道层做**（`infra/oss_channel.py`），素材字节直接从**我们的
+        存储**读 —— 不是归档工作区那份快照（物化之后存储里的对象可能被覆盖，
+        两份会不一样；真正要送上游的必须是存储里现在这份）。
+
+        素材的存储键来自归档契约（`inputs/input-map.json` 条目的 `storage_key`）
+        —— 归档里写明了哪个对象是自己的素材，比跨文件按顺序对齐可靠。
+
+        本驱动只做两件供应商特有的事：问百炼要直传凭据、报百炼的错误。
+        """
+        _real_model(model)
+        folder = await asyncio.to_thread(run_path, run_id)
+        payload, files, types, entries = await asyncio.to_thread(
+            _validated_inputs, folder, model
+        )
+        media: list[dict] = []
+        async with self._client() as client:
+            for file, kind, entry in zip(files, types, entries, strict=True):
+                storage_key = str(entry.get("storage_key") or "")
+                if not storage_key:
+                    raise BadRequest("素材条目缺少存储键，请重新提交")
                 try:
-                    policy = result["data"]
-                    key = f"{policy['upload_dir'].rstrip('/')}/{uuid.uuid4().hex}{file.suffix}"
-                    host = policy["upload_host"]
-                    if urlsplit(host).scheme != "https":
-                        raise ValueError("invalid upload host")
-                    fields = {
-                        "OSSAccessKeyId": policy["oss_access_key_id"],
-                        "Signature": policy["signature"],
-                        "policy": policy["policy"],
-                        "x-oss-object-acl": policy["x_oss_object_acl"],
-                        "x-oss-forbid-overwrite": policy["x_oss_forbid_overwrite"],
-                        "key": key,
-                        "success_action_status": "200",
-                    }
-
-                    # 读本地文件 + 组 multipart 是阻塞操作，不能占着事件循环。
-                    def upload(file=file, host=host, fields=fields) -> None:
-                        with (
-                            httpx.Client(
-                                timeout=self.settings.timeout_sec, trust_env=False
-                            ) as sync_client,
-                            file.open("rb") as stream,
-                        ):
-                            response = sync_client.post(
-                                host, data=fields, files={"file": (file.name, stream)}
-                            )
-                            response.raise_for_status()
-
-                    if self.transport is None:
-                        await asyncio.to_thread(upload)
-                    else:
-                        content = await asyncio.to_thread(file.read_bytes)
-                        response = await client.post(
-                            host, data=fields, files={"file": (file.name, content)}
-                        )
-                        response.raise_for_status()
-                except (KeyError, TypeError, ValueError, OSError, httpx.HTTPError) as exc:
+                    data = await load_media_bytes(storage_key)
+                    expected = str(entry.get("sha256") or "")
+                    if expected and hashlib.sha256(data).hexdigest() != expected:
+                        raise BadRequest("百炼素材校验失败，请重新准备素材")
+                    target = await self.oss_upload_target(
+                        model=payload["model"], filename=file.name, client=client
+                    )
+                    uploaded = await upload_media_bytes(
+                        data,
+                        kind=kind,
+                        filename=file.name,
+                        target=target,
+                        timeout_sec=self.settings.timeout_sec,
+                        client=client,
+                    )
+                except BadRequest:
+                    raise
+                except (
+                    KeyError,
+                    TypeError,
+                    ValueError,
+                    OSError,
+                    httpx.HTTPError,
+                    StorageError,
+                ) as exc:
                     raise UpstreamError("百炼素材上传失败，请重新准备素材") from exc
-                media.append({"type": kind, "url": f"oss://{key}"})
+                media.append({"type": kind, "url": uploaded.url})
         if media:
             payload["input"]["media"] = media
         await asyncio.to_thread(_write, folder / "records/bailian-request.json", payload)

@@ -168,6 +168,40 @@ def test_base64_declaration_passes_startup_check() -> None:
     _check_channel_declaration(provider)
 
 
+def test_oss_declaration_without_an_upload_target_entry_fails_startup_check() -> None:
+    """声明 OSS 又有凭据端点，却签发不出上传目标 → 通道层无处可传，启动期拒。
+
+    OSS 上传由通道层落地，驱动只负责「问供应商要一份上传目标」。少了这一半，
+    声明就是空头支票 —— 与其等运行时上传失败，不如启动期就拒。
+    """
+    from modules.model_driver.registry import (
+        ChannelDeclarationError,
+        _check_channel_declaration,
+    )
+
+    provider = _Provider(
+        accepted_media_formats={"image": frozenset({MediaChannel.OSS})},
+        oss_upload_supported=True,
+    )
+    with pytest.raises(ChannelDeclarationError, match="oss_upload_target"):
+        _check_channel_declaration(provider)
+
+
+def test_oss_declaration_with_an_upload_target_entry_passes_startup_check() -> None:
+    """声明 OSS 且能签发上传目标 → 校验通过。"""
+    from modules.model_driver.registry import _check_channel_declaration
+
+    class _OssProvider(_Provider):
+        async def oss_upload_target(self, **kwargs: Any) -> Any:
+            raise NotImplementedError
+
+    provider = _OssProvider(
+        accepted_media_formats={"image": frozenset({MediaChannel.OSS})},
+        oss_upload_supported=True,
+    )
+    _check_channel_declaration(provider)
+
+
 def test_driver_without_declaration_passes_startup_check() -> None:
     """没声明通道的驱动不受影响：它本来就不收参考素材。"""
     from modules.model_driver.registry import _check_channel_declaration

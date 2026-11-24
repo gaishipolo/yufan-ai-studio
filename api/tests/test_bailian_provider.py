@@ -3,6 +3,7 @@ import json
 
 import httpx
 import pytest
+from storage_stub import DirStorage
 
 from core.exceptions import BadRequest, NotFound, UpstreamError
 from db.session import get_session_factory
@@ -22,11 +23,24 @@ async def workspace(tmp_path, monkeypatch):
         json.dumps({"duration": 5, "aspect_ratio": "9:16"}), encoding="utf-8"
     )
     entries = []
+    blobs = tmp_path / "blobs"
     for i, kind in enumerate(("video", "image", "image"), 1):
         file = f"inputs/{i}.mp4" if kind == "video" else f"inputs/{i}.png"
         content = f"media-{i}".encode()
         (tmp_path / file).write_bytes(content)
-        entries.append({"file": file, "type": kind, "sha256": hashlib.sha256(content).hexdigest()})
+        key = f"tests/bailian/media-{i}"
+        (blobs / key).parent.mkdir(parents=True, exist_ok=True)
+        (blobs / key).write_bytes(content)
+        entries.append(
+            {
+                "file": file,
+                "type": kind,
+                # 归档条目要写明素材在**我们存储**里的对象键：OSS 通道据此从存储
+                # 取字节上传，不靠「文件名对得上」去猜。
+                "storage_key": key,
+                "sha256": hashlib.sha256(content).hexdigest(),
+            }
+        )
     (tmp_path / "inputs/input-map.json").write_text(json.dumps(entries), encoding="utf-8")
     (tmp_path / "records/media-inputs.json").write_text(
         json.dumps({"inputs/1.mp4": {"duration": 8, "width": 720, "height": 1280,
@@ -36,6 +50,8 @@ async def workspace(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setattr(bailian, "run_path", lambda _: tmp_path)
+    # 素材字节从**我们的存储**读（OSS 通道的要求）→ 给测试一份存储。
+    monkeypatch.setattr("infra.get_storage", lambda: DirStorage(blobs))
 
     # 回执在 DB（全局测试库），不像文件那样随 tmp_path 隔离 —— 每条测试
     # 开跑前清表，否则上一条的回执会污染这一条。
@@ -473,3 +489,49 @@ async def test_archive_run_id_skips_materialize(workspace, monkeypatch):
     )
     assert await provider(handle).submit(req) == "run:task-9"
     assert materialized == []
+
+
+async def test_rejects_media_without_a_storage_key(workspace):
+    """条目没写存储键 → 明确报错，不去猜哪个对象是自己的素材。"""
+    entries = json.loads((workspace / "inputs/input-map.json").read_text())
+    entries[0].pop("storage_key")
+    (workspace / "inputs/input-map.json").write_text(json.dumps(entries), encoding="utf-8")
+
+    with pytest.raises(BadRequest, match="存储键"):
+        await provider(lambda _: pytest.fail("must fail before upload")).prepare_inputs("run")
+
+
+async def test_rejects_bytes_that_differ_from_the_archive_digest(workspace):
+    """存储里的字节与归档记的 sha256 不符 → 拒绝上传。
+
+    这条是「字节从存储读」带来的新防线：物化之后对象被覆盖过，上游拿到的
+    就会是一份和归档对不上的素材。
+    """
+    key = "tests/bailian/media-1"
+    (workspace / "blobs" / key).write_bytes(b"replaced-after-archive")
+
+    with pytest.raises(BadRequest, match="校验失败"):
+        await provider(lambda _: pytest.fail("must fail before upload")).prepare_inputs("run")
+
+
+async def test_reports_a_missing_object_in_our_storage(workspace):
+    """存储里的对象没了 → 上游错误（不是我们代码写错了）。"""
+    (workspace / "blobs/tests/bailian/media-1").unlink()
+
+    with pytest.raises(UpstreamError, match="上传失败"):
+        await provider(lambda _: pytest.fail("must fail before upload")).prepare_inputs("run")
+
+
+async def test_uploads_the_bytes_from_our_storage(workspace):
+    """真正传上去的字节来自存储，不是工作区那份快照。"""
+    sent: list[bytes] = []
+
+    def handle(request):
+        if request.url.host == "upload.example.com":
+            sent.append(request.content)
+        return upload_handler(request)
+
+    await provider(handle).prepare_inputs("run")
+
+    assert sent, "素材必须真的上传了"
+    assert all(b"media-" in body for body in sent)

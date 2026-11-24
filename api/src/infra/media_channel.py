@@ -2,12 +2,13 @@
 
 ## 边界（重要）
 
-本模块**不实现** Base64 编码或 OSS 上传 —— 那些落地实现已存在：
+本模块**只回答「这条素材该走哪条通道」**，不编码也不上传。落地实现另有归属：
 - `infra/reference_inline.py::inline_data_uris()` —— Base64 data URI
-- `drivers/bailian.py::prepare_inputs()` —— OSS 临时 URL
+- `infra/oss_channel.py::upload_media_bytes()` —— OSS 直传，拿到 `oss://` 直链
 
-这里只回答「这条素材该走哪条通道」。把落地实现搬进来会让 infra 反向依赖
-driver（架构守卫禁止），也会让本模块变成半个框架。
+两个落地模块都是**供应商中立**的：供应商特有的部分只有「怎么签发上传凭据」
+（`OssUploadTargetProvider` 协议），由驱动实现。驱动里因此不再有第二份直传
+代码 —— 换个供应商声明 OSS 通道，直接复用同一套落地。
 
 ## 三种通道不是对等选项
 

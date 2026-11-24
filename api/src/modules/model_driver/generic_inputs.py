@@ -202,6 +202,13 @@ def _write_inputs(
                 "name": str(ref.get("name") or ""),
                 "type": item["type"],
                 "file": relative,
+                # 素材在我们存储里的**对象键**。
+                #
+                # 为什么条目里要带它：走 OSS 通道的驱动要**从存储读字节**再上传
+                # （归档工作区里那份只是物化时的快照，可能已被覆盖）。驱动不该
+                # 靠「文件名对得上」去猜哪个对象是自己的素材 —— 归档契约里写明
+                # 楚，比跨文件按顺序对齐可靠。
+                "storage_key": str(ref.get("key") or ""),
                 "sha256": hashlib.sha256(data).hexdigest(),
                 "metadata": meta,
                 "duration": duration,

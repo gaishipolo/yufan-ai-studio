@@ -94,6 +94,10 @@ def test_materialize_writes_the_shape_both_drivers_read(archive_root: Path) -> N
 
     entries = _read(folder, "inputs/input-map.json")
     assert entries[0]["type"] == "image"
+    assert entries[0]["storage_key"] == key, (
+        "条目要写明素材在**我们存储**里的对象键：OSS 通道据此从存储取字节，"
+        "不靠文件名去猜"
+    )
     assert entries[0]["sha256"] == hashlib.sha256(payload).hexdigest()
     assert entries[0]["metadata"]["width"] > 0
     assert entries[0]["fps"] == 0, "帧率不能写死，交给驱动现探"

@@ -209,6 +209,7 @@ def _check_channel_declaration(provider: Any) -> None:
         declared_channels,
         validate_declaration,
     )
+    from infra.oss_channel import OssUploadTargetProvider
 
     try:
         accepted = declared_channels(provider)
@@ -216,16 +217,26 @@ def _check_channel_declaration(provider: Any) -> None:
         raise ChannelDeclarationError(str(exc)) from exc
     if not accepted:
         return
+    oss_supported = (
+        isinstance(provider, OssUploadDeclared) and provider.oss_upload_supported
+    )
     try:
         validate_declaration(
             provider=type(provider).__name__,
             accepted=accepted,
             public_base_url=_PUBLIC_BASE_URL,
-            oss_upload_supported=isinstance(provider, OssUploadDeclared)
-            and provider.oss_upload_supported,
+            oss_upload_supported=oss_supported,
         )
     except BadRequest as exc:
         raise ChannelDeclarationError(str(exc)) from exc
+    # OSS 上传由**通道层**落地，驱动只负责签发上传目标。声明了 OSS 却给不出
+    # 目标，等于让通道层无处可传 —— 同样是声明不合法，启动期就该拒。
+    if oss_supported and not isinstance(provider, OssUploadTargetProvider):
+        raise ChannelDeclarationError(
+            f"{type(provider).__name__} 声明了 OSS 通道，"
+            "却没有提供上传凭据的入口（oss_upload_target）——"
+            "通道层负责上传，驱动必须能签发上传目标"
+        )
 
 
 def _load_module(file_name: str, module_path: str) -> _LoadedDriver:
