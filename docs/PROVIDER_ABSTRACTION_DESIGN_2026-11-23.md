@@ -102,6 +102,12 @@
 
 **行为变化（唯一一处）**：上传的字节来源变了。物化之后存储对象被覆盖的极端场景，现在传的是**存储里新那份**（此前是旧快照）。多读一遍素材字节（大文件流量翻倍）——已拍板接受。
 
+**兼容期约定（归档契约加字段的必然结果）**：
+
+- **旧归档（`inputs/input-map.json` 条目里没有 `storage_key`）一旦被重提交** → 当前行为是**明确报错**（`BadRequest「素材条目缺少存储键」`），不是静默降级。理由：没有存储键就不知道该从存储取哪个对象的字节，猜 = 可能送错素材给上游。
+- ⚠️ **待补**：这条约定需要一条测试钉住（当前测试全是新归档），且需要定「旧归档是否值得支持」—— 若产品上存在「历史任务重投」场景，应给旧归档补一个**一次性回填**（从 S3 按原路径找回对象键），而不是让用户重传素材。
+- **两类上传失败要能分开**：「我们的存储里对象没了」（我方问题）与「供应商拒收素材」（上游问题）当前在驱动里被合并成同一条 `UpstreamError` → 运维看到的文案指向供应商，真实原因在我方。建议细分错误类型（可辨识性优先于文案）。
+
 ---
 
 ## 0. 摘要
@@ -119,7 +125,7 @@
 |---|---|---|
 | **前置 D6** | 回执落 DB（唯一约束）+ 工作区 GC + 素材字节 S3 唯一副本 | 「工作区误删 → 二次计费」现网风险、磁盘无限增长 |
 | **L1 `kit/`** | 供应商工具箱：HTTP、错误分类、模型 id、素材分类、配置、提交幂等；控制流统一到 final 基类 | 驱动内 7 类样板 × 2–5 份、控制流语义漂移 |
-| **L1.5 通道抽象** | Base64 / OSS / 公网 URL 三种通道由框架实现，驱动只声明上游能力与偏好 | `inline_references: bool` 粒度不足、传输实现散落 |
+| **L1.5 通道抽象** | Base64 / OSS / 公网 URL / 工作区 四种通道由框架实现，驱动只声明上游能力与偏好 | `inline_references: bool` 粒度不足、传输实现散落 |
 | **L2 驱动内自描述** | 专属端点 / 作业 / schema 由驱动导出并自动挂载 | 4 处公共文件里的供应商硬编码 |
 | **L3 运行时刷新** | `registry.refresh()` + 配置去 `lru_cache` | 「必须重启」这个约束本身 |
 
@@ -138,7 +144,7 @@
 | G5 | 错误分类只有一处实现 | 「缺 key / 上游 4xx / 上游 5xx / 上游 200 但回报 failed」四种情形的平台状态码，全仓只有一处判定代码 |
 | G6 | 控制流统一 | 6 个 HTTP 驱动的 `submit` / `poll` / `cancel` 由同一个 final 基类模板驱动；驱动内不再有独立的状态机副本 |
 | G7 | 提交回执不丢 | 工作区被删除后，同一 `request_id` 的恢复路径仍能读到回执，**不产生第二次上游提交** |
-| G8 | 通道按类型声明 | 同一驱动可对 `image` 声明 Base64、对 `audio` 声明 OSS；三种通道实现各只有 1 份；可行性错误在**启动期**暴露 |
+| G8 | 通道按类型声明 | 同一驱动可对 `image` 声明 Base64、对 `audio` 声明 OSS；四种通道实现各只有 1 份；可行性错误在**启动期**暴露 |
 | G9 | 磁盘不再无限增长 | 工作区 GC 可运行；一轮 GC 后磁盘占用下降且无任务失败 |
 | G10 | 迁移不破坏存量 | 存量回执 100% 迁入 DB 并校验；迁移期间不产生重复提交；回滚演练通过 |
 
@@ -449,41 +455,51 @@ def vendor_settings(prefix: str, cls: type[DriverSettings]) -> DriverSettings:
 2. **百炼音频不支持 Base64** —— 唯一真正的**上游**限制 → 音频必须走 OSS 临时 URL。
 3. **libtv 的 Node 桥接要真实路径**（`runs.py:1-12`）—— **我们这侧**的执行器限制。
 
-**抽象形态：三种通道都实现，决策权分层**
+**抽象形态：四种通道都实现，决策权分层**（2026-11-24 实施后更新：原设计三档，实施时把「执行器工作区」独立成第四档）
 
 | 角色 | 拥有什么 | 不拥有什么 |
 |---|---|---|
-| **框架** | 三种通道的实现、可行性校验、回退决策、审计事件 | 不猜供应商的上游能力 |
-| **驱动** | 声明「上游接受哪些格式」（**事实**）+ 可选首选通道（**偏好**，需注明理由） | 不自己实现传输、不做「三选一自由选」 |
+| **框架** | 四种通道的实现、可行性校验、回退决策、审计事件 | 不猜供应商的上游能力 |
+| **驱动** | 声明「上游接受哪些格式」（**事实**）+ 可选首选通道（**偏好**，需注明理由） | 不自己实现传输、不做「自由选」 |
 
 ```python
 class MediaChannel(StrEnum):
     BASE64 = "base64"          # S3 字节 → data URI
     OSS = "oss"                # S3 字节 → 上传上游签发的临时目录 → oss://
-    PUBLIC_URL = "public_url"  # 仅当素材本身有公网可访问地址
+    PUBLIC_URL = "public_url"  # 仅当素材本身有公网可访问地址（当前不可用，见下）
+    WORKSPACE = "workspace"    # 素材落归档工作区，由**本地执行器**读文件（libtv）
 
 # 驱动声明上游能力（事实，按素材类型）:
 accepted_media_formats: Mapping[MediaKind, frozenset[MediaChannel]]
-# 百炼：image={BASE64, OSS, PUBLIC_URL}, audio={OSS, PUBLIC_URL}
-# Agnes/Grsai：image={BASE64, PUBLIC_URL}
+# 百炼（现状）：image=video=audio={OSS} —— 2026-11-24 拍板保持 OSS-only
+# Agnes/Grsai（生图）：image={BASE64}
+# Agnes/Grsai（视频）：image=audio={BASE64}
+# libtv：image=video=audio={WORKSPACE}
 
 # 可选：首选通道（偏好，必须注明理由）
 preferred_channel: Mapping[MediaKind, MediaChannel] | None = None
 ```
 
+> ⚠️ **`PUBLIC_URL` 当前不可用**：枚举保留该档，但现架构给不出公网地址（取件链接私签、几分钟过期，上游访问不到）→ **声明即启动失败**（不是运行时才报「图片无法访问」）。要用它得先补公网域名配置（部署侧条件）。
+>
+> ⚠️ **`WORKSPACE` 与其它三档正交**：它不是「素材怎么送上游」，而是「素材交给本地执行器」——libtv 的 Node 桥接要真实路径。L1.5 用独立一档把这份正交性固定在代码里，而不是塞进 `BASE64/OSS` 的取舍里。
+
 **框架决策顺序：**
 
-1. **按素材类型分别选通道** —— 同一驱动可混合（百炼图片 Base64 + 音频 OSS），这是 `inline_references: bool` 表达不了的粒度
-2. **启动期可行性校验**：
+1. **按素材类型分别选通道** —— 同一驱动可混合（这是 `inline_references: bool` 表达不了的粒度）。⚠️ 2026-11-24 更正：原文举的例子「百炼图片 Base64 + 音频 OSS」**不成立** —— 百炼现在 `image=video=audio={OSS}`（OSS-only）；混合的实例如「同一驱动按素材类型分别声明」。
+2. **启动期可行性校验**（`modules/model_driver/registry.py::_check_channel_declaration`）：
    - 声明 `PUBLIC_URL` 但未配置公网域名 → **启动失败**（当前私签 S3 给不出公网 URL）
    - 声明 `OSS` 但上游无上传凭据端点 → 启动失败
+   - 声明 `OSS` 但驱动签发不出上传目标（`OssUploadTargetProvider`）→ 启动失败（L1.6 新增：通道层无处可传是配置错误）
    - 声明的格式与上游能力矩阵冲突（如 `audio` 只声明 BASE64）→ 启动失败
-3. **运行时按优先级回退**：首选不可用（素材超通道上限 / 凭据失效）→ 选次选，并记**审计事件**（含原通道/实际通道/原因）
-4. **通道实现统一在框架**：`BASE64` 复用 `infra/reference_inline.py::inline_data_uris()`；`OSS` 提炼 `bailian.prepare_inputs` 的上传逻辑为通用件；`PUBLIC_URL` 仅当配置了公网域名才启用
+3. **运行时按优先级回退**：首选不可用（素材超通道上限 / 凭据失效）→ 选次选，并记**审计事件**（含原通道/实际通道/原因）。✅ **已接线**（L1.5）：两条链（图片/视频）的 `build_request` 都调 `preferred_channels()` + `record_channel_fallbacks()`（`infra/media_channel.py`）。
+4. **通道实现统一在框架**：`BASE64` → `infra/reference_inline.py::inline_data_uris()`；`OSS` → `infra/oss_channel.py`（L1.6 已归位为供应商中立件）；`WORKSPACE` → `modules/model_driver/generic_inputs.py` 的物化器；`PUBLIC_URL` 仅当配置了公网域名才启用。
 
-**为什么不做成「三选一自由选」**：公网 URL 在当前架构下**实际不可用**，暴露为对等选项会误导驱动作者 → 运行时拿到上游 400「图片无法访问」，而根因在我们这侧。把可行性校验前置到启动期，符合项目「配置错误要早炸」的纪律。
+**为什么不做成「自由选」**：公网 URL 在当前架构下**实际不可用**，暴露为对等选项会误导驱动作者 → 运行时拿到上游 400「图片无法访问」，而根因在我们这侧。把可行性校验前置到启动期，符合项目「配置错误要早炸」的纪律。
 
 **推论**：图片全部可走 Base64（含 bailian）→ 不再落盘、不再 OSS 上传；bailian 音频走 OSS（唯一上游特例）；libtv 的真实目录是执行器约束，与通道选择**正交**，仍保留但可临时化（D6）。
+
+> ⚠️ **2026-11-24：上面这条推论已被否决，不是当前决策。**「bailian 图片也走 Base64」属**行为变更**（要改百炼请求构造：`input.media[].url` 换字段），且需先实测上游替换链是否接受 base64 图片 → 拍板**保持 OSS-only**（`image=video=audio={OSS}`）。物化范围因此**暂不收窄**。§6.5 重复了这条推论，那里也已标注。
 
 > ⚠️ `bailian.py:11` 的注释「Wan 只接受公网 URL 做参考素材，不认本地文件」与上游文档不符 —— 这是「通道被误判为上游能力约束」的根源。迁移前先更正该断言，并复核所有依赖它的设计。
 >
@@ -793,7 +809,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 - 驱动不得自建**文件回执**或 `O_EXCL` 抢占（必须走 DB 唯一约束 + `kit/submission_guard.py`）—— 直接防住「工作区误删 → 二次计费」复发
   - **例外：`libtv`（本地执行器）**。它的 `run.json` 里也有 `submission_unknown` / `submitting` 状态，形态上就是「文件回执」—— 但它是**执行器的状态机**，不是「抢占」：提交动作发生在本地进程内，状态与提交动作在同一工作区，且有 `_resolve_unknown()` 把已认领的 task_id 接回。套 DB 唯一约束会得到两套互相不知情的真相（DB 说没提过、工作区说提过）。
     - ⚠️ 代价是**保护强度不对等**：`bailian` 的 DB 回执跨进程/跨实例有效；`libtv` 的只在**工作区还在**时有效。工作区被清理 → 有重复计费风险。**这是已知缺口，留待阶段 2**（见 §1.1 A6 验证结果）。
-- 驱动不得自建**素材传输实现**（Base64 / OSS 上传 / 公网 URL 拼装必须走 `infra/media_channel.py`）—— 防止三种通道再次散落成 N 份
+- 驱动不得自建**素材传输实现**（Base64 / OSS 上传 / 公网 URL 拼装必须走 `infra/media_channel.py`）—— 防止四种通道再次散落成 N 份
   - **例外：`libtv` 的「工作区」档**（`MediaChannel.WORKSPACE`）。它说的是「素材要落到哪里**本地执行器**才读得到」，与「上游收什么格式」正交，不是同一维度里的备选项（见 §1.1 A6 验证结果）。
 
 ### 5.7 提交幂等与防重复计费（`kit/submission_guard.py`，D5 + D6）
@@ -898,6 +914,8 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 
 **图片内联后还能再缩一圈**：核查上游文档后确认百炼 `img_url` 支持 Base64（§3.1.4），因此 bailian 的**图片素材不需要落盘、也不需要 OSS 上传**，可直接内联；只有参考音频（`audio_url` 不支持 Base64）与 libtv 的 Node 桥接仍需要文件。也就是说「物化」的适用范围比原方案估计的更小 —— 它既不是上游能力要求，也只对一小部分素材成立。
 
+> ⚠️ **2026-11-24 更正**：上面这条「内联可再缩一圈」是**已被否决的推论**，不是当前决策。百炼图片改 Base64 属**行为变更**（要改百炼请求构造：`input.media[].url` 换字段），且需先实测上游替换链是否接受 base64 图片 → 拍板**保持 OSS-only**（`image=video=audio={OSS}`）。物化范围因此**暂不收窄**，留待单独工作包评估（§3.1.4 同处已标注）。
+
 **迁移代价**：`bailian._validated_inputs` 改为从 DB 元数据重建；回执迁 DB 表 + 唯一约束替代 `O_EXCL` + 存量档案迁移；libtv 仍需真实路径（但可临时化 + GC）；`output_url` 的遗留路径契约需单独修正为平台自己的产物地址（**不需要兼容层**——没有替换链 worker 在读它）。
 
 **结论**：不是取消物化，而是**把物化从「持久状态」降级为「临时缓存」**。且必须在 D5 提炼前完成，否则统一的是错误做法。
@@ -909,12 +927,18 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | 阶段 | 回滚动作 | 关键前提 | 不可回滚点 |
 |---|---|---|---|
 | 0 | 删除 `kit/` 与契约测试 | 无 | 无 |
-| 0.5 | 回执表保留但停止写入；恢复读文件回执 | **过渡期文件回执必须继续写**（不能只读 DB） | 存量文件回执被物理删除之后 |
+| 0.5 | 回执表保留但停止写入；恢复读文件回执 | ⚠️ **该前提当前不成立** —— 已拍板**不双写**（只读 DB），没有「退回文件模式」的开关 | **已跨过**：回退需改代码 + 重跑迁移，不是开关操作（⚠️ 待决，见下方说明） |
 | 1（单驱动） | 该驱动切回旧实现，`kit/` 保留 | 旧实现在版本历史可恢复 | 已产生的新格式回执需保持兼容 |
 | 2 | 恢复公共文件里的 LibTV 条目 | `EXTRA_*` 挂载与新路由可短暂并存 | 无 |
 | 3 | 关闭 refresh 入口，恢复 `lru_cache` getter | 配置缓存接口保持兼容 | 无 |
 
 > ⚠️ **阶段 0.5 的不可回滚点**：一旦删除存量文件回执，就无法退回文件模式。规定：文件回执**只读保留至少一个完整发布周期**；GC 默认不删 `records/bailian-submission.json`。
+>
+> ⚠️ **2026-11-24 复核：这条退路目前是纸面的。** 上表的回滚动作要求「过渡期文件回执必须继续写（不能只读 DB）」，但 §4 阶段 0.5 已拍板**不双写**（直接切 DB，存量文件回执全量迁移），代码实际也只读 DB → **没有可用的「退回文件模式」开关**，回退要改代码 + 重跑迁移。两条出路（**待拍板**）：
+> - **A. 承认「不双写即不可回滚」**：写明代价 —— 回退 = 改代码（恢复双写）+ 重跑迁移 + 校验；好处是迁移期零双写复杂度。
+> - **B. 补一个迁移期双写开关**：回滚变开关操作（改配置即可），代价是迁移期要维护两份写入的一致性。
+>
+> ⚠️ 另注：**L1.6 的回滚有顺序约束** —— revert 后百炼上传改回读归档工作区文件，若已按 D6 清理过工作区，旧路径会失效 → 回滚前必须确认相关归档的工作区文件还在。
 
 **并发边界（原方案未覆盖）：**
 
@@ -923,7 +947,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | `refresh()` 与 in-flight 任务 | 实例被替换，正在 poll 的任务失联 | refresh 只替换注册表与路由；已发出的请求由原实例跑完，新请求才用新实例 |
 | 工作区 GC 与执行中任务 | 删掉正在用的目录 | GC 只处理终态且 `updated_at < cutoff` 的 run；有锁文件则跳过 |
 | DB 迁移期文件/DB 双写 | 两边状态不一致 → 误判是否已提交 | **已拍板不双写**：直接切 DB，存量文件回执全量迁移并校验；迁移完成前冻结提交通道（见 §4 阶段 0.5） |
-| 通道回退与历史任务重试 | 同一素材两次重试走不同通道 | 通道选择结果随回执落库（`channel_used` 字段），重试复用原通道 |
+| 通道回退与历史任务重试 | 同一素材两次重试走不同通道 | 当前**不落库**（2026-11-24 拍板）：选路只取决于静态声明 → 同一次任务重试必然同路，落库价值有限；回退留痕走审计事件。⚠️ **一旦将来引入「偏好/运行时回退」导致选路有瞬时状态，必须同时启用 `channel_used` 落库**（回执模型届时还会被 D5 提炼重塑 → 落库要与之同时做，避免改两次） |
 | `.env` 热生效与在途请求 | 同一请求内前后读到不同配置 | 请求开始时快照一次配置，请求内复用；下次请求才用新值 |
 | 多实例 + refresh | A 实例刷新后 B 实例仍是旧代码 | 每实例各自跑周期刷新；记录 `refreshed_at`，运维可核对各实例 |
 
@@ -1011,6 +1035,20 @@ api/src/modules/model_driver/libtv/schema.py            ← 供应商专属出�
 api/tests/test_model_driver_self_description.py         ← 自描述机制（阶段 2）
 ```
 
+**L1.5 / L1.6 实际新增（原清单未列 —— 正是 §9 提醒过的情况）**：
+
+```
+api/src/infra/oss_channel.py                           ← OSS 通道落地（供应商中立，L1.6）
+api/src/infra/reference_inline.py                      ← Base64 通道落地 + 按声明分流（L1.5）
+api/tests/test_oss_channel.py                          ← OSS 通道落地（6 条）
+api/tests/test_bailian_provider.py                     ← 新增 4 条：缺存储键 / 字节不符 / 缺对象 / 确实上传了存储那份
+api/tests/test_channel_declaration.py                  ← 启动期声明校验（含「OSS 签发不出目标」）
+api/tests/test_reference_inline_channels.py            ← Base64 通道分流
+api/tests/test_pipeline_media_channels.py              ← 两条链按声明分流
+api/tests/test_media_channel.py                        ← 通道决策层
+api/tests/test_architecture.py                         ← 架构守卫（infra 不反向依赖 driver）
+```
+
 > **清单与实际的偏差（2026-11-23 复核）**：`kit/` 里**只建了 `credentials.py` / `errors.py`
 > / `settings.py`** 三个 —— `http.py` / `models.py` / `media.py` / `submission_guard.py`
 > **没建**：A1 假设（把各驱动的 HTTP 映射、剥前缀、素材分类合成一份）逐行比对后**验证失败**，
@@ -1037,6 +1075,18 @@ api/tests/test_model_driver_self_description.py         ← 自描述机制（�
 `maintenance.py`（周期兜底任务）、`health.py`（`app doctor` 的配置指纹条目）、
 `kit/settings.py`（配置指纹函数）。
 
+**L1.5 / L1.6 又新增了 4 处公共文件改动**（同样未在原清单）：
+
+```
+api/src/modules/model_driver/generic_inputs.py    ← 归档条目写 storage_key（L1.6）★归档契约变更
+api/src/modules/model_driver/registry.py         ← 启动期校验声明 + OSS 上传目标（L1.5/L1.6）
+api/src/modules/model_driver/drivers/bailian.py   ← 只剩「签发上传目标 + 报上游错误」（L1.6）
+api/src/modules/image/pipeline.py                ← 图片链按声明分流（L1.5）
+api/src/modules/task/pipeline.py                 ← 视频链按声明分流（L1.5）
+```
+
+> ⚠️ `generic_inputs.py` 是**归档契约变更**（条目多一个 `storage_key` 字段）：读方忽略未知字段 → 向后兼容；写方新增字段 → 旧归档重提交会缺该字段（见 §L1.6 的兼容期约定）。
+
 ```
 api/src/modules/model_driver/registry.py     ← 收集 EXTRA_*、refresh()
 api/src/modules/model_driver/__init__.py      ← 删 LibTV 作业硬编码
@@ -1059,7 +1109,12 @@ api/src/modules/model_driver/drivers/{bailian,grsai,grsai_video,agnes,agnes_vide
 
 ---
 
-> **实施状态（2026-11-23）**：阶段 0 / 0.5 / 1 / 2 / 3 已实施，各阶段的实际改动见对应小节的
+> **实施状态（2026-11-24 复核更正）**：阶段 0（固化行为）、阶段 0.5（回执落 DB + 工作区 GC，D6）、
+> 阶段 3（配置热生效）**已实施**；阶段 1（kit 迁移）与阶段 2（供应商专属端点）**未完成** ——
+> `kit/` 只建了 `credentials.py` / `errors.py` / `settings.py`（`classify_http_error` 目前只有 `grsai.py` 在用），
+> `kit/http.py` / `models.py` / `media.py` / `submission_guard.py` 与 `libtv/routes.py` / `libtv/schema.py` 未建。
+> ⚠️ 「已改公共文件」≠「阶段完成」（例：阶段 2 改了公共 5 处，但专属端点文件未建 → 阶段 2 未完成）。
+> 排期不要按「阶段 N 已实施」这句话取结论 —— 以各阶段的「进度」记录与 §9 的偏差说明为准。各阶段的实际改动见对应小节的
 > 「进度」记录 —— 每阶段独立可发布，其中**阶段 0.5 可独立上线**，
 > 它修的是现网的二次计费风险。
 >
