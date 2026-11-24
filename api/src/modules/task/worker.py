@@ -7,6 +7,11 @@
 分流，这一点直接关系到钱：
 - 已有 `external_id`：只续轮询，不重复提交（否则每次重启都会重复扣费、产出两份视频）
 - 无 `external_id`：说明提交前就中断了，重置现场后重新排队
+
+还有一路是「提交过、但凭证没落库」：进程崩在拿到上游标识之后、写
+`VideoTask.external_id` 之前。这种记录从提交台账里把凭证**回填**回来（台账在
+拿到上游标识的同一个瞬间就落库了），然后照常续轮询 —— 否则会被判「提交结果
+未知」而等人核对，上游已经在跑的那条视频白丢。
 """
 
 from __future__ import annotations
@@ -16,6 +21,7 @@ from datetime import UTC, datetime, timedelta
 from sqlalchemy import select
 
 from core.logging import get_logger
+from core.ports.submission_ledger import lookup_recovery_external_id
 from db.outbox import dispatch_pending, record
 from db.session import get_session_factory
 from generation.events import EVT_GENERATION_FAILED
@@ -67,6 +73,22 @@ async def resume_unfinished_tasks(
         resume_poll: list[str] = []
         unknown: list[tuple[str, str]] = []
 
+        # 崩溃恢复的第一手：台账里可能留着「已提交、凭证在这儿」的痕迹 ——
+        # 进程崩在拿到上游标识之后、写 VideoTask.external_id 之前。这种记录直接
+        # 判「提交结果未知」会白丢上游已经在跑的任务（用户等的是一条已经生成好
+        # 的视频）。先把凭证捡回来，再走正常的续轮询那一路。
+        #
+        # ⚠️ 只查「提交过但没记下凭证」的记录：submit_attempts == 0 说明提交
+        #    还没开始，台账里不可能有行。
+        # ⚠️ 查询必须放在写库之前：台账查询走的是另一个连接，本事务若已持写锁
+        #    （下面 unknown 分支的 outbox 写入）就会撞 SQLite 的锁。
+        recovered: dict[str, str] = {}
+        for row in rows:
+            if not row.external_id and row.submit_attempts > 0:
+                candidate = await lookup_recovery_external_id(row.id)
+                if candidate:
+                    recovered[row.id] = candidate
+
         for task in rows:
             if task.external_id:
                 # 供应商侧任务已在执行：保留 external_id 与进度，只把轮询接回来。
@@ -74,6 +96,16 @@ async def resume_unfinished_tasks(
                 # 要等下一次轮询才被拉回 running（R4-04）
                 task.status = TaskStatus.RUNNING.value
                 resume_poll.append(task.id)
+            elif task.id in recovered:
+                # 从台账回填到了凭证：上游确实受理过 → 只续轮询，不重复提交。
+                # ⚠️ 不复位 submit_attempts —— 那是「这次提交的结果还没落库」的
+                # 证据，复位了后续失败会被当成「没提交过」而重新提交（重复计费）。
+                task.external_id = recovered[task.id]
+                task.status = TaskStatus.RUNNING.value
+                resume_poll.append(task.id)
+                logger.info(
+                    "从提交台账回填凭证：id=%s external_id=%s", task.id, task.external_id
+                )
             elif task.submit_attempts > 0:
                 # 崩在「供应商已受理 → 写库」之间：无法判断有没有计费，
                 # 自动重提就会产生第二份账单。宁可失败等人核对。

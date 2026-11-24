@@ -77,6 +77,7 @@ from core.ports.library_lookup import has_library_lookup
 from core.ports.library_references import library_references_ready
 from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
+from core.ports.submission_ledger import has_submission_ledger
 from core.ports.usage_metrics import has_usage_metrics
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
@@ -202,6 +203,16 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         when_unregistered="fail-closed：抛 503。退化成「空模型列表」会把装配故障"
         "报成用户没配模型，是最难排查的一类问题",
         is_registered=has_model_generation,
+    ),
+    PortSpec(
+        name="submission-ledger",
+        module="core.ports.submission_ledger",
+        protocol="SubmissionLedger",
+        implementer="modules/model_driver（提交台账，import 期注册）",
+        when_unregistered="返回 None：查不到台账 → 恢复器保持现状（判「提交结果未知」，"
+        "等人工核对）。台账回填不是放行不可逆操作的判定，回填不了只是不能自动续接，"
+        "不该把整条恢复流程变成 503",
+        is_registered=has_submission_ledger,
     ),
     PortSpec(
         name="usage-metrics",

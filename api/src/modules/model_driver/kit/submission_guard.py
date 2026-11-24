@@ -479,3 +479,59 @@ async def _settle_failure(
         )
     except Exception:
         logger.exception(f"{provider} 提交失败后写入台账失败 run={run_id}")
+
+
+async def find_recoverable_external_id(
+    record_id: str,
+    factory: async_sessionmaker[AsyncSession] | None = None,
+) -> str | None:
+    """按业务记录 id 找**最后一次提交尝试**留下的可续接凭证。
+
+    ## 用途：崩溃恢复
+
+    驱动的 `submit` 拿到上游标识的**同一个瞬间**就落台账（D5 第二步），而业务
+    表的 `record.external_id` 是 submit 返回**之后**才写 —— 中间崩了，业务表就
+    说「没提交过」，台账却记着「提交过、凭证在这儿」。恢复器用这个函数把凭证
+    取回来回填业务表，然后照常续接轮询。
+
+    ## 只认最后一次尝试
+
+    台账是**追加式**历史：同一记录可能有多轮（4xx 后框架自动重试 3 次、
+    人工重提复用同一个 `record_id`）。所以只看**最后一轮**：
+
+    - 最后一轮 `submitted` → 这一轮确实提交成功了 → 返回它的凭证；
+    - 最后一轮 `rejected` / `submission_unknown` / `submitting` → 最后一轮没
+      拿到凭证 → 返回 `None`。**不回退到更早的成功轮次** —— 那是上一轮的
+      结果，而人工重提的语义正是「不要上一轮，要新的」。
+
+    ## 只认「异步形态」的行
+
+    台账里 `task_id` 为空 = 这次提交没有独立任务号（**同步形态**：submit 里就等到
+    了结果）。这种行**不回填**：
+
+    - 同步形态的凭证撑不起「续接轮询」—— 回填了也只是把「提交结果未知，等人核对」
+      变成「同步供应商孤儿，判失败」，语义退化；
+    - 不回填时框架会禁止自动重提（避免二次计费），把人交给核对流程 —— 这才是
+      同步形态崩溃后该走的路。
+
+    ## 找不到就是没有
+
+    返回 `None` 时调用方应保持现状（判「提交结果未知」，等人工核对），
+    **不要编一个凭证**。
+    """
+    if not record_id.strip():
+        return None
+    factory = factory or get_session_factory()
+    async with factory() as session:
+        result = await session.execute(
+            select(SubmissionReceipt)
+            .where(SubmissionReceipt.record_id == record_id)
+            .order_by(SubmissionReceipt.created_at.desc())
+            .limit(1)
+        )
+        receipt = result.scalar_one_or_none()
+    if receipt is None or receipt.status != STATUS_SUBMITTED:
+        return None
+    if not receipt.task_id or not receipt.external_id:
+        return None
+    return receipt.external_id

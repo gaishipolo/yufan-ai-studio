@@ -44,11 +44,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.events import get_event_bus
 from core.logging import get_logger
+from core.ports.submission_ledger import lookup_recovery_external_id
 from db.session import get_session_factory
 from generation.events import EVT_GENERATION_FAILED
 from generation.pipeline import get_pipeline
 from generation.runner import GenerationRunner, get_runner
 from generation.spec import GenerationRecord
+from generation.store import ExternalIdRecoverable
 from infra import get_model_router
 from infra.ai.base import PollCapable
 
@@ -136,6 +138,58 @@ async def _fail_unrecoverable(kind: str, record: GenerationRecord) -> bool:
     return True
 
 
+async def _recover_external_id(kind: str, record: GenerationRecord) -> GenerationRecord | None:
+    """从提交台账把凭证捡回来，回填业务表。
+
+    ## 为什么需要它
+
+    驱动的 `submit` 拿到上游标识的**同一个瞬间**就落台账（台账实现在
+    `modules/model_driver/kit/submission_guard.py`），而业务表的
+    `record.external_id` 是 submit 返回**之后**才写。这中间崩了的话：
+
+    - 业务表说「没提交过」（→ 判死等人核对 → 上游已经在跑的任务白丢）；
+    - 台账却记着「提交过、凭证在这儿」。
+
+    回填把凭证捡回来，记录就能照常**续接轮询**。
+
+    ## 只回填「最后一次提交尝试确实成功」的行
+
+    台账是追加式历史：同一记录可能有多轮（4xx 后框架自动重试、人工重提）。
+    判定在 kit 里做（`find_recoverable_external_id`）：只看**最后一轮**，且它必须
+    是「已提交」。最后一轮若是被拒 / 提交结果未知 → 不回退到更早的成功轮次
+    （那是上一轮的结果；人工重提的语义正是「要新的」）。
+
+    ## 回填不动 `submit_attempts`
+
+    那是「这次提交的结果还没落库」的证据；复位了，后续任何失败都会被当成
+    「没提交过」而重新提交（重复计费风险）。
+
+    返回**回填后的记录快照**，或 `None`（没有凭证 / 这个 kind 没接回填能力）。
+    """
+    candidate = await lookup_recovery_external_id(record.id)
+    if not candidate:
+        return None
+    async with get_session_factory()() as session:
+        store = get_pipeline(kind).store(session)
+        if not isinstance(store, ExternalIdRecoverable):
+            # 这个 kind 没接回填能力（如 model_driver 的作业）→ 保持现状。
+            return None
+        if not await store.set_external_id(record.id, candidate):
+            # 记录已终态 / 不存在 → 有人处理过了，不回填。
+            return None
+        await session.commit()
+        refreshed = await store.load(record.id)
+    if refreshed is None:
+        return None
+    logger.info(
+        "从提交台账回填凭证：kind=%s id=%s external_id=%s",
+        kind,
+        record.id,
+        candidate,
+    )
+    return refreshed
+
+
 async def recover_kind(
     kind: str,
     *,
@@ -159,6 +213,14 @@ async def recover_kind(
         if record.terminal:
             continue
         try:
+            if not record.submitted:
+                # 台账里可能留着「已提交、凭证在这儿」的痕迹：进程崩在拿到上游
+                # 标识之后、写业务表之前。先回填，再决定续接还是重新提交 ——
+                # 不回填的话，这条记录会被判「提交结果未知」而等人核对，
+                # 上游已经在跑的任务白丢。
+                refreshed = await _recover_external_id(kind, record)
+                if refreshed is not None:
+                    record = refreshed
             if record.submitted:
                 if _supports_poll(record):
                     await active.resume(kind, record.id)

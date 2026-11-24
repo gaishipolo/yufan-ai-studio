@@ -202,7 +202,7 @@
 
 ### L1.9 D5 第二步：4 个驱动接入台账 + 通道真实落库（2026-11-24）
 
-**范围**（2026-11-24 拍板：范围 A + 形态 A）：表结构迁移 + `agnes` / `grsai` / `agnes_video` / `grsai_video` 四个驱动接入 + 通道真实落库。**恢复接线不在本包**（见本节末尾「本包没做什么」）。
+**范围**（2026-11-24 拍板：范围 A + 形态 A）：表结构迁移 + `agnes` / `grsai` / `agnes_video` / `grsai_video` 四个驱动接入 + 通道真实落库。**恢复接线不在本包**（见本节末尾「本包没做什么」）→ ✅ 已于 **§L1.10** 单独完成。
 
 #### §L1.8 留下的两个真问题的答案
 
@@ -217,9 +217,9 @@
 
 ⚠️ **为什么不给百炼也套上轮次**：百炼的幂等性依赖 `run_id` **稳定不变**（重放时必须命中同一行、复用既有 `external_id`）。给它加轮次后每次重放都是新键 → 幂等直接失效。所以轮次只属于「没有归档 run」的驱动。
 
-**问题 2（续接落点）的答案：本包只保证「台账里有可续接的凭证」，回填不在本包**
+**问题 2（续接落点）的答案：本包只保证「台账里有可续接的凭证」，回填不在本包** → ✅ **答案见 §L1.10**
 
-「台账 → 回填 `record.external_id` → 续接轮询」这条线**没有做**（明确写出来，免得被当成闭环已成立）。本包做到的是：凭证（`task_id` / `external_id`）在驱动拿到上游标识的**同一个瞬间**落库，不再有「已计费但进程崩了 → 永远停在结果未知」的窗口。回填与续接是下一步（改的是**崩溃恢复路径**，与提交路径不放在同一个包里动）。
+「台账 → 回填 `record.external_id` → 续接轮询」这条线在本包**没有做**（当时明确写出来，免得被当成闭环已成立）。本包做到的是：凭证（`task_id` / `external_id`）在驱动拿到上游标识的**同一个瞬间**落库，不再有「已计费但进程崩了 → 永远停在结果未知」的窗口。回填与续接是下一步（改的是**崩溃恢复路径**，与提交路径不放在同一个包里动）→ 已于 §L1.10 完成。
 
 #### 实施内容
 
@@ -249,9 +249,68 @@
 
 #### 本包没做什么（别当成已完成）
 
-- ❌ **恢复器读台账 → 回填 `record.external_id` → 续接轮询**（问题 2）—— 下一步；
+- ❌ **恢复器读台账 → 回填 `record.external_id` → 续接轮询**（问题 2）—— 下一步 → ✅ **已于 §L1.10 完成**；
 - ❌ 百炼的 `run_id` 幂等键语义未动；
 - ❌ `libtv` 仍是执行器本地状态机（工作区 `run.json`），**不适用** DB 唯一约束。
+
+---
+
+### L1.10 D5 第三步：恢复器读台账 → 回填 `record.external_id` → 续接轮询（2026-11-24）
+
+**范围**：补上 §L1.9「本包没做什么」的第一条 —— 崩溃恢复时把台账里的凭证捡回业务表。
+
+#### 补的是哪个窗口
+
+驱动 `submit` 拿到上游标识的**同一个瞬间**就落台账；而业务表的 `record.external_id` 是 submit 返回**之后**才写。这中间崩了：
+
+- 业务表说「没提交过」→ 恢复器判「提交结果未知」→ 判死等人核对；
+- 台账说「提交过、凭证在这儿」。
+
+于是上游已经在跑的任务白丢，用户等的是一条**已经生成好**的结果。回填把凭证捡回来 → 照常续接轮询。
+
+#### 实施内容
+
+| 位置 | 内容 |
+| --- | --- |
+| `core/ports/submission_ledger.py`（新） | 台账的跨模块注入口：`lookup_recovery_external_id(record_id)`。**未注册 → 返回 `None`**（中性值：恢复流程照常走「等人核对」，不把整条恢复流程变成 503） |
+| `modules/model_driver/ledger.py`（新） | 注入口的模块侧实现 → kit 的 `find_recoverable_external_id` |
+| `kit/submission_guard.py` | 新增 `find_recoverable_external_id(record_id)`：按业务记录 id 查**最后一轮**的凭证 |
+| `generation/recovery.py` | 框架恢复器（图片链）：未提交的业务记录先查台账 → 回填 → 续接轮询 |
+| `modules/task/worker.py` | 任务链自己的恢复器（视频链）：同上 |
+| `generation/store.py` | 新增**可选** Protocol `ExternalIdRecoverable`（`set_external_id`）—— 不动 `GenerationStore` 协议（它的方法清单被脚手架模板照抄，加方法要连脚手架一起改） |
+| `modules/image/pipeline.py` | `ImageJobStore.set_external_id` 实现 |
+
+⚠️ **为什么走注入口**：`modules/image` 与 `modules/task` 之间、以及它们与 `modules/model_driver` 之间**不能互相 import**（`tests/test_architecture.py` 的 AST 硬规则）→ 跨模块查台账只能经 `core/ports`。
+
+#### 四个值得记住的设计决定
+
+1. **只回填「异步形态」的行** —— 台账行有独立任务号（`task_id` 非空）才回填。同步形态（submit 里就等到了结果）回填了也撑不起续接，只会把「提交结果未知，等人核对」变成「同步供应商孤儿，判失败」—— **语义退化**。不回填时框架禁止自动重提（避免二次计费），那才是同步形态崩溃后该走的路。
+2. **只认最后一轮** —— 台账是**追加式历史**（4xx 后框架自动重试、人工重提都追加行）。最后一轮不是「已提交」→ 不回退到更早的成功轮次（那是上一轮的结果；人工重提的语义正是「要新的」）。
+3. **回填不复位 `submit_attempts`** —— 它是「这次提交的结果还没落库」的证据；复位了，后续失败会被当成「没提交过」而重新提交（**二次计费**）。这与 `mark_submitted` 的复位**刻意相反**（那是「提交正常返回」，这里是「结果要靠回填才补上」）。
+4. **台账查询必须放在写库之前** —— 任务链的恢复器在同一事务里既写业务表又写 outbox；台账查询走另一个连接，事务已持写锁时会撞 SQLite 的锁 → 纯读放在循环前，写放在循环内。
+
+#### 覆盖范围（别当成全覆盖）
+
+| 链路 | 受益 | 原因 |
+| --- | --- | --- |
+| 图片（`agnes` / `grsai` 的**异步**形态） | ✅ | 已接 `guarded_submit` → 台账有 `record_id` + 独立任务号 |
+| 视频（`agnes_video` / `grsai_video`） | ✅ | 同上 |
+| **百炼**（`bailian`） | ❌ | **还没接 `guarded_submit`** → 台账行的 `record_id` 是空的 → 查不到凭证。百炼另有 `run_id` 幂等路径（提交前查回执、复用既有 `external_id`），但那条路径仍留着一个「拿到 task_id → 落库前崩溃」的窗口 |
+| **libtv**（视频默认供应商） | ❌ | 执行器本地状态机（工作区 `run.json`），不经 kit → 台账无行 |
+
+⚠️ 所以这条线目前**只覆盖 4 个已接 kit 的驱动**；百炼接 `guarded_submit`（并把 `record_id` 带上）之后才算全覆盖。
+
+#### 验证
+
+- 新增 `tests/test_submission_ledger_recovery.py` **12 条**（kit 5 + 注入口 2 + 框架恢复器 3 + 任务恢复器 2）
+- **判别力验证**：临时短路两处回填 → 两条核心测试变红（其余 10 条仍绿，说明它们守的是「保持现状」的语义）→ 还原
+- 全量 **2115 passed / 14 skipped**；`ruff` 全仓、`mypy` 286 文件全绿
+
+#### 本包没做
+
+- ❌ 百炼接 `guarded_submit`（它的 `channel_used` 仍硬编码 `"oss"`，台账行也没有 `record_id`）→ 下一个工作包
+- ❌ `libtv` 接台账（执行器本地状态机，不适用 DB 唯一约束）
+- ❌ 回填后的**人工重提**没有单独设计 —— 复用既有语义（重提 = 台账追加新的一轮；回填只看最后一轮）
 
 ---
 
@@ -520,7 +579,7 @@ external_id = None, submit_attempts = 1
 | `kit/errors.py` | **框架持有唯一分类实现**：按驱动声明的 `status_map` / `error_map` 执行；统一 `suffix(error)`（两个 `_suffix` 逐字等价） | A1 验证 + 调研 LiteLLM |
 | `kit/credentials.py` | **缺密钥的唯一判定**：空 → `BadRequest`(4xx，确定没送达)。文案由驱动给（`vendor`/`env_name`/`note`），异常类型由 kit 定 | **2026-11-23 事故修正**（§2.4）|
 | `kit/settings.py` | `vendor_settings(prefix, cls)` 工厂 + mtime 指纹缓存 | Settings 样板 ×5 结构等价（未逐行比对，风格一致） |
-| `kit/submission_guard.py` | 提交前**DB 唯一约束抢占** + 「可能已受理」禁止自动重提 | ✅ **已建（2026-11-24，D5 第一步）**：实现从 `modules/model_driver/receipts.py` 下沉到 kit，`receipts.py` 退化为**兼容层**（既有 import 路径与 monkeypatch 约定不变）。支持**同步/异步两种结算形态**（同步生图没有独立任务号 → `task_id` 可空）。✅ **各驱动已接入（2026-11-24，D5 第二步，§L1.9）**：`agnes` / `grsai` / `agnes_video` / `grsai_video` 四个驱动经 kit 的 `guarded_submit` 接入（轮次键 + 三态 + 通道落库）。⚠️ **恢复接线尚未做**（台账 → 回填 `record.external_id` → 续接轮询） |
+| `kit/submission_guard.py` | 提交前**DB 唯一约束抢占** + 「可能已受理」禁止自动重提 | ✅ **已建（2026-11-24，D5 第一步）**：实现从 `modules/model_driver/receipts.py` 下沉到 kit，`receipts.py` 退化为**兼容层**（既有 import 路径与 monkeypatch 约定不变）。支持**同步/异步两种结算形态**（同步生图没有独立任务号 → `task_id` 可空）。✅ **各驱动已接入（2026-11-24，D5 第二步，§L1.9）**：`agnes` / `grsai` / `agnes_video` / `grsai_video` 四个驱动经 kit 的 `guarded_submit` 接入（轮次键 + 三态 + 通道落库）。✅ **恢复接线已做（2026-11-24，§L1.10）**：恢复器经 `core/ports/submission_ledger.py` 查台账 → 回填 `record.external_id` → 续接轮询（⚠️ 只覆盖已接 `guarded_submit` 的 4 个驱动；百炼待接） |
 | ~~`kit/http.py`~~ | ❌ 不抽 —— 4 份映射规则互异，抽了只能靠参数开关还原差异 | A1 验证 |
 | ~~`kit/models.py::strip_prefix`~~ | ❌ 不抽 —— agnes_video 是双别名归一、grsai 才剥前缀、bailian 是精确查表 | A1 验证 |
 | ~~`kit/media.py::classify`~~ | ❌ 不抽分类 —— 无分类/MIME+协议/MIME+后缀三种维度，失败行为从「不报错」到「严格报错」 | A1 验证；但「认不出就报错」的默认仍在 grsai 侧 |
@@ -962,7 +1021,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 
 ### 5.7 提交幂等与防重复计费（`kit/submission_guard.py`，D5 + D6）
 
-> **状态更新（2026-11-24）**：本节描述的是**目标**结构。D6（介质修正：回执从文件改为 DB 唯一约束）早已落地；**D5 第一步已完成** —— 实现已下沉到 `kit/submission_guard.py`，`modules/model_driver/receipts.py` 退化为兼容层（转发 + 存量文件回执迁移 CLI），`bailian` 已直连 kit；**D5 第二步已完成**（§L1.9）—— `agnes` / `grsai` / `agnes_video` / `grsai_video` 四个驱动也经 kit 的 `guarded_submit` 接入（轮次键 + 三态 + 通道真实落库），并为此加了 `record_id` 列与 `run_id` 加宽的迁移。⚠️ **尚未做**：恢复器读台账 → 回填 `record.external_id` → 续接轮询（§L1.9「本包没做什么」）。
+> **状态更新（2026-11-24）**：本节描述的是**目标**结构。D6（介质修正：回执从文件改为 DB 唯一约束）早已落地；**D5 第一步已完成** —— 实现已下沉到 `kit/submission_guard.py`，`modules/model_driver/receipts.py` 退化为兼容层（转发 + 存量文件回执迁移 CLI），`bailian` 已直连 kit；**D5 第二步已完成**（§L1.9）—— `agnes` / `grsai` / `agnes_video` / `grsai_video` 四个驱动也经 kit 的 `guarded_submit` 接入（轮次键 + 三态 + 通道真实落库），并为此加了 `record_id` 列与 `run_id` 加宽的迁移。✅ **恢复接线已完成**（§L1.10）：恢复器读台账 → 回填 `record.external_id` → 续接轮询。
 
 | 场景 | 期望 |
 |---|---|
@@ -1012,7 +1071,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | D2 | 刷新触发方式 | **管理端点为主 + 周期巡检兜底**，共用一个 `registry.refresh()`；端点需**新增运维级权限点** | `core/permissions.py` 现有 6 个权限点全是业务动作向，**无 admin/运维级** → 刷新能 import/挂载代码，不能挂在 `model_driver:read` 上 |
 | D3 | 配置缓存策略 | **mtime 指纹**，键 = `(mtime_ns, size)` + 进程内 env 快照；**不引入 TTL** | pydantic-settings 每次实例化都**整读 `.env` 并解析**（`driver_config.py:41,58`）→ 无缓存的成本是每次请求一次文件读；TTL 的「最长延迟 N 秒」在改 key 止血场景里意味着继续用坏 key 提交 |
 | D4 | `bailian` / `echo` 是否迁移 | **`echo` 永不迁移；`bailian` 纳入迁移，样板层迁，供应商特有层不迁；输出地址遗留约定单独修正** | `echo.py` 零 HTTP、零配置、无素材与错误分类 → kit 对它零收益，且它是「零配置供应商」的活样板；`bailian` **是 HTTP 驱动**（`httpx` 66、`_headers` 324、`_json` 332、`submit` 406），kit 四个模块全部适用，且它是唯一带参考音频的驱动（百炼 `audio_url` 不支持 Base64 → 音频仍需 OSS 临时 URL；**图片可改内联，不必物化**）。**不存在独立替换链**（`modules/template` 已删、`replacement_runs` 表已删、`output_url` 指向的路由已不存在）→ 所谓「耦合」实为「执行器工作区产物约定」，不作为不可动边界 |
-| D5 | 防重复计费机制归谁 | **把 bailian 的提交幂等提炼为 `kit/submission_guard.py` 供所有驱动共用；但回执必须落数据库（唯一约束抢占），不落工作区文件** | 框架只有「分类」（`_possibly_delivered`），bailian 在驱动内做了「机制」（`O_EXCL` 抢占 + 回执 + `submission_unknown` 禁止重提）→ 该能力只服务了一个供应商。但现有回执存在 `records/bailian-submission.json`（`bailian.py:443`），与工作区同生共死 → 工作区误删会让「恢复动作」变成「当作新任务重提 = 二次计费」。**提炼前必须先修正回执介质（D6），否则统一的是错误做法**<br>✅ **2026-11-24 现状**：D6 已完成（回执落 DB）；D5 **第一步已完成**（实现下沉到 `kit/submission_guard.py`，`receipts.py` 退化为兼容层）；**第二步已完成**（§L1.9：4 个驱动经 `guarded_submit` 接入 + 轮次键 + 通道真实落库）。⚠️ **恢复接线尚未做**（台账 → 回填 `record.external_id` → 续接轮询）。`libtv` 用的是执行器本地状态机（工作区 `run.json`），**不适用** DB 唯一约束（见 §1.1 A6 验证结果） |
+| D5 | 防重复计费机制归谁 | **把 bailian 的提交幂等提炼为 `kit/submission_guard.py` 供所有驱动共用；但回执必须落数据库（唯一约束抢占），不落工作区文件** | 框架只有「分类」（`_possibly_delivered`），bailian 在驱动内做了「机制」（`O_EXCL` 抢占 + 回执 + `submission_unknown` 禁止重提）→ 该能力只服务了一个供应商。但现有回执存在 `records/bailian-submission.json`（`bailian.py:443`），与工作区同生共死 → 工作区误删会让「恢复动作」变成「当作新任务重提 = 二次计费」。**提炼前必须先修正回执介质（D6），否则统一的是错误做法**<br>✅ **2026-11-24 现状**：D6 已完成（回执落 DB）；D5 **第一步已完成**（实现下沉到 `kit/submission_guard.py`，`receipts.py` 退化为兼容层）；**第二步已完成**（§L1.9：4 个驱动经 `guarded_submit` 接入 + 轮次键 + 通道真实落库）。✅ **恢复接线已完成**（§L1.10：台账 → 回填 → 续接轮询；⚠️ 只覆盖已接 `guarded_submit` 的 4 个驱动）。`libtv` 用的是执行器本地状态机（工作区 `run.json`），**不适用** DB 唯一约束（见 §1.1 A6 验证结果） |
 | D6 | 工作区 / S3 / 数据库的职责边界 | **素材字节以 S3 为唯一副本；档案元数据与提交回执落数据库；本地工作区降级为「可重建的临时执行目录」并加 GC** | `materialize()` 把 S3 字节下载一份到 `inputs/*`（`generic_inputs.py:315,323-325`），工作区**无清理机制**（`cli.py` 只有 `runs-status`）；`runs.py:138-141` 已文档化「换机器显示调用档案不存在」；回执同在工作区 → 误删后二次计费（详见 §6.5） |
 
 **每项的替代条件**（不推荐但保留触发条件）：

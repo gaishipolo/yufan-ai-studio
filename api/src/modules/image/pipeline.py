@@ -250,6 +250,32 @@ class ImageJobStore:
         job.submit_mode = self._snapshot_submit_mode(job)
         return True
 
+    async def set_external_id(self, record_id: str, external_id: str) -> bool:
+        """回填提交凭证（崩溃恢复用；语义见 `generation/store.py::ExternalIdRecoverable`）。
+
+        与 `mark_submitted` 只差一处，**但很关键**：这里**不复位**
+        `submit_attempts` —— 回填说明「上游可能真的已经受理并计费」，复位就等于
+        把这次提交当成没发生过，后续失败会重新提交（重复计费）。
+
+        顺带落 `submit_mode` 快照（**仅当还没有快照时**）：否则「能不能续查」只能靠
+        当前模型目录反推，模型下线时结论会翻转。
+
+        落的是 `"async"` 而不是目录解析结果 —— 台账能给出凭证的前提就是「这次提交有
+        独立任务号」，即异步形态（`kit/submission_guard.py::
+        find_recoverable_external_id` 只回填这种行）→ 这里的信息比目录权威。
+        已有快照不动：它说明「这条记录提交时的形态」已定，不能被今天的目录覆盖。
+        """
+        job = await _guard(self.session, record_id)
+        if job is None:
+            return False
+        job.external_id = external_id
+        job.status = STATUS_RUNNING
+        job.started_at = datetime.now(tz=UTC)
+        job.progress = max(job.progress, 1)
+        if job.submit_mode is None:
+            job.submit_mode = "async"
+        return True
+
     async def mark_progress(self, record_id: str, progress: int) -> bool:
         job = await _guard(self.session, record_id)
         if job is None:
