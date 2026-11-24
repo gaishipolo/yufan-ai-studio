@@ -5,6 +5,7 @@ import type {
   BulkIn,
   DownloadIn,
   DraftDecisionIn,
+  LibraryAssetKind,
   ShareDecisionIn,
   ShareRequestIn,
   TextAssetIn,
@@ -26,7 +27,9 @@ export const libraryKeys = {
   facets: () => [...libraryKeys.all, 'facets'] as const,
   details: () => [...libraryKeys.all, 'detail'] as const,
   detail: (id: string) => [...libraryKeys.details(), id] as const,
-  media: (id: string) => [...libraryKeys.all, 'media', id] as const,
+  /** 媒体字节：按来源分流——视频取派生流（stream），其余取原片（file） */
+  media: (id: string, source: 'stream' | 'file' = 'file') =>
+    [...libraryKeys.all, 'media', id, source] as const,
   /** 悬浮大图：与 media 分开缓存，各自的字节来源不同 */
   large: (id: string) => [...libraryKeys.all, 'large', id] as const,
   /** 前缀：切入口只是换了计数范围，任一次写操作都要把所有范围的缓存失效 */
@@ -472,17 +475,27 @@ export function useSaveAssetFile() {
 }
 
 /**
- * 取受保护的原文件并转成 object URL（视频/音频预览用）。
+ * 取受保护的媒体字节并转成 object URL（视频/音频预览用）。
  *
  * 不能直接把 `/library/assets/{id}/file` 塞进 `<video src>`：那个地址要 Bearer 头，
  * 浏览器发媒体请求时不会带上，结果是 401 而不是画面。
+ *
+ * **视频走 `/stream`（派生流），不走 `/file`（原片）**：原片可能是 10-bit HEVC /
+ * H.264 High10，浏览器 `<video>` 解不出 → 画面是一块黑。派生的 H.264 8-bit
+ * 流才是浏览器能播的。`/stream` 只对 video 有效，所以按 kind 分流：
+ * 音频/图片仍是 `/file`。
  */
-export function useLibraryMedia(assetId: string | null, enabled: boolean) {
+export function useLibraryMedia(
+  assetId: string | null,
+  enabled: boolean,
+  kind?: LibraryAssetKind,
+) {
   const query = useQuery({
-    queryKey: libraryKeys.media(assetId ?? ''),
+    queryKey: libraryKeys.media(assetId ?? '', kind === 'video' ? 'stream' : 'file'),
     enabled: !!assetId && enabled,
     staleTime: 5 * 60_000,
-    queryFn: async () => libraryApi.file(assetId ?? ''),
+    queryFn: async () =>
+      kind === 'video' ? libraryApi.stream(assetId ?? '') : libraryApi.file(assetId ?? ''),
   });
 
   const [url, setUrl] = useState<string | undefined>();

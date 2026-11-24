@@ -104,9 +104,28 @@ export const libraryApi = {
 
   detail: (id: string) => api.get<LibraryAssetDetailOut>(`/library/assets/${id}`),
 
-  /** 原文件字节。预览与下载共用同一个端点：v2 不做转码派流。 */
+  /** 原文件字节。**视频不要用它**（见 `stream`）。 */
   file: (id: string) =>
     api.get<Blob>(`/library/assets/${id}/file`, undefined, {
+      responseType: 'blob',
+      timeout: 600_000,
+    }),
+
+  /**
+   * 视频派生流（H.264 / yuv420p / 8-bit），浏览器可直接播。
+   *
+   * 为什么视频不能走 `/file`：那是**原片**。原片可能是 10-bit HEVC 或
+   * H.264 High10 —— 浏览器 `<video>` 解不出，画面就是一块黑。
+   * 这正是「模板库页面不显示案例视频」的原因：卡片上的案例视频取的是原片。
+   *
+   * 为什么不能把 URL 直接塞进 `<video src>`：该端点要 Bearer 头，
+   * 浏览器发媒体请求时不带 → 401。所以仍然用 XHR 取 blob 再转 object URL
+   * （`useLibraryMedia` 负责这一步）。
+   *
+   * 只有 video 有这个端点；音频/图片走 `file`。
+   */
+  stream: (id: string) =>
+    api.get<Blob>(`/library/assets/${id}/stream`, undefined, {
       responseType: 'blob',
       timeout: 600_000,
     }),

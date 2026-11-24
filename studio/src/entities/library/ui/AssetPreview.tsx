@@ -47,6 +47,7 @@ export function AssetPreview({
   const media = useLibraryMedia(
     assetId,
     isVideo && ((playable && playing) || (hoverPlay && hoverNow)),
+    isVideo ? 'video' : undefined,
   );
 
   if (isVideo && playable && playing) {

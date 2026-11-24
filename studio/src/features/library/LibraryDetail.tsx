@@ -135,7 +135,7 @@ function DetailBody({
     canCreate && (asset.ownerId === viewer.id || viewer.canDeleteAny);
   const days = trashDaysLeft(asset.trashExpiresAt);
   const hasMedia = asset.kind === 'video' || asset.kind === 'audio';
-  const media = useLibraryMedia(asset.id, hasMedia);
+  const media = useLibraryMedia(asset.id, hasMedia, asset.kind);
   const [renaming, setRenaming] = useState(false);
   const [editorOpen, setEditorOpen] = useState(false);
   const [historyOpen, setHistoryOpen] = useState(false);
@@ -736,7 +736,7 @@ function MediaImage({ asset }: { asset: LibraryAssetDetailOut }) {
 }
 
 function OriginalImage({ asset }: { asset: LibraryAssetDetailOut }) {
-  const media = useLibraryMedia(asset.id, true);
+  const media = useLibraryMedia(asset.id, true, 'image');
   if (media.url) {
     return (
       <img

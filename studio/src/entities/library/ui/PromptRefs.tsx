@@ -249,7 +249,7 @@ function AssetLightbox({
 function AssetStage({ assetId, big = false }: { assetId: string; big?: boolean }) {
   const detail = useLibraryDetail(assetId);
   const isVideo = detail.data?.kind === 'video';
-  const media = useLibraryMedia(assetId, isVideo);
+  const media = useLibraryMedia(assetId, isVideo, isVideo ? 'video' : undefined);
   if (isVideo) {
     if (!media.url) {
       return (
