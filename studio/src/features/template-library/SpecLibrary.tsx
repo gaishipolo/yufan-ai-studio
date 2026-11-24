@@ -127,17 +127,21 @@ function TemplateCard({
         // 三层深度的中间那层：卡片静止时也有一线投影（告诉眼睛"这是浮在页面上的"），
         // 悬停抬起半像素并加深，选中的用蓝色投影而不是只描一圈边 —— 只描边在
         // 一排白卡里几乎看不出来（尤其是缩略图把边压满的时候）。
-        'group flex flex-col rounded-2xl border bg-panel p-1.5 text-left transition-all duration-200',
+        'group flex flex-col items-stretch rounded-2xl border bg-panel p-1.5 text-left transition-all duration-200',
         selected
           ? 'border-primary-line shadow-[0_10px_24px_-12px_rgba(43,124,255,.55)] ring-1 ring-primary/20'
           : 'border-line-soft shadow-[0_1px_2px_rgba(16,42,55,.05)] hover:-translate-y-0.5 hover:border-line hover:shadow-card',
       )}
     >
-      <div className="relative overflow-hidden rounded-xl">
+      {/* 显式 w-full + shrink-0：这层是卡片里第一个 flex item，某些 Edge 内核
+          不会把 flex column 的 align-items:stretch 应用到含 aspect-ratio 的子树，
+          于是它宽度算成 0，下面 absolute 的封面跟着全塌（图片其实早已解码成功）。
+          钉死宽度并禁止压缩，任何内核都按卡片内容宽度渲染。 */}
+      <div className="relative w-full shrink-0 overflow-hidden rounded-xl">
         <CaseCover
           assetId={item.demoAssetId}
           seed={item.key}
-          className="aspect-[4/5] w-full"
+          className="aspect-[4/5] w-full shrink-0"
           hoverPlay
           active={hovering}
         />
