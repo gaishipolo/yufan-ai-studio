@@ -774,13 +774,11 @@ export function SpecWorkspace() {
        按钮也只在固定槽位上出现，切回「用户填」会把素材清掉）；文本槽位新增后
        直接弹选择器，原来落在「用户填」上，于是素材钉在一个「用户填」的槽位上，
        后端规则「由用户选择时不能预置 assetId」会让整份草稿存不下去。 */
-    /* 固定槽位钉的那条素材会**随模板发布给所有人**。
-       别人复用时是拿**他的身份**再判一次可见性的（后端 `_fills`），而固定槽位
-       在编译期必须等于作者钉的那条，复用者没法自己换一张 —— 所以作者自己的
-       私有素材一钉进去，这个模板对所有人就是坏的。
-
-       与「展示案例」同一条出路：先移进案例池。 */
-    if (!isPubliclyReadable(asset)) {
+    /* 固定槽位钉的那条素材会**随模板发布给所有人**——但**文本例外**：
+       发布时正文直接抄进提示词（后端 `_inline_fixed_text`），模板里不再有
+       这条素材的引用，复用者根本不会去读它，所以不要求它公开可读。
+       图 / 视频没法内联，仍然必须先移进案例池或改成团队可见。 */
+    if (slotTypeOf(slot.type) !== 'text' && !isPubliclyReadable(asset)) {
       setPicker(null);
       setPendingCase({asset, target: 'slot', index: id, label});
       return;
@@ -1520,10 +1518,15 @@ export function SpecWorkspace() {
             ? picker.kind
             : slotTypeOf(pickerSlot?.type ?? 'image')
         }
-        /* 出「我的素材 / 案例池」两档的两种场合：
+        /* 出「我的素材 / 案例池」两档的场合：
            - 选展示案例：案例不进普通列表，没有这一档作者传过的案例第二次就挑不到；
-           - 挑槽位素材：挑了就是钉住，钉住的那条要**随模板公开**，公开的素材就在案例池里。 */
-        casePool={picker !== null}
+           - 挑图 / 视频固定素材：挑了就是钉住，钉住的那条要**随模板公开**，
+             公开的素材就在案例池里。
+           文本槽位不给这一档：正文发布时会抄进提示词，不存在可见性问题。 */
+        casePool={
+          picker !== null &&
+          (picker.target === 'demo' || slotTypeOf(pickerSlot?.type ?? 'image') !== 'text')
+        }
         title={
           picker?.target === 'demo'
             ? '选择展示案例'

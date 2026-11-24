@@ -259,6 +259,22 @@ def slot_ref_modes(prompt: str) -> dict[str, set[str]]:
     return modes
 
 
+def inline_slot_ref(text: str, key: str, value: str) -> str:
+    """把文本里所有指向 `key` 的槽位引用（含空格与修饰符）换成 `value`。
+
+    用**同一个** `_SLOT_REF` 逐匹配判断 key，而不是另写一份正则：形状只许一处
+    定义（这条已经漂移过三次）。替换函数返回值而不是字符串模板 —— 正文里若
+    有反斜杠或 `\\1`，交给 `re.sub` 的字符串替换会被当成反向引用解释掉。
+
+    当前只用于发布时把**固定文本槽位**的正文写进提示词。文本正文不再经
+    `{{Text N}}` / `textLibraryIds` 传递，也就不需要复用者对该素材有读取权限。
+    """
+    def repl(match: re.Match[str]) -> str:
+        return value if match.group(1) == key else match.group(0)
+
+    return _SLOT_REF.sub(repl, text)
+
+
 def _validate_slot_texts(spec: TemplateSpec) -> None:
     """校验「选中时文案」与「未选时文案」。
 

@@ -45,6 +45,7 @@ from core.template_spec import (
     SpecGroup,
     TemplateSpec,
     compile_spec,
+    inline_slot_ref,
     normalize_refs,
     slot_ref_modes,
     validate_spec,
@@ -474,7 +475,14 @@ async def _check_fixed_refs(
     固定槽位的素材读不到，模板就是坏的。发布时拦住，是唯一能拦住的地方。
     """
     lookup = get_library_lookup()
-    asset_ids = [slot.asset_id for slot in spec.slots if slot.asset_id]
+    # **固定文本槽位不在这里判可见性**：发布时它的正文会被抄进提示词
+    # （见 `_inline_fixed_text`），模板里不再有对那份素材的引用 —— 复用者
+    # 根本不需要读它。图 / 视频没法内联，仍必须全员可读。
+    asset_ids = [
+        slot.asset_id
+        for slot in spec.slots
+        if slot.asset_id and slot.type != "text"
+    ]
     if not asset_ids:
         return
     readable = await lookup.readable_ids(session, actor, asset_ids)
@@ -533,6 +541,50 @@ async def _check_demo_ref(
             "展示案例只有你自己能看到，别人打开模板库看不到。"
             "请把它移进案例池，或改成团队可见。"
         )
+
+
+async def _inline_fixed_text(
+    session: AsyncSession, actor: CurrentUser, spec: TemplateSpec
+) -> tuple[str, str, tuple[InputSlot, ...]]:
+    """发布时把**固定文本槽位**的正文抄进提示词，并从发布快照里移除这些槽位。
+
+    文本与图 / 视频的根本区别：正文可以直接写进字符串，图片只能传引用。
+    所以固定文本槽位不需要「素材对所有人可读」—— 发布后模板里连 id 都没有，
+    复用者不会再读它；也不会随作者后来改稿而改变（发布即冻结）。
+
+    **为什么移除槽位行**：文本是 `attachment`，不占 `{{Mixed N}}` 编号；内联后
+    `{{slot:key}}` 已变成正文，`{{Text N}}` / `textLibraryIds` 都不再需要。
+    留着那一行只会在模板库右栏多出一个空的可选文案框。
+
+    老版本（发布即冻结）不受影响：仍原样带着 `{{slot:key}}` 与槽位行。
+    """
+    fixed = [
+        slot
+        for slot in spec.slots
+        if slot.type == "text" and slot.binding == "fixed" and slot.asset_id
+    ]
+    if not fixed:
+        return spec.prompt, spec.random_prompt, spec.slots
+
+    lookup = get_library_lookup()
+    texts = await lookup.read_text_many(
+        session, actor, [slot.asset_id for slot in fixed if slot.asset_id]
+    )
+    prompt, random_prompt = spec.prompt, spec.random_prompt
+    for slot in fixed:
+        ref = texts.get(slot.asset_id or "")
+        if ref is None:
+            raise BadRequest(
+                f"固定文案「{slot.label or slot.key}」读不到正文或已被删除：{slot.asset_id}"
+            )
+        # 传替换函数而不是字符串模板：正文里的反斜杠 / `\1` 不能被 re 解释。
+        prompt = inline_slot_ref(prompt, slot.key, ref.content)
+        random_prompt = inline_slot_ref(random_prompt, slot.key, ref.content)
+
+    dropped = {slot.key for slot in fixed}
+    return prompt, random_prompt, tuple(
+        slot for slot in spec.slots if slot.key not in dropped
+    )
 
 
 async def validate_draft(
@@ -620,16 +672,28 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     payload = TemplateSpecIn.model_validate(head.draft)
     spec = to_core(payload)
     validate_spec(spec)
-    _check_executable(spec)
     await _check_model(spec)
-    # 发布 = 对外公开的那一刻：固定素材与展示案例必须**所有复用者都读得到**。
+    # 发布 = 对外公开的那一刻：图/视频固定素材与展示案例必须**所有复用者都读得到**。
+    # 固定文本例外：正文会抄进提示词，模板里不再引用素材（见 `_inline_fixed_text`）。
     # 草稿阶段不这么判（见 `_check_fixed_refs` 的两级判据说明）。
     await _check_fixed_refs(session, actor, spec, require_public=True)
     await _check_demo_ref(session, actor, spec, require_public=True)
 
+    # 固定文本内联：读不到正文当场报错，不能拖到使用者填表时才炸。
+    prompt, random_prompt, inlined_slots = await _inline_fixed_text(session, actor, spec)
+    # 执行上限要在**内联之后**判 —— 正文抄进来之后提示词会变长，先判等于没判。
+    _check_executable(replace(spec, prompt=prompt, slots=inlined_slots))
+
     latest = await _latest(session, head)
     fingerprint = fingerprint_of(payload)
-    if latest is not None and latest.fingerprint == fingerprint:
+    # 只比指纹不够：作者没改草稿、但文本资产改了正文，内联后的 prompt 也会变，
+    # 那时必须发新版本，否则使用者拿到的还是旧文案。
+    if (
+        latest is not None
+        and latest.fingerprint == fingerprint
+        and latest.prompt == prompt
+        and (latest.random_prompt or "") == random_prompt
+    ):
         # 同一份草稿重发：版本号不动，也不新增快照行（回执要能重复调）。
         #
         # **但状态要恢复**：停用之后重新发布，语义就是「重新上线」。
@@ -654,8 +718,8 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         model=spec.model,
         allowed_models=list(spec.allowed_models),
         params=dict(spec.params),
-        prompt=spec.prompt,
-        random_prompt=spec.random_prompt,
+        prompt=prompt,
+        random_prompt=random_prompt,
         fingerprint=fingerprint,
         published_by=actor.id,
     )
@@ -664,7 +728,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     # 容器名存组内每一行（冗余）：发布快照只有槽位行，没有「容器表」。
     # 只写组内第一行会依赖 position 顺序 —— 拖一下顺序就取不到名字了。
     group_labels = {group.key: group.label for group in spec.groups}
-    for slot in spec.slots:
+    for slot in inlined_slots:
         session.add(
             TemplateSpecSlot(
                 version_id=row.id,

@@ -243,6 +243,12 @@
 **文本槽位仍用 `{{slot:key}}`**：它有独立的 `{{Text N}}` 编号空间，不参与 Mixed 计数。
 `{{Text N}}` 与 `{{Mixed N}}` 不同：前者仍是派生编号，手写会被 400 拒。
 
+**固定文本在发布时内联**：`binding=fixed` 的文本槽位，发布时按 `{{slot:key}}`
+读正文写进 `prompt` / `randomPrompt`，并从发布快照里摘掉这条槽位。文本是唯一能
+这么做的素材（字符串可以直接抄），所以**不要求这条素材全员可读**；图 / 视频仍走
+「随模板公开」那道闸。草稿阶段保留槽位与引用，老版本不受影响。正文后来被编辑时
+草稿指纹没变，发布靠比对内联后的 prompt 决定是否出新版本。
+
 **换算只在一处**：后端 `rules.normalize_refs` 在入口（`validate_spec` /
 `compile_spec` / `_check_executable`）把 `{{Mixed N}}` 换成 `{{slot:key}}`，
 后面的逻辑只认一种写法。前端同理：`specDraft.toSlotTokens` / `toMixedTokens`

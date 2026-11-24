@@ -670,7 +670,9 @@ curl -sS --noproxy '*' -H "Authorization: Bearer $TOKEN" \
   → 只能 `useLibraryMedia()` 取 blob。
 - 填表槽位按一级标签分组（`SlotMediaPicker`）；胶囊**不带计数**，条数只放「共 N」；
   **已选不单列 chip**（只留不在当前档的，否则换标签后删不掉）；
-  发布闸门：user 的图片/视频槽位必须有 `tagId`。
+  发布闸门：user 的图片/视频槽位必须有 `tagId`；
+  **固定文本例外**：发布时内联进 prompt（正文抄进字符串），不要求素材 case / team
+  可见；图 / 视频仍按「随模板公开」判。
 - 模板库右栏只有「填入素材」「参数」；拆 head / 滚动区 / footer，
   `xl:max-h-[calc(100vh-86px)]`，细滚动条 `.scroll-thin`（只写 `width` 不写 thumb 会画成透明）。
 - 占位符只在封装页露出；其余走 `entities/library/ui/PromptRefs`，

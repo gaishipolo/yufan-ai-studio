@@ -33,6 +33,7 @@ from core.template_spec.models import (
     TemplateSpec,
 )
 from core.template_spec.rules import (
+    inline_slot_ref,
     normalize_refs,
     slot_ref_modes,
     slot_refs,
@@ -57,6 +58,7 @@ __all__ = [
     "SpecGroup",
     "TemplateSpec",
     "compile_spec",
+    "inline_slot_ref",
     "normalize_refs",
     "slot_ref_modes",
     "slot_refs",

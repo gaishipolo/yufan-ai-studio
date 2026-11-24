@@ -1155,8 +1155,26 @@ describe('模板封装 · 固定槽位的素材要能随模板公开', () => {
     vi.mocked(libraryApi.selection).mockReset();
   });
 
+  /** 文本槽位：正文会在发布时抄进提示词，不该走「随模板公开」那套。 */
+  const textDraft = (): TemplateSpecIn => ({
+    key: 'spec-text',
+    name: '商品图模板',
+    model: 'bailian-wan3-prime-replacement',
+    prompt: '开头 {{slot:brief}} 结尾',
+    slots: [
+      {
+        key: 'brief',
+        type: 'text',
+        binding: 'fixed',
+        refMode: 'attachment',
+        label: '文案',
+        position: 0,
+      },
+    ],
+  });
+
   /** 进编辑器，并把素材选择器里的内容摆好。 */
-  async function enter(items: LibraryAssetOut[]) {
+  async function enter(items: LibraryAssetOut[], specDraft: TemplateSpecIn = draft()) {
     vi.mocked(libraryApi.selection).mockResolvedValue({
       items,
       total: items.length,
@@ -1164,7 +1182,7 @@ describe('模板封装 · 固定槽位的素材要能随模板公开', () => {
       pageSize: 20,
     });
     const user = userEvent.setup();
-    renderWorkspace([specOf({ status: 'draft', draft: draft() })]);
+    renderWorkspace([specOf({ status: 'draft', draft: specDraft })]);
     await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
     return user;
   }
@@ -1225,6 +1243,29 @@ describe('模板封装 · 固定槽位的素材要能随模板公开', () => {
     await user.click(screen.getByRole('button', { name: '选择素材' }));
     const picker = await screen.findByRole('dialog', { name: '选择固定素材' });
     await user.click(within(picker).getByRole('button', { name: /团队图/ }));
+
+    expect(
+      screen.queryByRole('dialog', { name: '把这条素材设为案例' }),
+    ).not.toBeInTheDocument();
+    expect(libraryApi.setPurpose).not.toHaveBeenCalled();
+    expect(await screen.findByRole('button', { name: '更换' })).toBeInTheDocument();
+  });
+
+  it('文本槽位挑私有文案：正文发布时会内联，不问「设为案例」', async () => {
+    /* 文本与图/视频的根本区别：正文能抄进提示词。发布后模板里不再有这条
+       素材的 id，复用者读不到也无所谓 —— 所以「设为案例」这一步是多余的，
+       案例池那一档也不该出现（挑了也不会随模板公开）。 */
+    const user = await enter(
+      [asset('t-1', '我的文案', { kind: 'text' })],
+      textDraft(),
+    );
+
+    await user.click(screen.getByRole('button', { name: '选择素材' }));
+    const picker = await screen.findByRole('dialog', { name: '选择文本' });
+    expect(
+      within(picker).queryByRole('button', { name: '案例池' }),
+    ).not.toBeInTheDocument();
+    await user.click(within(picker).getByRole('button', { name: /我的文案/ }));
 
     expect(
       screen.queryByRole('dialog', { name: '把这条素材设为案例' }),

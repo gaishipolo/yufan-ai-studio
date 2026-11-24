@@ -16,7 +16,7 @@ from typing import Any
 
 from fastapi.testclient import TestClient
 from library_support import LIB_RW, admin_headers, make_user, set_visibility, suffix
-from tests_template_helpers import png_bytes, upload, upload_shared, video_bytes
+from tests_template_helpers import png_bytes, upload_shared, video_bytes
 
 API = "/api/v1/template-cases"
 SPECS = "/api/v1/template-specs"

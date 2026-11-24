@@ -1603,3 +1603,109 @@ def test_duplicate_group_keys_are_rejected(client: TestClient) -> None:
     response = client.post(API, json=draft, headers=headers)
 
     assert response.status_code == 422, response.text
+
+
+# --------------------------------------------- 固定文本：发布时把正文抄进提示词
+#
+# 图 / 视频只能传引用，所以固定素材必须全员可读；**文本可以把正文写进字符串**。
+# 发布时把 `{{slot:brief}}` 换成正文、并从快照里摘掉这个槽位：模板里再没有
+# assetId，复用者根本不会去读那条素材，可见性闸口对文本自然不适用。
+#
+# 这里钉三件事：私有文本能发、正文（含正则元字符）原样进两段提示词、
+# 正文改了必须发新版本（草稿没动，光比指纹会把旧文案发出去）。
+
+LIB = "/api/v1"
+
+
+def _text_asset(client: TestClient, headers: dict[str, str], content: str) -> str:
+    created = client.post(
+        f"{LIB}/library/text-assets",
+        json={"name": f"文案-{suffix()}", "content": content, "extension": "md"},
+        headers=headers,
+    )
+    assert created.status_code == 201, created.text
+    return str(created.json()["data"]["id"])
+
+
+def _text_draft(
+    asset_id: str,
+    *,
+    key: str | None = None,
+    prompt: str = "开头 {{slot:brief}} 结尾",
+    random_prompt: str | None = None,
+) -> dict[str, Any]:
+    draft: dict[str, Any] = {
+        "key": key or f"spec-text-{suffix()}",
+        "name": "文案模板",
+        "model": MODEL,
+        "params": {},
+        "prompt": prompt,
+        "slots": [
+            {
+                "key": "brief",
+                "type": "text",
+                "binding": "fixed",
+                "refMode": "attachment",
+                "assetId": asset_id,
+                "position": 0,
+                "label": "文案",
+            }
+        ],
+    }
+    if random_prompt:
+        draft["randomPrompt"] = random_prompt
+    return draft
+
+
+def _publish(client: TestClient, headers: dict[str, str], key: str) -> Any:
+    return client.post(f"{API}/{key}/publish", headers=headers)
+
+
+def test_private_fixed_text_is_inlined_and_publishes(client: TestClient) -> None:
+    """私有文本不必「设为案例」：正文抄进提示词后就不存在可见性问题。"""
+    headers = _headers(client)
+    # 反斜杠与 `\g<0>` 都是正则替换的坑：用替换函数而不是字符串模板才不会被解释。
+    content = "口播：C:\\temp 的 \\g<0> 不要被解释"
+    text_id = _text_asset(client, headers, content)
+    draft = _text_draft(
+        text_id, random_prompt="随机版：{{ slot:brief }}（带空格也要换）"
+    )
+    _save(client, headers, draft)
+
+    published = _publish(client, headers, draft["key"])
+
+    assert published.status_code == 200, published.text
+    latest = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]["latest"]
+    assert content in latest["prompt"]
+    assert "{{slot:brief}}" not in latest["prompt"]
+    assert content in latest["randomPrompt"]
+    assert "{{ slot:brief }}" not in latest["randomPrompt"]
+    # 内联后模板里不再引用这条素材，槽位行也一并摘掉
+    assert [slot["key"] for slot in latest["slots"]] == []
+
+
+def test_editing_inlined_text_publishes_a_new_version(client: TestClient) -> None:
+    headers = _headers(client)
+    text_id = _text_asset(client, headers, "口播：今天下雨")
+    draft = _text_draft(text_id)
+    _save(client, headers, draft)
+    assert _publish(client, headers, draft["key"]).status_code == 200
+
+    edited = client.put(
+        f"{LIB}/library/assets/{text_id}/text",
+        json={"content": "口播：明天放晴", "expectedVersion": 1},
+        headers=headers,
+    )
+    assert edited.status_code == 200, edited.text
+    # 草稿一个字没动：指纹一样，但内联后的正文变了 —— 必须发新版本
+    second = _publish(client, headers, draft["key"])
+
+    assert second.status_code == 200, second.text
+    assert second.json()["data"]["version"] == 2
+    latest = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]["latest"]
+    assert "口播：明天放晴" in latest["prompt"]
+    assert "口播：今天下雨" not in latest["prompt"]
+
+    # 同一份正文重复发布仍幂等
+    again = _publish(client, headers, draft["key"])
+    assert again.json()["data"]["version"] == 2
