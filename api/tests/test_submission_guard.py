@@ -30,6 +30,7 @@ from modules.model_driver.kit.submission_guard import (
     get_receipt,
     guarded_submit,
     recover_external_id,
+    settle_failure,
     settle_submission,
 )
 from modules.model_driver.models import SubmissionReceipt
@@ -396,3 +397,72 @@ async def test_guarded_submit_marks_unknown_when_no_identifier(
     receipt = await get_receipt(session, provider="agnes", run_id=f"{record_id}#1")
     assert receipt is not None
     assert receipt.status == STATUS_UNKNOWN
+
+
+# ---------------------------------------------------------------------------
+# `record_id` 与 `settle_failure`：给「自己编排提交顺序」的驱动用
+# ---------------------------------------------------------------------------
+
+
+async def test_decide_before_submit_records_the_business_record_id(
+    session: AsyncSession,
+) -> None:
+    """台账行要带**业务记录 id** —— 崩溃恢复器靠它把凭证找回来。
+
+    键（`run_id`）与业务记录 id 是**两回事**：百炼的键是幂等键，轮次键的驱动用
+    `{record_id}#{轮次}`。少了 `record_id` 这一列，恢复器查不到任何凭证 →
+    崩溃后上游已经受理的任务白丢。
+    """
+    record_id = "rec-biz-1"
+
+    await decide_before_submit(
+        provider="bailian", run_id=RUN_ID, model=MODEL, record_id=record_id
+    )
+
+    receipt = await get_receipt(session, provider="bailian", run_id=RUN_ID)
+    assert receipt is not None
+    assert receipt.record_id == record_id
+    assert receipt.run_id == RUN_ID, "键与业务记录 id 是两回事，不能互相顶替"
+
+
+async def test_settle_failure_uses_the_same_verdict_as_the_framework(
+    session: AsyncSession,
+) -> None:
+    """`settle_failure` 与 `guarded_submit`、与框架 runner 用**同一份**三态判定。
+
+    它是给**自己编排提交顺序**的驱动准备的出口（百炼：本地校验与素材上传必须
+    在抢占之前），所以判得必须一模一样 —— 否则会出现「台账说可重试、框架说
+    禁止重提」这种两边打架的情况，人会同时看到两句矛盾的话。
+    """
+    cases = [
+        (BadRequest("4xx"), STATUS_REJECTED),
+        (UpstreamError("5xx"), STATUS_UNKNOWN),
+        (httpx.ReadTimeout("读超时"), STATUS_UNKNOWN),
+        (httpx.ConnectTimeout("连不上"), STATUS_REJECTED),
+    ]
+    for index, (exc, expected) in enumerate(cases):
+        run_id = f"f{index}" + "x" * 31
+        await decide_before_submit(provider="bailian", run_id=run_id, model=MODEL)
+
+        status = await settle_failure(provider="bailian", run_id=run_id, exc=exc)
+        assert status == expected
+
+        receipt = await get_receipt(session, provider="bailian", run_id=run_id)
+        assert receipt is not None
+        assert receipt.status == expected
+        # 台账的判定 = 框架的判定（同一份实现，不是抄一遍）
+        assert (receipt.status == STATUS_UNKNOWN) == possibly_delivered(exc)
+
+
+async def test_settle_failure_does_not_mask_the_original_error(
+    session: AsyncSession,
+) -> None:
+    """台账写不进去**不能掩盖原始异常** —— 上游的错误信息更重要。
+
+    这里让结算必然失败（这一轮根本没有回执行）→ `settle_failure` 仍要把判定
+    结果交回去，而且**不能抛**（抛了就把上游的真实错误顶掉了）。
+    """
+    status = await settle_failure(
+        provider="bailian", run_id="g" * 32, exc=BadRequest("上游说：参数错")
+    )
+    assert status == STATUS_REJECTED, "落库失败也要把判定结果交回去"

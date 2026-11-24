@@ -17,14 +17,19 @@ libtv 不需要这一步（它跑本地执行器，自己处理文件）。
 
 ## 计费纪律：只有第一次提交能花钱
 
-一条 run 的上游任务号落盘在 `records/bailian-submission.json`：
+上游任务号落在**提交台账**（DB，`kit/submission_guard.py`；2026-11-23 从文件回执
+迁过来 —— 工作区被删、换机器也能恢复）：
 
-- 提交前用 `O_EXCL` 抢占（`records/bailian-submit.lock` + 回执文件），
-  抢不到就是「已有提交记录」；
-- 4xx（供应商明确拒绝）记 `rejected`，允许人工继续；
+- 键是**幂等键**（`request.request_id`，= 一条 run）：同一条 run 只有一行台账，
+  提交前先查回执；
+- 4xx（供应商明确拒绝）记 `rejected`，允许重试（下一轮删掉旧行重来）；
 - 超时 / 5xx / 响应畸形记 `submission_unknown`，**一律禁止自动重提**——
-  请求可能已经被受理，重提就是二次计费。恢复流程靠 `_restore_bailian_receipt()`
-  从回执里读回 task_id 继续查询。
+  请求可能已经被受理，重提就是二次计费；
+- 三态判定与框架 runner 用**同一份**实现（`infra/delivery.py::possibly_delivered`），
+  不会出现「台账说可重试、框架说禁止重提」两边打架。
+
+台账行还记着**业务记录 id**（`record_id`）：进程崩在「拿到上游任务号」之后、
+写业务表之前时，恢复器靠它把任务号捡回来续接轮询。
 
 ## 与替换链的耦合（迁进 `drivers/` 时保留，未做抽象）
 
@@ -36,8 +41,7 @@ libtv 不需要这一步（它跑本地执行器，自己处理文件）。
   **它没有对应路由**，是驱动与框架之间的内部协议：框架 `persist_output` 认出它，
   把字节搬进对象存储、再换成对象 key 落库。落盘相对路径与地址格式都住在
   `infra/executor_output.py`，两边共用一份（字面量漂移 = 静默丢件）。
-- 归档租约、回执归档（`bailian-reconfirmed-*.json`）由替换链的 worker 负责，
-  驱动只保证「回执写得下、读得回、不重复提交」。
+- 归档租约由替换链的 worker 负责；驱动只保证「台账写得下、读得回、不重复提交」。
 
 ## 契约
 
@@ -97,11 +101,11 @@ from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.kit.submission_guard import (
-    STATUS_REJECTED,
     STATUS_SUBMITTED,
     STATUS_UNKNOWN,
     decide_before_submit,
     recover_external_id,
+    settle_failure,
     settle_submission,
 )
 from modules.model_driver.spec import DriverMeta
@@ -557,12 +561,22 @@ class BailianProvider:
             raise BadRequest("百炼临时素材已过期，请重新准备素材")
 
         # 校验全部通过，现在才抢占提交权（并发下只能有一个请求进到付费 POST）
-        await decide_before_submit(
+        decision = await decide_before_submit(
             provider="bailian",
             run_id=run_id,
             model=request.model,
-            channel_used="oss",  # 百炼音频走 OSS；图片将来改内联时按实际通道填
+            # 台账的 record_id = **业务记录 id**（恢复器按它反查业务表）。
+            # 百炼的 run_id 本身就是 request.request_id：任务链里等于 VideoTask.id，
+            # 通用入口里等于那条生成记录的 id。
+            record_id=run_id,
+            # 真实选路结果（框架按媒体的接受通道算出来）：有素材走 OSS，纯文本
+            # 生成时为空 —— 不再硬编码 "oss"（那在没有素材时是**假值**）。
+            channel_used=request.channel_used or None,
         )
+        if decision.external_id is not None:
+            # 抢占裁决发现**这一轮已经有人提交过**（窗口：只读恢复之后、抢占之前
+            # 另一个请求提交成功）→ 复用它的任务号，绝不能再发一次付费 POST。
+            return decision.external_id
         try:
             async with self._client() as client:
                 result = await self._json(
@@ -575,17 +589,19 @@ class BailianProvider:
             task_id = result.get("output", {}).get("task_id")
             if not isinstance(task_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", task_id):
                 raise ValueError("missing task id")
-        except BadRequest as exc:
-            await settle_submission(
-                provider="bailian", run_id=run_id, status=STATUS_REJECTED, error=str(exc)
-            )
+        except Exception as exc:
+            # 三态判定用 kit 的**同一份**实现（`infra/delivery.py::possibly_delivered`，
+            # 与框架 runner 一致）：
+            #   「确定没送达」（4xx）→ rejected：**可以安全重试**；
+            #   「可能已受理」（5xx / 超时 / 读响应失败 / 响应畸形）→ submission_unknown：
+            #   **禁止自动重提**，只能人工核对。
+            # 顺带补掉一个洞：以前只结算 BadRequest / UpstreamError / ValueError /
+            # TypeError 四类，其它异常（上游回了意料之外的 JSON 结构等）会把这一轮
+            # 永远卡在 submitting，合法重提也被拒之门外。
+            status = await settle_failure(provider="bailian", run_id=run_id, exc=exc)
+            if status == STATUS_UNKNOWN:
+                raise UpstreamError("百炼提交回执未知，请核对上游；禁止自动重提") from exc
             raise
-        except (UpstreamError, ValueError, TypeError) as exc:
-            # 可能已受理：记 submission_unknown 并禁止自动重提（DB 状态机守着）
-            await settle_submission(
-                provider="bailian", run_id=run_id, status=STATUS_UNKNOWN, error=str(exc)
-            )
-            raise UpstreamError("百炼提交回执未知，请核对上游；禁止自动重提") from exc
         external_id = f"{run_id}:{task_id}"
         await settle_submission(
             provider="bailian",

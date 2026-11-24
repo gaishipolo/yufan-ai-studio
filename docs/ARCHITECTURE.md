@@ -191,7 +191,7 @@
 | `infra/ai/echo.py` | Echo 供应商：本地开发占位，不调用任何外部 API。 |
 | `modules/model_driver/drivers/agnes.py` | Agnes 生图**驱动**（单文件，自动载入）：同步接口，`submit` 直接返回终态快照；支持图生图/多图合成（`reference_urls` → `extra_body.image`）。 |
 | `modules/model_driver/drivers/agnes_video.py` | Agnes 视频**驱动**（单文件，自动载入）：异步任务，`submit` 只拿任务号、`poll` 收进度；支持参考图与参考音频（**内联 data URI**，见 `InlineReferencesCapable`），提示词里的 `{{Mixed N}}` 翻成 `<Picture N>` / `<Audio N>`。 |
-| `modules/model_driver/drivers/bailian.py` | 百炼 Wan3 视频**驱动**（自动载入）：异步任务；参考素材由驱动自己的 `prepare_inputs()` 先直传百炼 OSS 再拼 `oss://` 直链（Wan 只认公网 URL）。付费提交只允许一次、回执落盘（`bailian-submission.json`），拒绝/未知分别收敛。 |
+| `modules/model_driver/drivers/bailian.py` | 百炼 Wan3 视频**驱动**（自动载入）：异步任务；参考素材由驱动自己的 `prepare_inputs()` 先直传百炼 OSS 再拼 `oss://` 直链（Wan 只认公网 URL）。付费提交只允许一次、**回执落 DB 台账**（`kit/submission_guard.py`，含业务记录 id 与真实通道），拒绝/未知按框架同一份三态收敛。 |
 | `infra/ai/router.py` | 模型路由：`model` 字符串 → 具体供应商。 |
 | `modules/model_driver/drivers/libtv.py` | LibTV 视频**驱动**（自动载入）：模型 `libtv-wan3-replacement`，只接收归档工作区引用；提交 / 轮询 / 取消交给 `generation.runner`，通用入口缺 `inputs/request.json` 时它先补跑 `upload`。 |
 | `modules/model_driver/libtv/executor.py` | 执行器监督层：拉子进程跑 `-m modules.model_driver.libtv.process`，把阶段失败翻成可读码（浏览器没连上 / 浏览器没登录 / 遗留锁 / 安全守卫拦截分开报）；按计费模式挑浏览器账号（积分队列走 `LIBTV_CREDITS_BROWSER_URL`、免费队列走账号池），并把账号绑定进 `run.json::browser_url`。 |
@@ -199,7 +199,7 @@
 | `modules/model_driver/libtv/worker.py` | `libtv.download` 后台作业：成片下载是 240 秒量级的非计费工作，不占轮询那一跳的预算。 |
 | `modules/model_driver/libtv/state.py` | 适配器的持久化状态（`run.json` 的 schema）与启动方 ⇄ 监督进程的参数协议版本。 |
 | `modules/model_driver/libtv/runtime/` | Node 桥接层与固定版适配器快照：`vendor/manifest.json` 逐文件 sha256 校验，源仓库 `libtv-canvas 1.2.0`。 |
-| `modules/model_driver/kit/` | 供应商工具箱：**只放逐行验证过等价**的通用件 —— `credentials`（缺密钥的唯一判定口径）、`errors`（HTTP 异常分类的唯一实现）、`settings`（配置前缀工厂 + mtime 指纹缓存，改 `.env` 下次请求即生效）。**不放** HTTP 映射表 / 剥前缀 / 素材分类：A1 假设验证失败，那些差异是业务语义（见设计文档 §1.1 A1）。 |
+| `modules/model_driver/kit/` | 供应商工具箱：**只放逐行验证过等价**的通用件 —— `credentials`（缺密钥的唯一判定口径）、`errors`（HTTP 异常分类的唯一实现）、`settings`（配置前缀工厂 + mtime 指纹缓存，改 `.env` 下次请求即生效）、`submission_guard`（提交台账与三态判定：**抢占裁决 / 恢复 / 结算**的唯一实现，与框架 runner 同一份「可能已受理」判定）。**不放** HTTP 映射表 / 剥前缀 / 素材分类：A1 假设验证失败，那些差异是业务语义（见设计文档 §1.1 A1）。 |
 | `modules/model_driver/registry.py` | 驱动注册表：扫 `drivers/` → 逐文件校验 → 注册进 `ModelRouter`，并收集驱动自报的 `EXTRA_ROUTES` / `EXTRA_JOBS` / `EXTRA_SCHEMAS`（装配失败 = **启动失败**，端点不许凭空消失）。`refresh()` 把**新增**的文件热接上（`POST /api/v1/model-driver/refresh`）：**加文件生效，改已加载的文件不热替换**（`reload` 会丢 in-flight 实例状态），只提醒重启。 |
 | `infra/queue/base.py` | 任务队列抽象。 |
 | `infra/queue/memory.py` | 内存队列：开发 / 单测使用，进程重启即丢。 |

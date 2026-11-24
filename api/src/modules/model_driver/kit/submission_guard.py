@@ -128,15 +128,22 @@ async def claim_receipt(
     run_id: str,
     model: str,
     channel_used: str | None = None,
+    record_id: str | None = None,
 ) -> SubmissionReceipt:
     """抢占提交权。
 
     `(provider, run_id)` 唯一约束保证并发下只有一个请求能插进去；
     冲突时**不吞异常、不复用**，由调用方走 `recover_or_reject()` 判定。
+
+    `record_id` = **业务记录 id**（台账里反查业务表的那一列）：恢复器靠它把
+    「已提交但业务表没记上」的凭证找回来。键（`run_id`）与业务记录 id 是两回事
+    —— 百炼的键是幂等键（= `request.request_id`），轮次键的驱动用
+    `{record_id}#{轮次}`。
     """
     receipt = SubmissionReceipt(
         provider=provider,
         run_id=run_id,
+        record_id=record_id,
         model=model,
         status=STATUS_SUBMITTING,
         channel_used=channel_used,
@@ -236,6 +243,7 @@ async def decide_before_submit(
     run_id: str,
     model: str,
     channel_used: str | None = None,
+    record_id: str | None = None,
     factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> SubmitDecision:
     """提交前的幂等门面：**先恢复，抢不到就查明原因**。
@@ -251,6 +259,8 @@ async def decide_before_submit(
 
     `factory` 只为测试注入（兼容层用它在转发时把调用方的工厂传进来）——
     生产路径一律用默认的全局工厂。
+
+    `record_id` 落进新抢占的那一行（业务记录 id）→ 崩溃恢复器能按它找回凭证。
     """
     factory = factory or get_session_factory()
     async with factory() as session:
@@ -270,6 +280,7 @@ async def decide_before_submit(
             run_id=run_id,
             model=model,
             channel_used=channel_used,
+            record_id=record_id,
         )
         await session.commit()
         return SubmitDecision(claim=claim, external_id=None)
@@ -416,14 +427,14 @@ async def guarded_submit(
     run_id = f"{record_id}{_ATTEMPT_SEPARATOR}{attempt}"
 
     async with factory() as session:
-        receipt = await claim_receipt(
+        await claim_receipt(
             session,
             provider=provider,
             run_id=run_id,
             model=model,
             channel_used=channel_used,
+            record_id=record_id,
         )
-        receipt.record_id = record_id
         await session.commit()
 
     try:
@@ -456,16 +467,34 @@ async def guarded_submit(
     return result
 
 
-async def _settle_failure(
-    factory: async_sessionmaker[AsyncSession],
+async def settle_failure(
     *,
     provider: str,
     run_id: str,
     exc: Exception,
-) -> None:
-    """把失败那一轮记成 `rejected` / `submission_unknown`。
+    factory: async_sessionmaker[AsyncSession] | None = None,
+) -> str:
+    """把失败那一轮记成 `rejected` / `submission_unknown`，返回落下的状态。
 
-    落库失败**不能掩盖原始异常** —— 上游的错误信息比「台账写不进去」重要得多。
+    ## 与 `guarded_submit` 用的是**同一份**判定
+
+    `infra/delivery.py::possibly_delivered`：
+
+    - 「确定没送达」（4xx / 连接都没建起来）→ `rejected`：**可以安全重试**；
+    - 「可能已受理」（5xx / 超时 / 读响应失败 / 响应畸形）→ `submission_unknown`：
+      **禁止自动重提**，只能人工核对。
+
+    ## 给谁用：自己编排提交顺序的驱动
+
+    百炼的本地校验与素材上传必须发生在**抢占之前**（否则上传阶段的一次崩溃会
+    把这一轮永远卡在 `submitting`，合法重提也被拒之门外），抢占之后只剩付费
+    POST —— 所以它不能直接套 `guarded_submit`。但**三态判定必须与它、与框架
+    runner 是同一份**：否则会出现「台账说可重试、框架说禁止重提」两边打架。
+
+    返回值让调用方据此组织**面向用户**的措辞（百炼在「可能已受理」时把异常
+    换成「禁止自动重提」的说明）。
+
+    落库失败**不掩盖原始异常** —— 上游的错误信息比「台账写不进去」重要得多。
     """
     status = STATUS_UNKNOWN if possibly_delivered(exc) else STATUS_REJECTED
     error = f"{type(exc).__name__}: {exc}"
@@ -479,6 +508,18 @@ async def _settle_failure(
         )
     except Exception:
         logger.exception(f"{provider} 提交失败后写入台账失败 run={run_id}")
+    return status
+
+
+async def _settle_failure(
+    factory: async_sessionmaker[AsyncSession],
+    *,
+    provider: str,
+    run_id: str,
+    exc: Exception,
+) -> None:
+    """`guarded_submit` 内部的失败落账（对外版本见 `settle_failure`）。"""
+    await settle_failure(provider=provider, run_id=run_id, exc=exc, factory=factory)
 
 
 async def find_recoverable_external_id(

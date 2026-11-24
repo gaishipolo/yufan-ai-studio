@@ -4,12 +4,14 @@ import shutil
 
 import httpx
 import pytest
+from sqlalchemy import select
 from storage_stub import DirStorage
 
 from core.exceptions import BadRequest, NotFound, UpstreamError
 from db.session import get_session_factory
 from infra.ai.base import Capability, GenerationRequest, GenerationState
 from modules.model_driver.drivers import bailian
+from modules.model_driver.kit.submission_guard import find_recoverable_external_id
 from modules.model_driver.models import SubmissionReceipt
 
 
@@ -181,8 +183,6 @@ async def test_submit_persists_receipt_and_retry_reuses_task(workspace):
     assert await p.submit(req) == "run:task-123"
     assert len(calls) == 1
     # 回执在 DB：工作区删掉也能恢复（2026-11-23 落库）
-    from sqlalchemy import select
-
     async with get_session_factory()() as session:
         result = await session.execute(
             select(SubmissionReceipt).where(
@@ -213,6 +213,136 @@ async def test_ambiguous_submission_never_automatically_resubmits(workspace):
             await p.submit(req)
         assert "secret" not in str(error.value)
     assert len(calls) == 1
+
+
+async def test_submit_records_the_business_record_id_so_recovery_can_find_it(workspace):
+    """台账行必须带**业务记录 id** —— 崩溃恢复器靠它把凭证捡回来。
+
+    百炼的 `run_id` 就是 `request.request_id`（任务链里 = VideoTask.id）。少了
+    这一列，恢复器查不到凭证 → 崩在「拿到上游任务号之后、写业务表之前」时，
+    上游已经在跑的那条视频白丢（§L1.10）。
+    """
+    def handle(request):
+        if "video-synthesis" in request.url.path:
+            return httpx.Response(200, json={"output": {"task_id": "task-123"}})
+        return upload_handler(request)
+
+    req = GenerationRequest(
+        Capability.VIDEO, bailian.MODEL_ID, "", params={"archiveRunId": "run"}, request_id="run"
+    )
+    assert await provider(handle).submit(req) == "run:task-123"
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(SubmissionReceipt).where(SubmissionReceipt.provider == "bailian")
+        )
+        receipt = result.scalar_one()
+    assert receipt.record_id == "run", "台账不带业务记录 id，恢复器就找不到这次提交"
+    # 用恢复器的真实判据验（不只是「行里有 record_id」就完事）
+    assert await find_recoverable_external_id("run") == "run:task-123"
+
+
+@pytest.mark.parametrize("channel_used", ["oss", None])
+async def test_submit_records_the_real_media_channel(workspace, channel_used):
+    """通道落**真实选路结果**，不是硬编码的 `"oss"`。
+
+    硬编码在没有素材时是**假值**（纯文本生成根本没走任何通道）；真实值来自
+    框架按媒体的接受通道算出来的选路结果（`request.channel_used`）。
+    """
+    def handle(request):
+        if "video-synthesis" in request.url.path:
+            return httpx.Response(200, json={"output": {"task_id": "task-123"}})
+        return upload_handler(request)
+
+    req = GenerationRequest(
+        Capability.VIDEO,
+        bailian.MODEL_ID,
+        "",
+        params={"archiveRunId": "run"},
+        request_id="run",
+        channel_used=channel_used,
+    )
+    await provider(handle).submit(req)
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(SubmissionReceipt).where(SubmissionReceipt.provider == "bailian")
+        )
+        receipt = result.scalar_one()
+    assert receipt.channel_used == channel_used
+
+
+async def test_submit_reuses_a_concurrently_submitted_task_without_a_second_paid_post(
+    workspace, monkeypatch
+):
+    """只读恢复与抢占之间可能被别人抢先提交过 → 复用它的任务号，**绝不再发一次付费 POST**。
+
+    这个窗口在百炼里真实存在：只读恢复之后还要做本地校验与素材上传（秒级），
+    这段时间里另一个请求完全可能提交成功。以前驱动把抢占裁决的返回值丢掉了 →
+    抢占时发现「已经提交过」也不管，直接又发一次付费 POST（两份账单）。
+    """
+    calls = []
+
+    def handle(request):
+        if "video-synthesis" in request.url.path:
+            calls.append(request)
+            return httpx.Response(200, json={"output": {"task_id": "task-123"}})
+        return upload_handler(request)
+
+    # 模拟「另一个请求已经提交成功」：台账里已有一行 submitted
+    async with get_session_factory()() as session:
+        session.add(
+            SubmissionReceipt(
+                provider="bailian",
+                run_id="run",
+                record_id="run",
+                model=bailian.MODEL_ID,
+                status="submitted",
+                task_id="task-123",
+                external_id="run:task-123",
+                channel_used="oss",
+            )
+        )
+        await session.commit()
+
+    # 但这一次的只读恢复「看不到」它（两个请求的竞态窗口）
+    async def _blind(*args, **kwargs):
+        return None
+
+    monkeypatch.setattr(bailian, "recover_external_id", _blind)
+
+    req = GenerationRequest(
+        Capability.VIDEO, bailian.MODEL_ID, "", params={"archiveRunId": "run"}, request_id="run"
+    )
+    assert await provider(handle).submit(req) == "run:task-123"
+    assert len(calls) == 0, "已经有人提交过了，绝不能再发一次付费 POST"
+
+
+async def test_unexpected_upstream_shape_is_settled_as_unknown(workspace):
+    """上游回了意料之外的结构 → 记 `submission_unknown`，不是卡在 `submitting`。
+
+    以前只结算 BadRequest / UpstreamError / ValueError / TypeError 四类；别的
+    异常（这里 `output` 是个数组）会让这一轮永远卡在 `submitting` → 合法重提
+    也被「禁止自动重提」挡在门外，人只能进数据库手工收拾。
+    """
+    def handle(request):
+        if "video-synthesis" in request.url.path:
+            return httpx.Response(200, json={"output": []})
+        return upload_handler(request)
+
+    req = GenerationRequest(
+        Capability.VIDEO, bailian.MODEL_ID, "", params={"archiveRunId": "run"}, request_id="run"
+    )
+    with pytest.raises(UpstreamError, match="禁止自动重提"):
+        await provider(handle).submit(req)
+
+    async with get_session_factory()() as session:
+        result = await session.execute(
+            select(SubmissionReceipt).where(SubmissionReceipt.provider == "bailian")
+        )
+        receipt = result.scalar_one()
+    assert receipt.status == "submission_unknown", "异常也必须结算，不能把这一轮卡死"
+    assert receipt.record_id == "run"
 
 
 async def test_poll_downloads_before_reporting_success(workspace):
