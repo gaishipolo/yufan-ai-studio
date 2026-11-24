@@ -540,6 +540,59 @@ def test_retry_restarts_the_wall_clock_budget(client: TestClient, api: str) -> N
     assert timed_out is False, "重试后仍是「已超时」，第一跳轮询就会再判一次失败"
 
 
+def test_retry_abandons_the_ledger_receipt(client: TestClient, api: str, monkeypatch) -> None:
+    """人工重提必须通知台账作废旧凭证，否则百炼会把上一轮任务号捡回来。
+
+    业务表清 `external_id` 是必要不充分：台账键就是任务 id，不清台账的话
+    下一跳 submit 的只读恢复会返回旧号，用户点了重提却一次新 POST 都没发。
+    """
+    import asyncio
+
+    import modules.task.service as task_service
+    from db.session import get_session_factory
+    from modules.task.models import VideoTask
+
+    seen: list[str] = []
+
+    async def fake_abandon(record_id: str) -> int:
+        seen.append(record_id)
+        return 1
+
+    monkeypatch.setattr(task_service, "abandon_submission", fake_abandon)
+
+    async def make() -> str:
+        async with get_session_factory()() as session:
+            task = VideoTask(
+                title="待重提",
+                prompt="雨夜霓虹",
+                status="failed",
+                model="Seedance 2.5",
+                model_id="seedance-2.5",
+                author_id="u_001",
+                author_name="老大",
+            )
+            session.add(task)
+            await session.commit()
+            return task.id
+
+    task_id = asyncio.run(make())
+    resp = client.post(f"{api}/tasks/{task_id}/retry")
+    assert resp.status_code == 200, resp.text
+    assert seen == [task_id], "台账没有被通知作废 —— 百炼重提会拿回旧任务号"
+
+    # 自己造的行自己清（feed 用例按「一页取全」断言，共享库里多一条就可能越界）
+    async def cleanup() -> None:
+        from sqlalchemy import delete
+
+        from modules.task.models import VideoTask
+
+        async with get_session_factory()() as session:
+            await session.execute(delete(VideoTask).where(VideoTask.id == task_id))
+            await session.commit()
+
+    asyncio.run(cleanup())
+
+
 def test_retry_with_supplier_task_id_requires_confirmation(client: TestClient, api: str) -> None:
     """带任务号的失败默认不许重试：那是「可能已经扣过费」的唯一凭证。
 

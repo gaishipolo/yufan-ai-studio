@@ -554,6 +554,34 @@ def test_share_request_checks_the_expected_version(
     assert ok.status_code == 201, ok.text
 
 
+def test_approval_version_check_uses_the_locked_read() -> None:
+    """审批的乐观锁校验与写入必须落在**同一次带锁读取**上。
+
+    原实现校验用普通读、落地用抢占后的带锁读，两次之间别人推进的版本会被
+    整段跳过 —— 审批人按界面上的版本点了通过，实际作用在更新的资产上。
+    """
+    import ast
+    from pathlib import Path
+
+    path = (
+        Path(__file__).resolve().parents[1]
+        / "src/modules/library/sharing.py"
+    )
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    decide = next(
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.AsyncFunctionDef) and node.name == "decide"
+    )
+    loads = {
+        node.func.attr
+        for node in ast.walk(decide)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    }
+    assert "load_asset_for_update" in loads
+    assert "load_asset" not in loads, "校验与写入用了两次读取，版本推进会被漏掉"
+
+
 def test_share_to_team_is_visible_to_everyone(client: TestClient, api: str) -> None:
     admin = admin_headers(client)
     owner, owner_h = make_user(client, admin, SHARE_PERMISSIONS)

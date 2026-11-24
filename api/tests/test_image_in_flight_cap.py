@@ -213,6 +213,47 @@ def test_默认上限是开着的() -> None:
     assert default <= 20, f"默认上限 {default} 大得没有约束力"
 
 
+def test_重试也受在途上限约束(client: TestClient, monkeypatch: Any) -> None:
+    """retry 同样是「往队列里加一条」：不能绕开在途闸门。
+
+    以前只有 `generate()` 检查，失败记录点重试会直接复位成 queued —— 用户
+    攒了 N 条在途，再反复把失败的那几条点成 queued，照样挤满共享上游队列。
+    """
+    headers = _login(client, "admin", "admin@12345")
+    owner = _owner_id(client, headers)
+
+    _cap(monkeypatch, 0)
+    baseline = _in_flight(owner)
+    failed_id = _create_job(owner, status="failed")
+    # 先把唯一一个名额占满（重试前的这条 failed 不占名额）
+    occupying = _create_job(owner)
+
+    _cap(monkeypatch, baseline + 1)
+    assert _in_flight(owner) >= baseline + 1
+    response = client.post(f"{API}/images/{failed_id}/retry", headers=headers)
+    assert response.status_code == 429, response.text
+    assert "上限" in response.json()["message"]
+
+    # 被拒后现场不能改：仍是 failed，旧凭证没被清
+    _set_status(occupying, "completed")
+
+    async def check() -> None:
+        from sqlalchemy import delete
+
+        async with get_session_factory()() as session:
+            row = await session.get(ImageJob, failed_id)
+            assert row is not None
+            assert row.status == "failed"
+            # 这条用例自己造的行自己清：任务中心的 feed 是全库共享的，
+            # 多留两条就会把「一页取全」的用例顶过 100 条上限。
+            await session.execute(
+                delete(ImageJob).where(ImageJob.id.in_([failed_id, occupying]))
+            )
+            await session.commit()
+
+    asyncio.run(check())
+
+
 def test_闸门接在提交路径上() -> None:
     """`generate()` 里必须调用在途检查——删掉它没有任何症状。
 

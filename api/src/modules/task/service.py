@@ -24,6 +24,7 @@ from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
 from core.ports.library_lookup import LibraryAssetKind
+from core.ports.submission_ledger import abandon_submission
 from core.reference_limits import check_side_lengths
 from core.response import PageParams
 from generation.runner import get_runner
@@ -597,6 +598,12 @@ class TaskService:
         task.started_at = datetime.now(tz=UTC)
         task.updated_at = datetime.now(tz=UTC)
         await self.session.commit()
+
+        # 业务表清了号还不够：百炼的台账键就是任务 id，上一轮的 submitted 行
+        # 还在的话，下一跳 submit 的只读恢复会把它捡回来 —— 用户点了重提，
+        # 一次新的付费 POST 都不发，拿回的还是上一轮那条失败任务。
+        # 放在 commit 之后：作废是独立事务，失败也不能回滚业务记录的复位。
+        await abandon_submission(task.id)
 
         await audit(
             "task.retry",

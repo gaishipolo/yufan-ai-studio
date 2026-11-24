@@ -446,12 +446,35 @@ class LibTVProvider:
                 external_id=external_id, state=GenerationState.RUNNING, queued=True
             )
         item = items[0]
+        # 上游状态：0=排队 / 1=生成中 / 2=成功 / 3=失败 / 4=超时（见
+        # `libtv/account.py::QueueItem` 与 account.py 的 _is_terminal_hint）。
+        # 漏判 4 的后果是超时任务永远停在 RUNNING，靠框架墙钟兜底 —— 用户
+        # 看到「生成中」直到几分钟后突然失败，且没有上游超时的原因。
+        if item.status == 4:
+            return GenerationProgress(
+                external_id=external_id,
+                state=GenerationState.FAILED,
+                error=item.failed_reason or "上游去字幕超时，请核对后重试",
+                retryable=False,
+            )
         if item.status == 2:
+            # 成功态却没有产物地址：不能标完成。框架会拿 output_url 去入库，
+            # 空地址要么静默产出空任务、要么报「产物无效」；留在 RUNNING
+            # 让下一跳再问（上游偶尔要先生成地址），最终由墙钟预算兜底。
+            if not item.result_url:
+                logger.warning(
+                    "去字幕上游报成功但缺少产物地址，继续轮询 task=%s", task_id
+                )
+                return GenerationProgress(
+                    external_id=external_id,
+                    state=GenerationState.RUNNING,
+                    progress=99,
+                )
             return GenerationProgress(
                 external_id=external_id,
                 state=GenerationState.SUCCEEDED,
                 progress=100,
-                output_url=item.result_url or None,
+                output_url=item.result_url,
                 persist_required=True,
             )
         if item.status == 3:

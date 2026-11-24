@@ -24,6 +24,7 @@ from db.session import get_session_factory
 from generation.runner import get_runner
 from infra import get_model_router
 from infra.ai.base import Capability
+from modules.model_driver.kit.submission_guard import abandon_receipt
 from modules.model_driver.models import (
     KIND_MODEL_DRIVER,
     STATUS_CANCELLED,
@@ -240,6 +241,10 @@ class ModelGenerationFacade:
             job.finished_at = None
             ticket = self._ticket(job)
             await session.commit()
+
+        # 业务表清号必须同步作废台账：按记录 id 取凭证的驱动（百炼）否则会把
+        # 上一轮任务号当成本轮结果返回，重提变成「什么也没发生」。
+        await abandon_receipt(task_id)
 
         await audit(
             "model_driver.retry",

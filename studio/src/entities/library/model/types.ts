@@ -184,13 +184,19 @@ export const VISIBILITY_LABEL: Record<string, string> = {
  * 刻意**不**把 `visibility=group` 算进来：小组共享只对组内成员可读，而组外
  * 的人恰恰是复用模板的大多数 —— 它不满足「全员可读」。
  *
+ * `state=active` 是前置条件：草稿和回收站里的素材任何可见性都不算数
+ * （后端 `can_read` 会直接拒掉 trash）。少了这一条，作者把团队可见素材丢进
+ * 回收站后，发布闸照样放行，别人复用时才在服务端被拒。
+ *
  * 用在哪：模板的**固定槽位**钉的那条素材要随模板公开给别人用，作者自己的
  * 私有素材钉进去，别人复用时是拿他的身份再判一次可见性的，必然读不到。
  */
 export function isPubliclyReadable(asset: {
   purpose?: string;
   visibility?: string;
+  state?: string;
 }): boolean {
+  if (asset.state !== undefined && asset.state !== 'active') return false;
   return asset.purpose === 'case' || asset.visibility === 'team';
 }
 

@@ -35,6 +35,17 @@ describe('LibraryBulkBar · 入口收敛', () => {
     renderBar({ view: 'personal' });
     expect(screen.getByRole('button', { name: '移入回收站' })).toBeInTheDocument();
   });
+
+  it('没有 library:update 时回收站「批量恢复」禁用：后端会拒，点了不该没反应', () => {
+    const { onAction } = renderBar({ view: 'trash', canUpdate: false });
+    expect(screen.getByRole('button', { name: '批量恢复' })).toBeDisabled();
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it('有写权限时恢复照旧可用', () => {
+    renderBar({ view: 'trash', canUpdate: true });
+    expect(screen.getByRole('button', { name: '批量恢复' })).toBeEnabled();
+  });
 });
 
 describe('LibraryBulkBar · 清空后不留上一批的标签', () => {

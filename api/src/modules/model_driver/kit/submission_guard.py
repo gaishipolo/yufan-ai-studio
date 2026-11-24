@@ -80,6 +80,7 @@ submit 返回值再落）—— 后者把「上游已受理、进程在写库前
 from __future__ import annotations
 
 import re
+import uuid
 from collections.abc import Awaitable, Callable
 from typing import TypeVar
 
@@ -102,8 +103,13 @@ STATUS_SUBMITTING = "submitting"
 STATUS_SUBMITTED = "submitted"
 STATUS_REJECTED = "rejected"
 STATUS_UNKNOWN = "submission_unknown"
+#: 人工重提时上一轮的凭证被显式作废。**不是失败**，是「这一轮不算数了」：
+#: 恢复器不能拿它回填，抢占时也不能把它当成「已提交」复用。旧行列保留可查。
+STATUS_SUPERSEDED = "superseded"
 
-TERMINAL_STATUSES = frozenset({STATUS_SUBMITTED, STATUS_REJECTED, STATUS_UNKNOWN})
+TERMINAL_STATUSES = frozenset(
+    {STATUS_SUBMITTED, STATUS_REJECTED, STATUS_UNKNOWN, STATUS_SUPERSEDED}
+)
 
 
 class ReceiptConflict(UpstreamError):
@@ -185,7 +191,9 @@ async def recover_or_reject(
             # 状态说 submitted 却没有 id —— 数据损坏，不能当新任务提交
             raise ReceiptConflict(f"{provider} 回执损坏：已提交但没有任务号")
         return receipt.external_id
-    if receipt.status == STATUS_REJECTED:
+    if receipt.status in (STATUS_REJECTED, STATUS_SUPERSEDED):
+        # superseded = 人工明确作废了上一轮。此时**必须**返回 None 让新的一轮
+        # 真的发出 POST —— 返回旧任务号正是「点了重提却什么也没发生」的根因。
         return None
     # submitting / submission_unknown / 任何未知状态：一律禁止自动重提
     raise ReceiptConflict(f"{provider} 提交回执状态为 {receipt.status}，禁止自动重提")
@@ -275,8 +283,12 @@ async def decide_before_submit(
 
     与原来的文件回执语义逐字对齐：
     - 已有 `submitted` → 返回 external_id（驱动直接复用，不调上游）
-    - 已有 `rejected`  → 返回 None + claim=None，删掉旧回执后允许重提
+    - 已有 `rejected` / `superseded` → 删掉旧回执后抢占新一轮
     - 已有 `submitting` / `submission_unknown` → 抛 ReceiptConflict 禁止自动重提
+
+    `superseded` 是人工重提时显式作废的上一轮（`abandon_receipt`）。正常路径下
+    它的键已经被挪走，这里不会再撞见；仍保留这一分支是为了兜住「作废与抢占
+    竞态」—— 不能因为一行历史记录把用户刚确认的重提卡死。
     - 无回执 → 抢占并返回 claim
 
     自己开独立 session：驱动拿不到 runner 的 session，且这个决策必须与
@@ -294,9 +306,9 @@ async def decide_before_submit(
         )
         if existing is not None:
             return SubmitDecision(claim=None, external_id=existing)
-        # rejected 状态：删掉旧回执，让下面的抢占开始新一轮
+        # rejected / superseded：删掉旧回执，让下面的抢占开始新一轮
         old = await get_receipt(session, provider=provider, run_id=run_id)
-        if old is not None and old.status == STATUS_REJECTED:
+        if old is not None and old.status in (STATUS_REJECTED, STATUS_SUPERSEDED):
             await session.delete(old)
             await session.flush()
         claim = await claim_receipt(
@@ -601,3 +613,48 @@ async def find_recoverable_external_id(
     if not receipt.task_id or not receipt.external_id:
         return None
     return receipt.external_id
+
+
+async def abandon_receipt(
+    record_id: str,
+    factory: async_sessionmaker[AsyncSession] | None = None,
+) -> int:
+    """人工重提：把这条业务记录的既有凭证整批作废，返回作废行数。
+
+    ## 为什么必须显式作废
+
+    百炼的台账键就是业务记录 id（`run_id = request.request_id`）。人工重提清掉
+    业务表的 `external_id`，但台账里上一轮的 `submitted` 行原封不动 —— 下一次
+    `submit` 的只读恢复（`recover_external_id`）就会把**上一轮的任务号**捡回来，
+    一次新的付费 POST 都不发。用户看到的现象是「点了重新生成，返回的还是上一条
+    失败任务」。其余驱动用 `{record_id}#{轮次}` 键天然不受影响，只有百炼撞这个坑。
+
+    ## 为什么状态改成 `superseded` 而不是删除
+
+    账单对不上时要能查到上一轮的任务号。旧行留着，但：
+
+    - `recover_or_reject` 对它返回 `None`（可开新一轮，不是可复用的凭证）；
+    - `find_recoverable_external_id` 只认最后一轮且必须 `submitted`，它已不是；
+    - `run_id` 换成带短随机后缀的历史键，让原键能被新一轮 `claim_receipt` 抢占
+      （唯一约束在 `(provider, run_id)` 上）。
+
+    `run_id` 列是 `String(64)`，截断到 48 字再补后缀，避免长 id 被数据库截断。
+    """
+    if not record_id.strip():
+        return 0
+    factory = factory or get_session_factory()
+    async with factory() as session:
+        result = await session.execute(
+            select(SubmissionReceipt).where(
+                SubmissionReceipt.record_id == record_id,
+                SubmissionReceipt.status != STATUS_SUPERSEDED,
+            )
+        )
+        rows = result.scalars().all()
+        for receipt in rows:
+            receipt.run_id = f"{receipt.run_id[:48]}#x{uuid.uuid4().hex[:8]}"
+            receipt.status = STATUS_SUPERSEDED
+            receipt.settled_at = utcnow()
+        if rows:
+            await session.commit()
+        return len(rows)

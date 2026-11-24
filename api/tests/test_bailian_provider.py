@@ -12,7 +12,10 @@ from db.session import get_session_factory
 from infra.ai.base import Capability, GenerationRequest, GenerationState
 from infra.storage.base import StorageError
 from modules.model_driver.drivers import bailian
-from modules.model_driver.kit.submission_guard import find_recoverable_external_id
+from modules.model_driver.kit.submission_guard import (
+    abandon_receipt,
+    find_recoverable_external_id,
+)
 from modules.model_driver.models import SubmissionReceipt
 
 
@@ -194,6 +197,51 @@ async def test_submit_persists_receipt_and_retry_reuses_task(workspace):
         receipt = result.scalar_one()
     assert receipt.task_id == "task-123"
     assert receipt.status == "submitted"
+
+
+async def test_manual_retry_sends_a_second_paid_post(workspace):
+    """人工重提必须真的再发一次 POST，不能把上一轮任务号当成本轮结果。
+
+    百炼的台账键 = 业务记录 id。人工重提只清了业务表的 `external_id`，
+    台账里上一轮的 `submitted` 行还在时，`recover_external_id` 会把旧任务号
+    捡回来 —— 用户点了「重新生成」，一次新请求都没发，拿回的还是那条失败的任务。
+    业务层重提时调用 `abandon_receipt` 作废旧轮，这里验证驱动侧的结果。
+    """
+    calls = []
+
+    def handle(request):
+        if "video-synthesis" in request.url.path:
+            calls.append(request)
+            return httpx.Response(
+                200, json={"output": {"task_id": f"task-{len(calls)}"}}
+            )
+        return upload_handler(request)
+
+    p = provider(handle)
+    req = GenerationRequest(
+        Capability.VIDEO, bailian.MODEL_ID, "", params={"archiveRunId": "run"}, request_id="run"
+    )
+    assert await p.submit(req) == "run:task-1"
+    assert len(calls) == 1
+
+    # 模拟业务层 retry_task 调的那一句（独立事务，见 task/service.py）
+    assert await abandon_receipt("run") == 1
+
+    assert await p.submit(req) == "run:task-2"
+    assert len(calls) == 2, "人工重提必须发出第二次付费 POST"
+    assert await find_recoverable_external_id("run") == "run:task-2"
+
+    # 旧行留作账单历史：改了状态、挪了键，但任务号还在
+    async with get_session_factory()() as session:
+        rows = (
+            await session.execute(
+                select(SubmissionReceipt).where(SubmissionReceipt.record_id == "run")
+            )
+        ).scalars().all()
+    assert len(rows) == 2
+    assert {r.status for r in rows} == {"submitted", "superseded"}
+    old = next(r for r in rows if r.status == "superseded")
+    assert old.external_id == "run:task-1"
 
 
 async def test_ambiguous_submission_never_automatically_resubmits(workspace):

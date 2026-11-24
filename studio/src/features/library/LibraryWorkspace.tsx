@@ -751,6 +751,7 @@ export function LibraryWorkspace() {
           count={selected.size}
           tags={tags.data ?? []}
           canShare={canShare}
+          canUpdate={canUpdate}
           busy={bulk.isPending || createDownload.isPending}
           onClear={() => setSelected(new Set())}
           onAction={runBulk}

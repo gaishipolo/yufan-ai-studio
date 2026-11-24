@@ -23,6 +23,11 @@ export interface PickedAsset {
    * 钉进固定槽位（见 `isPubliclyReadable`）。
    */
   visibility?: string;
+  /**
+   * 生命周期状态。固定槽位的发布闸要据此排除回收站 / 草稿素材
+   * （见 `isPubliclyReadable`），只传 purpose / visibility 会漏判。
+   */
+  state?: string;
 }
 
 /** 选择器支持的素材类型。 */
@@ -231,6 +236,7 @@ export function AssetPicker({
                     coverUrl: item.coverUrl ?? undefined,
                     purpose: item.purpose,
                     visibility: item.visibility,
+                    state: item.state,
                   })}
                   className={cn(
                     'group relative flex flex-col gap-1 rounded-xl border p-1.5 text-left transition-colors',

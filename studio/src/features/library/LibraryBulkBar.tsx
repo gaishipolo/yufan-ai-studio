@@ -23,6 +23,9 @@ export interface LibraryBulkBarProps {
   tags: LibraryTagStatOut[];
   /** 没有 `library:share` 就不摆这个按钮：与卡片上的单条共享同一口径 */
   canShare?: boolean;
+  /** 恢复 / 删除 / 打标签都是写操作：没有 `library:update` 时按钮要禁用，
+   *  否则后端 403，用户只看到「点了没反应」。 */
+  canUpdate?: boolean;
   busy?: boolean;
   onClear: () => void;
   onAction: (kind: BulkKind, payload?: { tagIds?: string[] }) => void;
@@ -41,6 +44,7 @@ export function LibraryBulkBar({
   count,
   tags,
   canShare = true,
+  canUpdate = true,
   busy,
   onClear,
   onAction,
@@ -92,7 +96,7 @@ export function LibraryBulkBar({
               size="sm"
               variant="secondary"
               icon={<RotateCcw size={12} />}
-              disabled={busy}
+              disabled={busy || !canUpdate}
               onClick={() => onAction('restore')}
             >
               批量恢复

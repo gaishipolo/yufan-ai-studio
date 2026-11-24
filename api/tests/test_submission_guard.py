@@ -24,9 +24,12 @@ from modules.model_driver import models as driver_models  # noqa: F401 — 注�
 from modules.model_driver.kit.submission_guard import (
     STATUS_REJECTED,
     STATUS_SUBMITTED,
+    STATUS_SUPERSEDED,
     STATUS_UNKNOWN,
     ReceiptConflict,
+    abandon_receipt,
     decide_before_submit,
+    find_recoverable_external_id,
     get_receipt,
     guarded_submit,
     recover_external_id,
@@ -64,6 +67,70 @@ def test_status_values_are_stable() -> None:
     assert STATUS_SUBMITTED == "submitted"
     assert STATUS_REJECTED == "rejected"
     assert STATUS_UNKNOWN == "submission_unknown"
+    assert STATUS_SUPERSEDED == "superseded"
+
+
+async def test_abandon_receipt_frees_the_key_and_keeps_history(
+    session: AsyncSession,
+) -> None:
+    """人工重发作废上一轮：同键可重新抢占，旧任务号仍在历史里可查。"""
+    async with guard_mod.get_session_factory()() as db:
+        await guard_mod.claim_receipt(
+            db, provider="bailian", run_id=RUN_ID, model=MODEL, record_id=RUN_ID
+        )
+        await settle_submission(
+            provider="bailian",
+            run_id=RUN_ID,
+            status=STATUS_SUBMITTED,
+            task_id="upstream-1",
+            external_id=f"{RUN_ID}:upstream-1",
+        )
+    assert await find_recoverable_external_id(RUN_ID) == f"{RUN_ID}:upstream-1"
+    assert await abandon_receipt(RUN_ID) == 1
+
+    # 恢复器不再认旧凭证；同键可以重新抢占（唯一约束没被历史行占住）
+    assert await find_recoverable_external_id(RUN_ID) is None
+    assert await recover_external_id(
+        provider="bailian", run_id=RUN_ID, model=MODEL
+    ) is None
+    decision = await decide_before_submit(
+        provider="bailian", run_id=RUN_ID, model=MODEL, record_id=RUN_ID
+    )
+    assert decision.claim is not None
+    assert decision.external_id is None
+
+    rows = (await session.execute(select(SubmissionReceipt))).scalars().all()
+    assert len(rows) == 2
+    old = next(r for r in rows if r.status == STATUS_SUPERSEDED)
+    assert old.external_id == f"{RUN_ID}:upstream-1"
+    assert old.run_id != RUN_ID
+
+
+async def test_abandon_is_idempotent_and_also_clears_unknown(
+    session: AsyncSession,
+) -> None:
+    """重复作废只作废旧轮；`submission_unknown` 也只能由**人工重提**解锁。
+
+    自动重提仍然被原状态挡住（见 `test_unknown_state_forbids_auto_retry`）；
+    这里的 abandon 就是那个显式的人工动作 —— 用户点「重试」即表示已核对上游，
+    愿意再付一次。所以 unknown 行也必须能被作废，否则重提会卡在 ReceiptConflict。
+    """
+    async with guard_mod.get_session_factory()() as db:
+        await guard_mod.claim_receipt(
+            db, provider="bailian", run_id=RUN_ID, model=MODEL, record_id=RUN_ID
+        )
+        await settle_submission(
+            provider="bailian", run_id=RUN_ID, status=STATUS_UNKNOWN, error="boom"
+        )
+    with pytest.raises(ReceiptConflict, match="禁止自动重提"):
+        await recover_external_id(provider="bailian", run_id=RUN_ID, model=MODEL)
+
+    assert await abandon_receipt(RUN_ID) == 1
+    assert await abandon_receipt(RUN_ID) == 0
+    decision = await decide_before_submit(
+        provider="bailian", run_id=RUN_ID, model=MODEL, record_id=RUN_ID
+    )
+    assert decision.claim is not None
 
 
 async def test_claim_then_settle_is_idempotent(session: AsyncSession) -> None:

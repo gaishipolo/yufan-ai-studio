@@ -396,6 +396,11 @@ async def get_case(
     作者自己看得到。越权回 404 而不是 403。
     """
     row = await _load(session, case_id)
+    # 软删案例只在作者的回收站里可见（与 `list_cases(scope="trash")` 同口径）。
+    # 只判 status 会漏：软删不改 status，已发布案例删掉后任何人按 id 仍能读到，
+    # 列表里消失了、详情却还通 —— 回收站对别人不是「隐藏入口」而是「没这个案例」。
+    if row.deleted_at is not None and row.owner_id != actor.id:
+        raise NotFound(f"案例不存在：{case_id}")
     if row.status != "published" and row.owner_id != actor.id:
         raise NotFound(f"案例不存在：{case_id}")
     return await _out_of(session, actor, row)

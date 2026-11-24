@@ -256,8 +256,17 @@ class ShareService:
         if not await self._can_decide(row, actor):
             raise Forbidden("没有审批该申请的权限")
 
-        asset = await access.load_asset(self.session, row.asset_id)
+        # 批准路径用**同一把带锁的读取**贯穿校验与写入：原先先普通读一次做
+        # 乐观锁校验、抢占之后再带锁读一次写状态，两次之间别人推进的
+        # `state_version` 会被整段跳过 —— 用户看到的版本比实际生效的旧了一版。
+        # 驳回不需要改资产，不抢这把锁（也不该被别人的写入卡住）。
+        asset = (
+            await access.load_asset_for_update(self.session, row.asset_id)
+            if approve
+            else None
+        )
         if approve:
+            assert asset is not None
             # 申请单是**快照**：申请时成立，不代表审批时还成立。这里按申请的目标
             # 重跑一次目标有效性校验，不通过就 409 让审批人重新看一眼。
             #
@@ -317,10 +326,10 @@ class ShareService:
         action = ShareAction(row.action)
         target = ShareTarget(row.target)
         if approve:
-            # 锁住资产行：批准要写组行 + 写 visibility，两步之间不能被另一个
+            assert asset is not None
+            # 资产行在上面已经锁住：写组行 + 写 visibility 两步之间不会被另一个
             # 审批插进来（否则会留下「visibility=group 但组行已空」的资产，
             # 既删不掉也撤销不了）。详见 `access.load_asset_for_update`。
-            asset = await access.load_asset_for_update(self.session, row.asset_id)
             if action is ShareAction.SHARE:
                 await self._apply_share(asset, target, row.group_id)
             else:
@@ -333,7 +342,7 @@ class ShareService:
             target_type="library_share_request",
             target_id=request_id,
             detail={
-                "assetId": asset.id,
+                "assetId": row.asset_id,
                 "action": action.value,
                 "target": target.value,
                 "groupId": row.group_id,

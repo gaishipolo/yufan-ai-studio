@@ -27,6 +27,7 @@ from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs, inject_text_refs
 from core.logging import get_logger
 from core.param_schema import resolve_params
+from core.ports.submission_ledger import abandon_submission
 from core.response import Page, PageParams
 from db.repository import BaseRepository
 from generation.runner import get_runner
@@ -352,6 +353,11 @@ class ImageService:
         if job.status != STATUS_FAILED:
             raise InvalidState("仅失败的生图任务可以重试")
 
+        # 重试也是「往队列里加一条」：与 generate 同一道在途上限。
+        # 放在状态/权限之后、改现场之前：被拒时不该先清掉 external_id，
+        # 让明确的错误（无权 / 不是失败任务）先赢。
+        await self._assert_in_flight_room(actor)
+
         previous_external_id = job.external_id
         if previous_external_id and not confirm_charged:
             raise InvalidState(
@@ -385,6 +391,10 @@ class ImageService:
         job.started_at = datetime.now(tz=UTC)
         job.finished_at = None
         await self.session.commit()
+
+        # 与视频链同一口径：业务表清号后必须让台账也忘掉上一轮，
+        # 否则按记录 id 取凭证的驱动会把旧任务号当成本轮提交结果返回。
+        await abandon_submission(job_id)
 
         await audit.record(
             "image.retry",

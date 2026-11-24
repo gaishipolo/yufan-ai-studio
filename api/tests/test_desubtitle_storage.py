@@ -82,6 +82,50 @@ async def test_http_source_uses_direct_path(monkeypatch):
     assert submit.await_args.kwargs["source"] == source
 
 
+@pytest.mark.parametrize(
+    "status,result_url,expected_state,expected_error",
+    [
+        (2, "https://cdn.example.com/out.mp4", "succeeded", None),
+        # 成功却没产物地址：不能报 succeeded（框架会拿空地址去入库）
+        (2, "", "running", None),
+        (3, "", "failed", "上游去字幕失败"),
+        # 超时是终态：以前漏判，任务会一直停在「生成中」直到墙钟兜底
+        (4, "", "failed", "上游去字幕超时"),
+    ],
+)
+async def test_desubtitle_poll_maps_terminal_statuses(
+    monkeypatch, status, result_url, expected_state, expected_error
+):
+    from modules.model_driver.libtv.account import QueueItem
+
+    item = QueueItem(
+        task_id="upstream-id",
+        status=status,
+        percent=100 if status == 2 else 50,
+        queue_reason="",
+        queue_position=0,
+        queue_total=0,
+        queue_limit=0,
+        power=0,
+        benefit_tag="",
+        result_url=result_url,
+    )
+    monkeypatch.setattr(
+        libtv.libtv_account, "progress", AsyncMock(return_value=[item])
+    )
+
+    progress = await libtv.LibTVProvider().poll("desub|http://127.0.0.1:9412|upstream-id")
+
+    assert progress.state.value == expected_state
+    if expected_error:
+        assert expected_error in progress.error
+    if expected_state == "succeeded":
+        assert progress.output_url == result_url
+        assert progress.persist_required is True
+    if expected_state == "running":
+        assert progress.output_url is None
+
+
 @pytest.mark.parametrize("same_bytes", [False, True])
 async def test_replacement_keeps_asset_id_and_one_library_row(same_bytes):
     owner, source_key = uuid4().hex, uuid4().hex

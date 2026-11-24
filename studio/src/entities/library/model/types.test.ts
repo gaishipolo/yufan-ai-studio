@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   VIEWS,
   deleteOffer,
+  isPubliclyReadable,
   isTrashExpired,
   parseView,
   trashDaysLeft,
@@ -20,6 +21,22 @@ function asset(overrides: Partial<{ ownerId: string; visibility: string; state: 
     ...overrides,
   } as { ownerId: string; visibility: 'personal' | 'group' | 'team'; state: 'draft' | 'active' | 'trash' };
 }
+
+describe('模板发布闸的全员可读判据', () => {
+  it('state 必须是 active：回收站/草稿里再公开也不算数', () => {
+    expect(isPubliclyReadable({ purpose: 'case', visibility: 'team', state: 'active' })).toBe(true);
+    expect(isPubliclyReadable({ purpose: 'case', visibility: 'team', state: 'trash' })).toBe(false);
+    expect(isPubliclyReadable({ purpose: 'case', visibility: 'team', state: 'draft' })).toBe(false);
+    expect(isPubliclyReadable({ purpose: '', visibility: 'team', state: 'trash' })).toBe(false);
+  });
+
+  it('active 时保持原有可见性语义', () => {
+    expect(isPubliclyReadable({ purpose: '', visibility: 'team', state: 'active' })).toBe(true);
+    expect(isPubliclyReadable({ purpose: 'case', visibility: 'personal', state: 'active' })).toBe(true);
+    expect(isPubliclyReadable({ purpose: '', visibility: 'group', state: 'active' })).toBe(false);
+    expect(isPubliclyReadable({ purpose: '', visibility: 'personal', state: 'active' })).toBe(false);
+  });
+});
 
 describe('视图与查询参数的映射', () => {
   it('入口顺序：总览在前，草稿箱与回收站挪到末尾', () => {

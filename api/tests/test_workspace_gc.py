@@ -27,6 +27,14 @@ OLD = time.time() - 60 * 24 * 3600
 RECENT = time.time() - 3600
 
 
+@pytest.fixture(autouse=True)
+def _isolated_runs_root(tmp_path, monkeypatch):
+    """账号级锁目录指向每测试的 tmp_path，避免真实工作区的锁影响断言。"""
+    from modules.model_driver import maintenance as mod
+
+    monkeypatch.setattr(mod, "runs_root", lambda: tmp_path)
+
+
 @pytest.fixture
 async def clean_receipts():
     """回执在全局测试库里，不像文件那样随 tmp_path 隔离 —— 每条测试前后清表。"""
@@ -64,10 +72,24 @@ async def _add_receipt(run_id: str, *, provider: str = "bailian") -> None:
         await session.commit()
 
 
-def _lock(folder) -> None:
-    locks = folder.parent / ".locks"
-    locks.mkdir(parents=True, exist_ok=True)
-    (locks / f"{folder.name}.lock").write_text("", encoding="utf-8")
+def _lock(folder, *, level="worker") -> None:
+    """按**真实**锁位置造锁。
+
+    以前这里在日期分片目录的 `.locks/<folder-name>.lock` 造锁 —— 那不是执行器
+    会用的路径，测试因此是假绿：把实现里的判据删了照样通过。
+    """
+    if level == "worker":
+        (folder / "records").mkdir(exist_ok=True)
+        (folder / "records/worker.lock").write_text("", encoding="utf-8")
+    elif level == "executor":
+        (folder / "records").mkdir(exist_ok=True)
+        (folder / "records/executor.lock").write_text("", encoding="utf-8")
+    elif level == "account":
+        locks = folder.parents[3] / ".locks"
+        locks.mkdir(parents=True, exist_ok=True)
+        (locks / "account-executor-127.0.0.1-9411.lock").write_text("", encoding="utf-8")
+    else:
+        raise AssertionError(level)
 
 
 async def test_gc_keeps_a_workspace_without_a_receipt(tmp_path, monkeypatch, clean_receipts):
@@ -107,6 +129,21 @@ async def test_gc_keeps_a_locked_workspace(tmp_path, monkeypatch, clean_receipts
     await maintenance.gc_old_workspaces()
 
     assert folder.exists(), "有锁的工作区必须保留"
+
+
+@pytest.mark.parametrize("level", ["worker", "executor", "account"])
+async def test_gc_keeps_a_workspace_with_a_real_lock(
+    tmp_path, monkeypatch, clean_receipts, level
+):
+    """三类真锁任一存在都不删 —— 旧实现查的是日期分片目录，三类全漏。"""
+    folder = _make_run(tmp_path)
+    await _add_receipt("run-old")
+    _lock(folder, level=level)
+    monkeypatch.setattr(maintenance, "existing_runs", lambda: [folder])
+
+    await maintenance.gc_old_workspaces()
+
+    assert folder.exists(), f"{level} 锁存在时工作区必须保留"
 
 
 async def test_gc_keeps_a_running_workspace(tmp_path, monkeypatch, clean_receipts):

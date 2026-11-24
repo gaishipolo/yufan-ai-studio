@@ -116,7 +116,7 @@ function PublishCaseForm({
           <TextInput
             id="publish-case-name"
             value={name}
-            maxLength={80}
+            maxLength={160}
             onChange={event => setName(event.target.value)}
           />
         </FormField>
@@ -126,7 +126,7 @@ function PublishCaseForm({
             id="publish-case-desc"
             value={description}
             rows={3}
-            maxLength={500}
+            maxLength={2000}
             placeholder="这份案例适合什么场景？"
             onChange={event => setDescription(event.target.value)}
             className="w-full resize-y rounded-lg border border-line bg-white px-2.5 py-1.5 text-body text-ink outline-none transition-colors placeholder:text-[#a9b8bf] focus:border-primary-line focus:ring-2 focus:ring-primary/10"

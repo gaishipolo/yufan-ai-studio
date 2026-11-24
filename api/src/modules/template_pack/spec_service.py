@@ -31,6 +31,7 @@ from core.exceptions import BadRequest, Conflict, NotFound, StateChanged
 from core.param_schema import resolve_params
 from core.ports.library_lookup import (
     LibraryAssetRef,
+    LibraryAssetState,
     LibraryVisibility,
     get_library_lookup,
 )
@@ -442,13 +443,20 @@ def _check_model_params(spec: TemplateSpec, model: ModelSummary) -> None:
 def _is_publicly_readable(ref: LibraryAssetRef) -> bool:
     """这条素材是否**任何登录用户**都能读。
 
-    判据来自 `modules/library/access.py` 的 `can_read`：`purpose == "case"`
-    的素材对所有人可读（且这一条刻意排在 `visibility` 之前），
-    `visibility == "team"` 的素材对所有登录用户可读。
+    判据来自 `modules/library/access.py` 的 `can_read`：
+    `state=active` 是前置条件 —— 草稿与回收站里的素材任何可见性都不算数
+    （`can_read` 会把 trash 直接拒掉）。过了这一关，
+    `purpose == "case"` 对所有人可读（且这一条刻意排在 `visibility` 之前），
+    `visibility == "team"` 对所有人可读。
+
+    漏掉 `state` 的症状很隐蔽：作者把团队可见的素材丢进回收站，发布闸照样放行；
+    别人复用时 `can_read` 才拒绝，于是模板库里安静地少一张图。
 
     刻意**不**在这里重写一遍「共享到小组」的判定：`visibility=group` 只对
     组内成员可读，而组外的人恰恰是复用模板的大多数 —— 它不满足「全员可读」。
     """
+    if ref.state != LibraryAssetState.ACTIVE:
+        return False
     return ref.purpose == "case" or ref.visibility == LibraryVisibility.TEAM
 
 

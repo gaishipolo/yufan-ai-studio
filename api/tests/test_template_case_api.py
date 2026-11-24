@@ -323,6 +323,28 @@ def test_delete_is_soft_and_restorable(client: TestClient) -> None:
     assert case["id"] in {item["id"] for item in library["items"]}
 
 
+def test_soft_deleted_case_detail_is_hidden_from_others(client: TestClient) -> None:
+    """软删案例在列表里消失，详情也必须随之消失。
+
+    列表按 `deleted_at` 过滤，详情只判 `status`/作者时，已发布案例删掉后仍能被
+    任何人按 id 读到 —— 「回收站」对别人成了隐藏入口，内容还在对外可见。
+    """
+    headers = _user(client, WRITE_PERMS)
+    reader = _user(client, READ_PERMS)
+    spec = _template(client, headers)
+    case = _publish(client, headers, spec["key"])
+
+    # 删之前别人读得到（这正是「已发布 = 共享资源」）
+    assert client.get(f"{API}/{case['id']}", headers=reader).status_code == 200
+
+    assert client.delete(f"{API}/{case['id']}", headers=headers).status_code == 200
+    gone = client.get(f"{API}/{case['id']}", headers=reader)
+    assert gone.status_code == 404, gone.text
+
+    # 作者自己的回收站仍可读（恢复流程要用）
+    assert client.get(f"{API}/{case['id']}", headers=headers).status_code == 200
+
+
 def test_edit_case_updates_name_and_category(client: TestClient) -> None:
     headers = _user(client, WRITE_PERMS)
     spec = _template(client, headers)
