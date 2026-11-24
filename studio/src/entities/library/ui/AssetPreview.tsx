@@ -1,6 +1,10 @@
 import { useState } from 'react';
 import { Play } from 'lucide-react';
-import { useLibraryDetail, useLibraryMedia } from '@/entities/library/api/library.queries';
+import {
+  useLibraryDetail,
+  useLibraryLargePreview,
+  useLibraryMedia,
+} from '@/entities/library/api/library.queries';
 import { CoverImage } from '@/shared/ui/CoverImage';
 import { cn } from '@/shared/lib/cn';
 
@@ -38,6 +42,13 @@ export function AssetPreview({
   alt?: string;
 }) {
   const detail = useLibraryDetail(assetId);
+  /* 封面走同源取流，不直连对象存储：`coverUrl` 是 S3 预签名直链（内网 9000 端口），
+     局域网里只有后端那台机器能解析，别的主机拿到的是 ERR_CONNECTION_REFUSED ——
+     表现为「卡片渐变占位、永远不显示案例」。`/large` 由后端带鉴权取字节再转成
+     object URL，与视频/大图同一条路，任何能打开页面的主机都能看到封面。
+     派生失败（文本/音频）时回退直链，至少在有网络的机器上还能显示。 */
+  const largeCover = useLibraryLargePreview(assetId, true);
+  const cover = largeCover.url ?? detail.data?.coverUrl ?? undefined;
   const isVideo = detail.data?.kind === 'video';
   const [playing, setPlaying] = useState(false);
   const [hovered, setHovered] = useState(false);
@@ -58,7 +69,7 @@ export function AssetPreview({
       return (
         <div className={cn('relative overflow-hidden bg-black', className)}>
           <CoverImage
-            src={detail.data?.coverUrl ?? undefined}
+            src={cover}
             seed={assetId}
             alt={alt}
             className="h-full w-full opacity-60"
@@ -79,7 +90,7 @@ export function AssetPreview({
       <div className={cn('flex items-center justify-center', className)}>
         <video
           src={media.url}
-          poster={detail.data?.coverUrl ?? undefined}
+          poster={cover}
           controls
           autoPlay
           playsInline
@@ -92,8 +103,6 @@ export function AssetPreview({
       </div>
     );
   }
-
-  const cover = detail.data?.coverUrl ?? undefined;
 
   if (isVideo && hoverPlay) {
     const playingNow = hoverNow && !!media.url;

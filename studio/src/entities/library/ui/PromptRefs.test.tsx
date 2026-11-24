@@ -7,6 +7,7 @@ import { PromptRefs } from './PromptRefs';
 vi.mock('@/entities/library/api/library.queries', () => ({
   useLibraryDetail: () => ({ data: undefined }),
   useLibraryMedia: () => ({ url: undefined, isPending: false, isError: false }),
+  useLibraryLargePreview: () => ({ url: undefined }),
   useReadText: () => ({ data: undefined, isPending: false, isError: false }),
 }));
 
