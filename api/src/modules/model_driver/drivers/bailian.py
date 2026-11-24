@@ -96,7 +96,7 @@ from infra.storage.base import StorageError
 from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
-from modules.model_driver.receipts import (
+from modules.model_driver.kit.submission_guard import (
     STATUS_REJECTED,
     STATUS_SUBMITTED,
     STATUS_UNKNOWN,

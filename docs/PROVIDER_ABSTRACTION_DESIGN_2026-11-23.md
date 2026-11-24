@@ -148,6 +148,56 @@
 | 登记 | §4 阶段 1 的「行为变更例外」由三处增至**四处**（本条为第 4 处，单独提交 + 单独测试） |
 | 守卫 | 基线测试 `test_agnes_non_enumerated_4xx_is_a_client_error` + `test_agnes_video_uses_the_same_non_enumerated_4xx_rule`（各 4 个状态码）钉住修正后的行为 |
 
+### L1.8 D5 第一步：提交台账下沉到 kit（2026-11-24）
+
+**范围**：把提交台账的实现从「百炼专用的模块层文件」下沉为 **kit 里的通用提交治理件**，`receipts.py` 退化为兼容层，并让台账能表达**同步形态**的提交。
+
+#### ⚠️ 先更正一条此前的错误判断
+
+我在给 D5 立项时写的理由是「其它驱动缺『提交结果未知』的防护，可能被重试 → 二次计费」。**核实后这个理由不成立**：
+
+| 环节 | 框架层已有实现 |
+| --- | --- |
+| 提交前落「提交意图」 | `mark_submitting`（`submit_attempts += 1`）—— 图片链/任务链/驱动链三条都实现 |
+| 明确失败 → 清意图 | `clear_submit_attempt` → 允许安全重试 |
+| 成功 → 写标识 | `mark_submitted`（写 `external_id`） |
+| 窄窗口（可能已受理） | `GenerationSpec.submit_unknown` = `submit_attempts>0` 且无 `external_id` → **「不能自动重提：重提就是第二份账单」**；恢复器照此判死等人核对 |
+
+→ **D5 的价值不是「补防护」，而是「统一三套提交语义 + 让提交明细可查 + 通道真实落库」**。台账相对框架机制的**真实增量**是：`status`/`error` 三态细节、提交前的 `submitting` 占位、**在驱动拿到 task_id 的瞬间就落库**（而不是等框架收到 submit 返回值再落），以及 `channel_used`。
+
+#### 实施内容
+
+| 项 | 内容 |
+| --- | --- |
+| `kit/submission_guard.py`（新） | 台账实现下沉：状态常量、`claim_receipt` / `recover_or_reject` / `mark_*` / `decide_before_submit` / `recover_external_id` / `settle_submission` / `ReceiptConflict` / `SubmitDecision` |
+| `receipts.py`（改为兼容层） | ① 转发既有公开 API（import 路径不变）；② 保留**存量文件回执迁移函数**（`migrate_legacy_receipts` / `stamp_from_legacy` —— 属模块层的历史包袱清理，不进 kit） |
+| `drivers/bailian.py` | 直连 kit（不再经兼容层） |
+| 同步/异步两种结算形态 | `settle_submission(status=submitted)` 的 `task_id` **改为可空** —— 同步生图在 `submit` 里就等到了结果，没有独立任务号；`external_id` 两种形态都**必须**有（它是恢复时能续接的凭证，缺了这行台账就等于没提交过） |
+| 测试 | 新增 `tests/test_submission_guard.py`（9 条）；既有 `tests/test_submission_receipts.py` **零改动** |
+
+#### 搬迁的等价性怎么证明的
+
+1. **既有测试零改动全绿**（`test_submission_receipts.py` 8 条 + `test_workspace_gc.py` 10 条 + `test_architecture.py` 51 条）→ 兼容层对调用方透明；
+2. ⚠️ **搬迁的一个陷阱**：`test_submission_receipts.py` monkeypatch 的是 `receipts.get_session_factory`（**模块属性**）。若把 kit 的函数原样转发，函数体在 kit 里取工厂 → monkeypatch 失效 → 测试会**连上真库**。因此兼容层对三个「自开 session」的函数用**薄包装**，把兼容层的工厂转发进 kit（kit 侧新增可选 `factory` 参数）。新增测试 `test_compat_layer_and_kit_behave_identically` 钉住两条入口行为一致，防止有人只改一边。
+3. `ruff` 全仓全绿、`mypy` 283 文件全绿。
+
+#### ⚠️ 下一步（各驱动接入）要解决的两个真问题
+
+**问题 1：台账键的语义要区分「幂等键」与「轮次」**
+
+台账唯一键是 `(provider, run_id)`。核实各驱动的提交路径后发现两种截然不同的语义：
+
+| 链路 | `run_id` 来源 | 同一份记录会被提交几次 | 对键的要求 |
+| --- | --- | --- | --- |
+| `bailian` | **归档 run id**（一次逻辑提交 = 一个 run） | 同一 run 重复提交 = **同一逻辑提交的重放** | 必须**幂等**：第二次提交要复用既有 external_id，不能再发一次付费 POST |
+| `agnes` / `grsai` / 视频驱动 | 无归档 run → 只能用业务记录 id（`record.id`） | **会多次**：① 4xx 后框架自动重试 3 次；② 人工重提（`image/service.py::retry` 复用同一 `job_id`，清 `external_id` 后重新提交） | 必须**按轮次分行** —— 否则人工重提会被台账误挡（返回旧 external_id → 拿回旧图） |
+
+→ 即：百炼的 `run_id` 是**幂等键**，其余驱动的记录 id 需要配一个**轮次维度**。这两者不能塞进同一个唯一约束里。
+
+**问题 2：「续接」的落点在哪**
+
+台账里落了 `task_id`，但**恢复时要用它把 `record.external_id` 回填回去**，否则台账只是一张没人读的表（框架的恢复器只认 `record.external_id`）。这条接线（恢复器读台账 → 回填 → 继续轮询）是「提交结果未知 → 自动接回」的前提，也是用户判断「只要保存了任务 id 就能续接」的落地处。
+
 ---
 
 ## 0. 摘要
@@ -415,7 +465,7 @@ external_id = None, submit_attempts = 1
 | `kit/errors.py` | **框架持有唯一分类实现**：按驱动声明的 `status_map` / `error_map` 执行；统一 `suffix(error)`（两个 `_suffix` 逐字等价） | A1 验证 + 调研 LiteLLM |
 | `kit/credentials.py` | **缺密钥的唯一判定**：空 → `BadRequest`(4xx，确定没送达)。文案由驱动给（`vendor`/`env_name`/`note`），异常类型由 kit 定 | **2026-11-23 事故修正**（§2.4）|
 | `kit/settings.py` | `vendor_settings(prefix, cls)` 工厂 + mtime 指纹缓存 | Settings 样板 ×5 结构等价（未逐行比对，风格一致） |
-| `kit/submission_guard.py` | 提交前**DB 唯一约束抢占** + 「可能已受理」禁止自动重提 | ⏳ **目标路径，尚未实现**。阶段 0.5 的实际实现是 `modules/model_driver/receipts.py`（**未迁入 kit**，且**只有 `bailian` 在用**）→ D5「提炼为 kit 供所有驱动共用」**尚未完成** |
+| `kit/submission_guard.py` | 提交前**DB 唯一约束抢占** + 「可能已受理」禁止自动重提 | ✅ **已建（2026-11-24，D5 第一步）**：实现从 `modules/model_driver/receipts.py` 下沉到 kit，`receipts.py` 退化为**兼容层**（既有 import 路径与 monkeypatch 约定不变）。支持**同步/异步两种结算形态**（同步生图没有独立任务号 → `task_id` 可空）。⚠️ **各驱动接入尚未完成** —— 目前只有 `bailian` 直连 kit |
 | ~~`kit/http.py`~~ | ❌ 不抽 —— 4 份映射规则互异，抽了只能靠参数开关还原差异 | A1 验证 |
 | ~~`kit/models.py::strip_prefix`~~ | ❌ 不抽 —— agnes_video 是双别名归一、grsai 才剥前缀、bailian 是精确查表 | A1 验证 |
 | ~~`kit/media.py::classify`~~ | ❌ 不抽分类 —— 无分类/MIME+协议/MIME+后缀三种维度，失败行为从「不报错」到「严格报错」 | A1 验证；但「认不出就报错」的默认仍在 grsai 侧 |
@@ -857,7 +907,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 
 ### 5.7 提交幂等与防重复计费（`kit/submission_guard.py`，D5 + D6）
 
-> **状态更正（2026-11-23）**：本节描述的是**目标**结构。阶段 0.5 已落地的是**介质修正**（D6：回执从文件改为 DB 唯一约束），实现位于 `modules/model_driver/receipts.py`；**D5（提炼为 kit 供所有驱动共用）尚未完成** —— `kit/submission_guard.py` 这个文件还不存在，目前只有 `bailian` 引用 `receipts.py`。
+> **状态更新（2026-11-24）**：本节描述的是**目标**结构。D6（介质修正：回执从文件改为 DB 唯一约束）早已落地；**D5 已完成第一步** —— 实现已下沉到 `kit/submission_guard.py`，`modules/model_driver/receipts.py` 退化为兼容层（转发 + 存量文件回执迁移 CLI），`bailian` 已直连 kit。⚠️ **各驱动接入尚未完成**：目前只有 `bailian` 直连 kit，其余驱动的提交路径未改。
 
 | 场景 | 期望 |
 |---|---|
@@ -907,7 +957,7 @@ EXTRA_SCHEMAS: tuple[type[BaseModel], ...] = ()
 | D2 | 刷新触发方式 | **管理端点为主 + 周期巡检兜底**，共用一个 `registry.refresh()`；端点需**新增运维级权限点** | `core/permissions.py` 现有 6 个权限点全是业务动作向，**无 admin/运维级** → 刷新能 import/挂载代码，不能挂在 `model_driver:read` 上 |
 | D3 | 配置缓存策略 | **mtime 指纹**，键 = `(mtime_ns, size)` + 进程内 env 快照；**不引入 TTL** | pydantic-settings 每次实例化都**整读 `.env` 并解析**（`driver_config.py:41,58`）→ 无缓存的成本是每次请求一次文件读；TTL 的「最长延迟 N 秒」在改 key 止血场景里意味着继续用坏 key 提交 |
 | D4 | `bailian` / `echo` 是否迁移 | **`echo` 永不迁移；`bailian` 纳入迁移，样板层迁，供应商特有层不迁；输出地址遗留约定单独修正** | `echo.py` 零 HTTP、零配置、无素材与错误分类 → kit 对它零收益，且它是「零配置供应商」的活样板；`bailian` **是 HTTP 驱动**（`httpx` 66、`_headers` 324、`_json` 332、`submit` 406），kit 四个模块全部适用，且它是唯一带参考音频的驱动（百炼 `audio_url` 不支持 Base64 → 音频仍需 OSS 临时 URL；**图片可改内联，不必物化**）。**不存在独立替换链**（`modules/template` 已删、`replacement_runs` 表已删、`output_url` 指向的路由已不存在）→ 所谓「耦合」实为「执行器工作区产物约定」，不作为不可动边界 |
-| D5 | 防重复计费机制归谁 | **把 bailian 的提交幂等提炼为 `kit/submission_guard.py` 供所有驱动共用；但回执必须落数据库（唯一约束抢占），不落工作区文件** | 框架只有「分类」（`_possibly_delivered`），bailian 在驱动内做了「机制」（`O_EXCL` 抢占 + 回执 + `submission_unknown` 禁止重提）→ 该能力只服务了一个供应商。但现有回执存在 `records/bailian-submission.json`（`bailian.py:443`），与工作区同生共死 → 工作区误删会让「恢复动作」变成「当作新任务重提 = 二次计费」。**提炼前必须先修正回执介质（D6），否则统一的是错误做法**<br>⚠️ **2026-11-23 现状**：D6 已完成（回执落 DB），但 **D5 未完成** —— `modules/model_driver/receipts.py` 还没迁入 kit，且只有 `bailian` 在用；`libtv` 用的是执行器本地状态机（工作区 `run.json`），**不适用** DB 唯一约束（见 §1.1 A6 验证结果） |
+| D5 | 防重复计费机制归谁 | **把 bailian 的提交幂等提炼为 `kit/submission_guard.py` 供所有驱动共用；但回执必须落数据库（唯一约束抢占），不落工作区文件** | 框架只有「分类」（`_possibly_delivered`），bailian 在驱动内做了「机制」（`O_EXCL` 抢占 + 回执 + `submission_unknown` 禁止重提）→ 该能力只服务了一个供应商。但现有回执存在 `records/bailian-submission.json`（`bailian.py:443`），与工作区同生共死 → 工作区误删会让「恢复动作」变成「当作新任务重提 = 二次计费」。**提炼前必须先修正回执介质（D6），否则统一的是错误做法**<br>✅ **2026-11-24 现状**：D6 已完成（回执落 DB）；D5 **第一步已完成** —— 实现下沉到 `kit/submission_guard.py`（`receipts.py` 退化为兼容层，既有 import 路径与 monkeypatch 约定不变），`bailian` 已直连 kit。⚠️ **各驱动接入尚未完成**（见 §L1.8）。`libtv` 用的是执行器本地状态机（工作区 `run.json`），**不适用** DB 唯一约束（见 §1.1 A6 验证结果） |
 | D6 | 工作区 / S3 / 数据库的职责边界 | **素材字节以 S3 为唯一副本；档案元数据与提交回执落数据库；本地工作区降级为「可重建的临时执行目录」并加 GC** | `materialize()` 把 S3 字节下载一份到 `inputs/*`（`generic_inputs.py:315,323-325`），工作区**无清理机制**（`cli.py` 只有 `runs-status`）；`runs.py:138-141` 已文档化「换机器显示调用档案不存在」；回执同在工作区 → 误删后二次计费（详见 §6.5） |
 
 **每项的替代条件**（不推荐但保留触发条件）：
@@ -1100,12 +1150,14 @@ api/tests/test_architecture.py                         ← 架构守卫（infra 
 api/tests/test_driver_error_baseline.py               ← 错误分类行为基线（25 条：钉住各驱动刻意保留的逐状态映射差异）
 ```
 
-> **清单与实际的偏差（2026-11-23 复核）**：`kit/` 里**只建了 `credentials.py` / `errors.py`
-> / `settings.py`** 三个 —— `http.py` / `models.py` / `media.py` / `submission_guard.py`
-> **没建**：A1 假设（把各驱动的 HTTP 映射、剥前缀、素材分类合成一份）逐行比对后**验证失败**，
-> 那些差异是业务语义，合成一份反而会掩盖真实差别。对应的 `test_driver_kit_media.py` /
-> `test_driver_submission_guard.py` 也没建。二次计费防护也没走 kit 形态 ——
-> 回执表落在 `modules/model_driver/models.py`（`submission_receipts`，唯一约束
+> **清单与实际的偏差（2026-11-24 复核）**：`kit/` 里**已建 `credentials.py` / `errors.py`
+> / `settings.py` / `submission_guard.py`** —— `http.py` / `models.py` / `media.py`
+> **刻意不建**：A1 假设（把各驱动的 HTTP 映射、剥前缀、素材分类合成一份）逐行比对后**验证失败**，
+> 那些差异是业务语义，合成一份反而会掩盖真实差别。对应的 `test_driver_kit_media.py`
+> 也没建。`test_driver_submission_guard.py` 的实际落地文件名是
+> `tests/test_submission_guard.py`（测 kit 入口）+ `tests/test_submission_receipts.py`
+> （测兼容层入口）。二次计费防护**已走 kit 形态**（2026-11-24 实现下沉）——
+> 回执表仍落在 `modules/model_driver/models.py`（`submission_receipts`，唯一约束
 > `provider + run_id`），核对在 `maintenance.py`，不在 `db/submission_receipts.py`。
 > `infra/media_channel.py` **已建**（`MediaChannel` / `MediaKind` / `validate_declaration`
 > / `choose_channel`），通道枚举与可行性校验成立；没建的是 `kit/media.py` ——
@@ -1162,7 +1214,7 @@ api/src/modules/model_driver/drivers/{bailian,grsai,grsai_video,agnes,agnes_vide
 
 > **实施状态（2026-11-24 复核更正）**：阶段 0（固化行为）、阶段 0.5（回执落 DB + 工作区 GC，D6）、
 > 阶段 1（逐驱动迁移）、阶段 2（消除公共硬编码）、阶段 3（配置热生效）**均已按 §4 各阶段自己的进度表完成** ——
-> `kit/` 只有 `credentials.py` / `errors.py` / `settings.py` —— 但**这不是阶段未完成的证据**：阶段 1 的验收项是「逐个驱动迁移」（§4 进度表：4 组驱动均已迁完，剩余项都是**刻意保留**的供应商特有逻辑，如百炼精确查表、逐状态定制文案），`kit/http.py` / `models.py` / `media.py` / `submission_guard.py` 是 §9 的**早期预计清单**，不是任何阶段的验收项；
+> `kit/` 现有 `credentials.py` / `errors.py` / `settings.py` / `submission_guard.py`（2026-11-24 新增 `submission_guard.py`，D5 第一步）—— 但**这不是阶段未完成的证据**：阶段 1 的验收项是「逐个驱动迁移」（§4 进度表：4 组驱动均已迁完，剩余项都是**刻意保留**的供应商特有逻辑，如百炼精确查表、逐状态定制文案），`kit/http.py` / `models.py` / `media.py` 是 §9 的**早期预计清单**，不是任何阶段的验收项；
 > `libtv/routes.py` / `libtv/schema.py` **已建**（阶段 2 ✅，2026-11-24 复核核实）。
 > ⚠️ 反过来也要注意：**别用「文件在不在」推断阶段完成度** —— 2026-11-24 复核就踩了这个坑（据 §9 早期清单误判阶段 1/2 未完成；实际 `libtv/routes.py`、`libtv/schema.py` 早已建好）。阶段完成度只认**各阶段自己的进度表与验收项**。
 > 排期不要按「阶段 N 已实施」这句话取结论 —— 以各阶段的「进度」记录与 §9 的偏差说明为准。各阶段的实际改动见对应小节的
