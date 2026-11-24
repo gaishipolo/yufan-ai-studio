@@ -1,8 +1,8 @@
 """各驱动「HTTP 错误 → 框架异常」的当前行为基线（2026-11-24）。
 
 这些映射**故意不统一**：
-- Agnes：401→Unauthorized、403→Forbidden、404/400→BadRequest、429→RateLimited，
-  其它 4xx→UpstreamError；
+- Agnes：401→Unauthorized、403→Forbidden、404/400/**其它 4xx**→BadRequest、
+  429→RateLimited（未枚举 4xx 落 4xx 侧是 2026-11-24 的行为修正结果）；
 - Grsai：一律 4xx（含 408）→BadRequest，5xx→UpstreamError；
 - Agnes 视频：比 Agnes 生图多一条**业务码例外**（503 + `video_queue_full`
   →RateLimited）。
@@ -33,7 +33,6 @@ from modules.model_driver.drivers import agnes, agnes_video, grsai, grsai_video
         (404, BadRequest, 400),
         (429, RateLimited, 429),
         (400, BadRequest, 400),
-        (402, UpstreamError, 502),
         (500, UpstreamError, 502),
     ],
 )
@@ -122,24 +121,30 @@ def test_grsai_video_reuses_the_grsai_error_classification():
 
 
 @pytest.mark.parametrize("status", [402, 405, 409, 422])
-def test_agnes_non_enumerated_4xx_falls_back_to_upstream_error(status):
-    """Agnes 的兜底：**未枚举的 4xx 也落 UpstreamError**（→ 502、可重试）。
+def test_agnes_non_enumerated_4xx_is_a_client_error(status):
+    """未枚举的 4xx → `BadRequest`（400、**不可重试**）。
 
-    这是全仓**唯一**这么做的口径：kit 默认 4xx→BadRequest、Grsai 一律 4xx→BadRequest。
+    2026-11-24 行为修正（方案 A）。原先落 `UpstreamError`(502)，两个后果：
 
-    ⚠️ **已知缺陷，待拍板**（2026-11-24 复核发现）：`agnes._http_error` 的
-    docstring 明说「4xx 表示供应商明确拒绝（没受理，可安全重试或直接失败）」，
-    404 单列的理由也是「落到 UpstreamError 会被重试三次」—— 但兜底那行
-    `return UpstreamError("Agnes 调用失败…")` 把 402/405/409/422 这类
-    **明确拒绝**也判成了可重试的 502。后果：供应商说「参数错/要付费」，
-    用户看到 502 并被重试 3 次，每次都失败得一样。
+    1. `retryable` 为真 → runner 自动重试 3 次，每次失败得一样；
+    2. `_possibly_delivered` 把 5xx 判成「可能已受理」→ 任务显示「提交结果
+       未知，请到上游核对」，供应商明说的原因被整段盖掉。
 
-    这条测试**钉住现状**（不是认可它）—— 修的时候要改这里的期望值，
-    顺手也把 `agnes._http_error` 的 docstring 与实现对齐。
+    改后与本驱动的 400/404 分支、kit 默认口径、Grsai 口径一致。
     """
     err = agnes._http_error(httpx.Response(status, json={"error": {"message": "boom"}}))
 
-    assert isinstance(err, UpstreamError)
-    assert err.http_status == 502
-    assert err.retryable is True, "现状：非枚举 4xx 被判成可重试"
+    assert isinstance(err, BadRequest)
+    assert err.http_status == 400
+    assert err.retryable is False, "明确拒绝不该占重试次数"
+
+
+@pytest.mark.parametrize("status", [402, 405, 409, 422])
+def test_agnes_video_uses_the_same_non_enumerated_4xx_rule(status):
+    """Agnes 视频与生图同口径（同一批行为修正，两处一起改）。"""
+    err = agnes_video._http_error(httpx.Response(status, json={"error": {"message": "boom"}}))
+
+    assert isinstance(err, BadRequest)
+    assert err.http_status == 400
+    assert err.retryable is False
 

@@ -392,7 +392,15 @@ def _http_error(response: httpx.Response) -> Exception:
         return UpstreamError(f"Agnes 服务异常{suffix}")
     if response.status_code == 400:
         return BadRequest(f"Agnes 参数校验失败{suffix}")
-    return UpstreamError(f"Agnes 调用失败{suffix}")
+    # 未枚举的 4xx（402 付费失败、405、409、422 参数错…）：供应商**明确拒绝**，
+    # 没受理、不会计费 → 落 4xx 侧。
+    #
+    # 落 `UpstreamError`(502) 有两个后果（2026-11-24 行为修正）：
+    # 1. `retryable` 为真 → runner 自动重试 3 次，每次失败得一样；
+    # 2. `_possibly_delivered` 把 5xx 判成「可能已受理」→ 任务显示「提交结果
+    #    未知，请到上游核对」，供应商明说的原因被整段盖掉。
+    # 改后与本函数 400/404 分支、以及 kit 默认口径、Grsai 口径一致。
+    return BadRequest(f"Agnes 调用失败{suffix}")
 
 
 Driver = AgnesDriver

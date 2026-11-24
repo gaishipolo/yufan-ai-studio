@@ -658,7 +658,10 @@ def _http_error(response: httpx.Response) -> Exception:
         return UpstreamError(f"Agnes 服务暂时不可用{suffix}")
     if response.status_code == 400:
         return BadRequest(f"Agnes 参数校验失败{suffix}")
-    return UpstreamError(f"Agnes 调用失败{suffix}")
+    # 未枚举的 4xx：供应商**明确拒绝**（没受理、不会计费）→ 落 4xx 侧，
+    # 与生图驱动同口径。落 `UpstreamError`(502) 会被判成「可能已受理」→
+    # 自动重试 3 次且把真实原因盖成「提交结果未知」。2026-11-24 行为修正。
+    return BadRequest(f"Agnes 调用失败{suffix}")
 
 
 def _error_detail(body: Any) -> str:
