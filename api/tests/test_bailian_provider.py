@@ -1,5 +1,6 @@
 import hashlib
 import json
+import shutil
 
 import httpx
 import pytest
@@ -535,3 +536,48 @@ async def test_uploads_the_bytes_from_our_storage(workspace):
 
     assert sent, "素材必须真的上传了"
     assert all(b"media-" in body for body in sent)
+
+
+async def test_retry_after_the_workspace_is_gone_reuses_the_same_task(workspace):
+    """工作区被 GC 删掉后重试 → 从 DB 回执恢复，**不再提交**。
+
+    这是「回执只存 DB、不双写」的核心收益：工作区没了也不丢「这个 run 提交过
+    没有」这件事 → 不会二次计费。
+    """
+    calls = []
+
+    def handle(request):
+        if "video-synthesis" in request.url.path:
+            calls.append(request)
+            return httpx.Response(200, json={"output": {"task_id": "task-123"}})
+        return upload_handler(request)
+
+    p = provider(handle)
+    req = GenerationRequest(
+        Capability.VIDEO, bailian.MODEL_ID, "", params={"archiveRunId": "run"}, request_id="run"
+    )
+    assert await p.submit(req) == "run:task-123"
+
+    shutil.rmtree(workspace)  # 模拟 GC 把整个工作区清掉
+
+    assert await p.submit(req) == "run:task-123"
+    assert len(calls) == 1, "回执在 DB：工作区没了也不能再提交一次"
+
+
+async def test_rejects_a_legacy_archive_without_a_storage_key(workspace):
+    """旧归档（条目没有 storage_key）复用旧工作区提交 → 明确报错。
+
+    替换链路径带 `archiveRunId` 且与 run_id 相同 → **不重新物化** → 沿用旧
+    工作区的条目。旧条目里没有存储键，就不知道该从存储取哪个对象的字节 ——
+    报错，不猜（猜错 = 送错素材给上游）。
+    """
+    entries = json.loads((workspace / "inputs/input-map.json").read_text())
+    for entry in entries:
+        entry.pop("storage_key", None)
+    (workspace / "inputs/input-map.json").write_text(json.dumps(entries), encoding="utf-8")
+
+    req = GenerationRequest(
+        Capability.VIDEO, bailian.MODEL_ID, "", params={"archiveRunId": "run"}, request_id="run"
+    )
+    with pytest.raises(BadRequest, match="存储键"):
+        await provider(lambda _: pytest.fail("must fail before upload")).submit(req)
