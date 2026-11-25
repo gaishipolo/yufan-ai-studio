@@ -547,9 +547,26 @@ class GenerationRunner:
                 async with asyncio.timeout(budget):
                     record = await store.load(record_id)
                     if record is None or record.terminal:
+                        # 静默返回过：任务卡住时日志里看不到这一跳来过，无法区分
+                        # 「worker 没消费」与「消费了但直接 return」。留一条。
+                        logger.info(
+                            "轮询跳过：记录不存在或已终态 kind=%s id=%s polls=%d "
+                            "record_none=%s terminal=%s",
+                            kind,
+                            record_id,
+                            polls,
+                            record is None,
+                            getattr(record, "terminal", None) if record else None,
+                        )
                         return
                     if not record.external_id:
                         # 状态被重置过（如手动重试），重新走提交
+                        logger.info(
+                            "轮询改走提交：记录没有 external_id kind=%s id=%s polls=%d",
+                            kind,
+                            record_id,
+                            polls,
+                        )
                         await self.dispatch(kind, record_id)
                         return
 
@@ -663,6 +680,18 @@ class GenerationRunner:
                                 )
                             return
                     try:
+                        # 诊断：确认这一跳真的问了供应商，用的是哪个任务号/模型。
+                        # 之前「polls 一直涨但状态不动」时，日志里没有任何轮询痕迹，
+                        # 分不清是没走到这里、还是走了但结果被判成 RUNNING。
+                        logger.info(
+                            "轮询发起 kind=%s id=%s polls=%d provider=%s ext=%s model=%s",
+                            kind,
+                            record_id,
+                            polls,
+                            getattr(provider, "name", type(provider).__name__),
+                            record.external_id,
+                            record.model,
+                        )
                         result = await provider.poll(record.external_id, model=record.model)
                     except Exception as exc:  # noqa: BLE001
                         logger.warning(
@@ -675,6 +704,16 @@ class GenerationRunner:
                         next_delay = self._backoff(polls, base=interval)
                     else:
                         state = result.state
+                        # 诊断：这一跳拿到的状态是排下一跳还是写终态，全靠它分辨。
+                        logger.info(
+                            "轮询结果 kind=%s id=%s polls=%d state=%s progress=%s has_url=%s",
+                            kind,
+                            record_id,
+                            polls,
+                            state,
+                            result.progress,
+                            bool(result.output_url),
+                        )
 
                         if state == GenerationState.SUCCEEDED:
                             # 落盘（可能几百 MB）**不能**在轮询预算里跑。
@@ -786,17 +825,29 @@ class GenerationRunner:
                     # `mark_succeeded` 会拒绝写入（记录已是 cancelled）。
                     # 此时继续 commit + 归档 + 发事件，用户就会先看到
                     # 「已取消」再收到「生成成功」，草稿箱还多一条脏数据。
-                    if not await store.mark_succeeded(
+                    succeeded_ok = await store.mark_succeeded(
                         record_id,
                         output_url=output_url,
                         cover_url=cover_url,
                         progress=result.progress or 100,
-                    ):
+                    )
+                    if not succeeded_ok:
                         logger.info(
-                            "记录已终态，丢弃轮询结果 kind=%s id=%s", kind, record_id
+                            "记录已终态，丢弃轮询结果 kind=%s id=%s polls=%d",
+                            kind,
+                            record_id,
+                            polls,
                         )
                         return
                     await session.commit()
+                    # 诊断：落库已提交 = 用户此时能看到「已完成」。补跑那次就是
+                    # 卡在这里之前；日志里出现这条即证明这一跳写库成功。
+                    logger.info(
+                        "轮询写库成功（completed）kind=%s id=%s polls=%d",
+                        kind,
+                        record_id,
+                        polls,
+                    )
                     # 生成成功是既成事实，先落库再往资产库送：入库失败不该
                     # 把用户已经看到的结果改回失败（见 `_archive`）。
                     # 收尾动作留给超时块外的 `_finish_success`。
@@ -822,6 +873,17 @@ class GenerationRunner:
 
         if next_delay is not None:
             next_polls = polls if queued_wait else polls + 1
+            # 诊断：每条「没写终态」的轮询都会排下一跳。连同上面的「轮询结果」
+            # 一起看，就能判断是供应商一直回 RUNNING、还是异常退避在空转。
+            logger.info(
+                "轮询排下一跳 kind=%s id=%s polls=%d -> %d delay=%.1fs queued=%s",
+                kind,
+                record_id,
+                polls,
+                next_polls,
+                next_delay,
+                queued_wait,
+            )
             await self._schedule_poll(kind, record_id, polls=next_polls, delay=next_delay)
 
     # ------------------------------------------------------------------ 内部
