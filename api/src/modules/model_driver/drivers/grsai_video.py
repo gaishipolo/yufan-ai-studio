@@ -88,8 +88,10 @@ _MAX_AUDIO_SECONDS = 15
 #: 最多 20 个，这里 15 留了余量）。
 _MAX_REFERENCES = _MAX_IMAGE_REFERENCES + _MAX_AUDIO_REFERENCES
 
-#: 视频时长（秒）。上游支持 2~30 秒。
-_MIN_DURATION_SEC = 2
+#: 视频时长（秒）。上游文档写 2~30 秒，但实测 2 秒被拒：
+#: "duration maximum value is 30 seconds, and duration must be greater than 2 seconds"
+#: —— 下界是开区间，最小合法值是 3 秒。按实测来，别按文档来。
+_MIN_DURATION_SEC = 3
 _MAX_DURATION_SEC = 30
 
 
@@ -101,7 +103,7 @@ MODELS: tuple[ModelSpec, ...] = (
         capability=Capability.VIDEO,
         provider=PROVIDER,
         description=(
-            "Grsai · wan-3.0。2~30 秒，480p / 720p / 1080p 三档分辨率；"
+            "Grsai · wan-3.0。3~30 秒，480p / 720p / 1080p 三档分辨率；"
             f"最多 {_MAX_IMAGE_REFERENCES} 张参考图 + {_MAX_AUDIO_REFERENCES} 段参考音频"
             f"（每段最长 {_MAX_AUDIO_SECONDS} 秒）。"
             "画幅可选竖屏 / 横屏 / 方形三种。"

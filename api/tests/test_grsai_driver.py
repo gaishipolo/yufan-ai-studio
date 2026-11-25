@@ -369,7 +369,7 @@ def test_video_schema_declares_duration_and_aspect_ratio() -> None:
     spec = VIDEO_MODELS[0]
     duration = spec.param_schema["durationSec"]
     assert duration["type"] == "int"
-    assert (duration["min"], duration["max"], duration["step"]) == (2, 30, 1)
+    assert (duration["min"], duration["max"], duration["step"]) == (3, 30, 1)
     assert duration["default"] == 5
 
     aspect = spec.param_schema["aspectRatio"]
@@ -403,13 +403,30 @@ async def test_video_submit_maps_duration_and_splits_media() -> None:
 
 
 async def test_video_submit_rejects_duration_out_of_range() -> None:
-    """上游只收 2~30 秒，超出要在提交前拦下，别让任务白跑一趟。"""
+    """上游只收 3~30 秒，超出要在提交前拦下，别让任务白跑一趟。"""
     recorder = _Recorder(_json({"id": "task-v2", "status": "running"}))
     driver = GrsaiVideoDriver(transport=httpx.MockTransport(recorder))
 
-    with pytest.raises(BadRequest, match="2~30 秒"):
+    with pytest.raises(BadRequest, match="3~30 秒"):
         await driver.submit(_video_request(params={"durationSec": 60}))
     assert recorder.requests == []
+
+
+def test_video_duration_2_is_rejected_at_entry() -> None:
+    """2 秒看着在文档范围内，但上游实测拒绝（>2 秒）——入口就要挡住。
+
+    2026-11-25 实测：提交 durationSec=2 被上游回
+    "duration must be greater than 2 seconds"，任务当场 failed。
+    文档写 2~30 是错的，schema 下界按实测改成 3，这里钉住入口校验用新下界，
+    别让「文档说合法」的值走到供应商才失败。
+    """
+    from modules.task.params import resolve_duration
+
+    with pytest.raises(BadRequest) as caught:
+        resolve_duration(VIDEO_MODELS[0], 2)
+    # 判据钉在「入口按新下界拒绝」，不是靠文案 —— 文案变了测试也该稳。
+    assert caught.value.details == {"field": "durationSec", "min": 3, "max": 30}
+    assert resolve_duration(VIDEO_MODELS[0], 3) == 3
 
 
 async def test_video_submit_rejects_unsupported_aspect_ratio() -> None:
