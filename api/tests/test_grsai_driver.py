@@ -32,6 +32,7 @@ import pytest
 from core.exceptions import BadRequest, UpstreamError
 from infra.ai.base import Capability, GenerationRequest, GenerationState
 from modules.model_driver.drivers.grsai import GrsaiImageDriver
+from modules.model_driver.drivers.grsai_video import MODELS as VIDEO_MODELS
 from modules.model_driver.drivers.grsai_video import GrsaiVideoDriver
 
 
@@ -358,6 +359,25 @@ async def test_poll_succeeded_without_url_fails_loudly() -> None:
 
 
 # ------------------------------------------------------------------ 视频
+def test_video_schema_declares_duration_and_aspect_ratio() -> None:
+    """时长/画幅是顶层字段，但前端控件与入口校验都从 schema 读规则 —— 必须声明。
+
+    漏了这条声明时：工作台选 wan-3.0 没有时长/画幅控件（用户只能吃驱动的 5s/
+    9:16 兜底），且 `resolve_duration` 退回 1~600 兜底，超范围要等 worker 提交
+    才失败。与百炼同一口径：规则进 schema，值仍走顶层列、不进 params。
+    """
+    spec = VIDEO_MODELS[0]
+    duration = spec.param_schema["durationSec"]
+    assert duration["type"] == "int"
+    assert (duration["min"], duration["max"], duration["step"]) == (2, 30, 1)
+    assert duration["default"] == 5
+
+    aspect = spec.param_schema["aspectRatio"]
+    assert aspect["type"] == "enum"
+    assert set(aspect["options"]) == {"9:16", "16:9", "1:1"}
+    assert aspect["default"] == "9:16"
+
+
 async def test_video_submit_maps_duration_and_splits_media() -> None:
     """平台的 `durationSec` 要改名成上游的 `duration`；图与音频分数组。"""
     recorder = _Recorder(_json({"id": "task-v1", "status": "running"}))

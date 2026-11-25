@@ -70,9 +70,9 @@ PROVIDER = "grsai_video"
 #: 上游模型名。
 _UPSTREAM_MODEL = "wan-3.0"
 
-#: 上游支持的比例（比平台顶层的三种多：21:9 / 4:3 / 3:4）。平台顶层字段
-#: 只有竖屏 / 横屏 / 方形三种，所以这三档用户暂时选不到，但驱动侧按上游的
-#: 全量校验 —— 万一将来平台放宽了枚举，这里不用再改。
+#: 上游支持的比例（比平台顶层的三种多：21:9 / 4:3 / 3:4）。前端画幅控件只列
+#: 平台顶层的竖屏 / 横屏 / 方形三档，但驱动侧按上游全量校验 —— 万一将来平台
+#: 放宽了枚举，这里不用再改。
 _UPSTREAM_ASPECTS: frozenset[str] = frozenset(
     {"16:9", "9:16", "21:9", "4:3", "1:1", "3:4"}
 )
@@ -104,14 +104,30 @@ MODELS: tuple[ModelSpec, ...] = (
             "Grsai · wan-3.0。2~30 秒，480p / 720p / 1080p 三档分辨率；"
             f"最多 {_MAX_IMAGE_REFERENCES} 张参考图 + {_MAX_AUDIO_REFERENCES} 段参考音频"
             f"（每段最长 {_MAX_AUDIO_SECONDS} 秒）。"
-            "画幅目前只有竖屏 / 横屏 / 方形三种（平台顶层的限制）。"
+            "画幅可选竖屏 / 横屏 / 方形三种。"
         ),
         param_schema={
-            # 只声明**模型特有**参数（走 params）。`durationSec` 与 `aspectRatio`
-            # 是平台的顶层字段，受理期单独成列：把它们写进 schema 会让前端多
-            # 渲染一对控件（用户填了反而被受理期以「顶层字段不要放进 params」
-            # 拒掉），还会让 schema 收敛出来的值盖掉用户在顶层选的那份。
-            # 上游的时长/画幅限制因此放在驱动侧校验（提交前挡，比出片后失败早）。
+            # `durationSec` / `aspectRatio` 虽是平台顶层字段（各自有列），但**校验
+            # 规则必须在 schema 里声明**：`resolve_duration` / `resolve_aspect_ratio`
+            # 从 schema 读 min/max/step/options 与默认值，前端也照它渲染控件。
+            # 之前漏声明时前端根本没有时长/画幅控件，用户只能吃驱动的兜底 5s/9:16；
+            # 且超范围请求要等 worker 提交时才被驱动侧拦（已 201，只能异步失败）。
+            # 声明 schema 不会让值进 params —— 顶层字段有专门的列，
+            # `resolve_extra_params` 仍禁止它们出现在 params 里，两份真相不会打架。
+            "durationSec": {
+                "type": "int",
+                "min": _MIN_DURATION_SEC,
+                "max": _MAX_DURATION_SEC,
+                "step": 1,
+                "default": 5,
+            },
+            "aspectRatio": {
+                "type": "enum",
+                # 上游虽支持 6 档，平台顶层 `AspectRatio` 只有竖屏/横屏/方形三种，
+                # 这里按平台能表达的来声明（与百炼一致），别把用户引向会 400 的选项。
+                "options": ["9:16", "16:9", "1:1"],
+                "default": "9:16",
+            },
             "resolution": {"type": "enum", "options": list(_RESOLUTIONS), "default": "720p"},
             "seed": {"type": "int"},
         },
