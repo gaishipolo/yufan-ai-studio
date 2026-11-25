@@ -46,6 +46,12 @@ logger = get_logger(__name__)
 
 STAGES = {"upload": 1500, "submit": 100, "poll": 45, "download": 240}
 RUNTIME = Path(__file__).parent / "runtime/bridge.mjs"
+# 桥接层第 13 行读 `../models.json`（相对它自己的位置）。源码里它位于
+# `runtime/bridge.mjs`，`../models.json` 正好是 `libtv/models.json`；但复制到
+# run 目录后位于 `code/runtime-v2/bridge.mjs`，`../models.json` 就变成
+# `code/models.json` —— 必须一并复制过去，否则 Node 启动即 ENOENT，
+# 落到用户眼前只有一句笼统的 ADAPTER_FAILED（2026-11-25 真实故障）。
+MODELS = Path(__file__).parent / "models.json"
 # 固定版适配器已随代码一起入库；监督进程把这个仓库内绝对路径交给桥接层，
 # 不再是部署时填的环境变量，也不指向任何外部项目。
 VENDOR = RUNTIME.parent / "vendor"
@@ -133,6 +139,10 @@ def run_node(
     # 每次覆盖：桥接层属于执行语义的一部分，run 目录里残留旧副本会让
     # 「代码改了、行为没变」，排查时极难发现。此处已持 executor 排他锁，无并发写。
     shutil.copyfile(RUNTIME, code)
+    # 模型清单随桥接层一起走：bridge.mjs 在 run 目录里读的是 `../models.json`，
+    # 即 `run/code/models.json`，而不是源码旁的 `libtv/models.json`。漏了这一份
+    # 就是「ADAPTER_FAILED / ENOENT models.json」，上传阶段直接失败、未提交。
+    shutil.copyfile(MODELS, code.parent.parent / "models.json")
     if stage == "submit":
         # 最终授权校验（原片仍可用、封装仍已发布）已移到业务层
         # （`POST /tasks` 的受理与物化）在调用执行器之前完成：

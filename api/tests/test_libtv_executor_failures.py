@@ -48,6 +48,20 @@ def exited_executor(monkeypatch, tmp_path):
     return SimpleNamespace(read=read_json, write=write_json)
 
 
+def test_bridge_copies_model_catalog_next_to_its_new_location(tmp_path, exited_executor):
+    """桥接层复制到 run 后读的是 `code/../models.json`，必须一并带过去。
+
+    2026-11-25 真实故障：多模型接入给 bridge.mjs 加了 `readFileSync('../models.json')`，
+    但 process.py 只复制 bridge 本身 → run/code/models.json 不存在 → Node 启动
+    ENOENT → 上传阶段 ADAPTER_FAILED「未提交生成」。守卫钉住这份副本。
+    """
+    result = libtv_process.run_node("upload", tmp_path, tmp_path, "node", exited_executor)
+    assert result.code == "OK"
+    copied = tmp_path / "code/models.json"
+    assert copied.is_file(), "桥接层复制到 run 后读 ../models.json，这份必须存在"
+    assert copied.read_bytes() == libtv_process.MODELS.read_bytes()
+
+
 def test_finished_receipt_survives_transient_shared_file_conflict(
     monkeypatch, tmp_path, exited_executor
 ):
