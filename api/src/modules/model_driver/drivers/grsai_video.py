@@ -96,7 +96,8 @@ _MAX_DURATION_SEC = 30
 MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         id=f"{PROVIDER}-{_UPSTREAM_MODEL}",
-        label="Wan 3.0",
+        label="Grsai · Wan 3.0",
+        aliases=("Wan 3.0",),
         capability=Capability.VIDEO,
         provider=PROVIDER,
         description=(

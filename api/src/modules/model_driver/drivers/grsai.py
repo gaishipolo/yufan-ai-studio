@@ -292,12 +292,14 @@ def _image_spec(
     upstream: str,
     label: str,
     *,
+    aliases: tuple[str, ...] = (),
     description: str,
     param_schema: dict[str, Any],
 ) -> ModelSpec:
     return ModelSpec(
         id=f"{PROVIDER}-{upstream}",
         label=label,
+        aliases=aliases,
         capability=Capability.IMAGE,
         provider=PROVIDER,
         description=description,
@@ -353,59 +355,26 @@ def _gpt_schema(
     }
 
 
-#: (上游名, 展示名, 分辨率档位) —— 档位只有一个的型号，型号名里的 2k / 4k
-#: 就是它的分辨率（上游文档没逐型号列 imageSize 的合法值，这里按型号名推断，
-#: 宁可少给一档，也不要让用户传出「型号不接受」的组合）。
-_NANO_MODELS: tuple[tuple[str, str, tuple[str, ...]], ...] = (
-    ("nano-banana", "Nano Banana", ("1K", "2K", "4K")),
-    ("nano-banana-fast", "Nano Banana Fast", ("1K", "2K", "4K")),
-    ("nano-banana-2", "Nano Banana 2", ("1K", "2K", "4K")),
-    ("nano-banana-2-cl", "Nano Banana 2 CL", ("1K", "2K", "4K")),
-    ("nano-banana-2-2k-cl", "Nano Banana 2 2K CL", ("2K",)),
-    ("nano-banana-2-4k-cl", "Nano Banana 2 4K CL", ("4K",)),
-    ("nano-banana-2.1", "Nano Banana 2.1", ("1K", "2K", "4K")),
-    ("nano-banana-pro", "Nano Banana Pro", ("1K", "2K", "4K")),
-    ("nano-banana-pro-vt", "Nano Banana Pro VT", ("1K", "2K", "4K")),
-    ("nano-banana-pro-cl", "Nano Banana Pro CL", ("1K", "2K", "4K")),
-    ("nano-banana-pro-vip", "Nano Banana Pro VIP", ("1K", "2K", "4K")),
-    ("nano-banana-pro-4k-vip", "Nano Banana Pro 4K VIP", ("4K",)),
+#: (上游名, 展示名, 旧展示名, 分辨率档位) —— 展示名按「供应商 · 模型」格式；
+#: 旧展示名进 aliases，让按历史展示名存的记录仍能解析（模型 id 从不改）。
+#: 2026-11-25 拍板：Nano 只保留 4 个基础型号，CL / VT / VIP / 2.1 变体下线。
+_NANO_MODELS: tuple[tuple[str, str, str, tuple[str, ...]], ...] = (
+    ("nano-banana", "Grsai · Nanobana", "Nano Banana", ("1K", "2K", "4K")),
+    ("nano-banana-fast", "Grsai · Nanobana Fast", "Nano Banana Fast", ("1K", "2K", "4K")),
+    ("nano-banana-2", "Grsai · Nanobana 2", "Nano Banana 2", ("1K", "2K", "4K")),
+    ("nano-banana-pro", "Grsai · Nanobana Pro", "Nano Banana Pro", ("1K", "2K", "4K")),
 )
 
-#: (上游名, 展示名, quality 档位, outputFormat 档位) —— 两组都抄自上游文档
-#: 的逐型号说明（gif 只有 2.6 系支持，svg 只有 gpt-image-2.6 支持）。
-_GPT_MODELS: tuple[tuple[str, str, tuple[str, ...], tuple[str, ...]], ...] = (
-    ("gpt-image-2", "GPT Image 2", ("auto",), ("png",)),
+#: (上游名, 展示名, 旧展示名, quality 档位, outputFormat 档位)。
+#: 2026-11-25 拍板：GPT 只保留 2.5 / 2.6 两个基础型号，2 / VIP / flare / sunburst 下线。
+_GPT_MODELS: tuple[tuple[str, str, str, tuple[str, ...], tuple[str, ...]], ...] = (
+    ("gpt-image-2.5", "Grsai · GPT 2.5", "GPT Image 2.5", ("auto",), ("png",)),
     (
-        "gpt-image-2-vip",
-        "GPT Image 2 VIP",
-        ("auto", "low", "medium", "high"),
-        ("png",),
-    ),
-    ("gpt-image-2.5", "GPT Image 2.5", ("auto",), ("png",)),
-    (
-        "gpt-image-2.5-flare",
-        "GPT Image 2.5 Flare",
-        ("auto", "low", "medium", "high"),
-        ("png",),
-    ),
-    (
-        "gpt-image-2.5-sunburst",
-        "GPT Image 2.5 Sunburst",
-        ("auto", "low", "medium", "high", "xhigh", "max"),
-        ("png",),
-    ),
-    ("gpt-image-2.6", "GPT Image 2.6", ("auto",), ("png", "gif", "svg")),
-    (
-        "gpt-image-2.6-flare",
-        "GPT Image 2.6 Flare",
-        ("auto", "low", "medium", "high"),
-        ("png", "gif"),
-    ),
-    (
-        "gpt-image-2.6-sunburst",
-        "GPT Image 2.6 Sunburst",
-        ("auto", "low", "medium", "high"),
-        ("png", "gif"),
+        "gpt-image-2.6",
+        "Grsai · GPT 2.6",
+        "GPT Image 2.6",
+        ("auto",),
+        ("png", "gif", "svg"),
     ),
 )
 
@@ -414,6 +383,7 @@ MODELS: tuple[ModelSpec, ...] = (
         _image_spec(
             upstream,
             label,
+            aliases=(old_label,),
             description=(
                 f"Grsai · {upstream}（nano-banana 系）。"
                 "画幅填比例，imageSize 选 1K / 2K / 4K 分辨率；"
@@ -421,12 +391,13 @@ MODELS: tuple[ModelSpec, ...] = (
             ),
             param_schema=_nano_schema(upstream, image_sizes=image_sizes),
         )
-        for upstream, label, image_sizes in _NANO_MODELS
+        for upstream, label, old_label, image_sizes in _NANO_MODELS
     )
     + tuple(
         _image_spec(
             upstream,
             label,
+            aliases=(old_label,),
             description=(
                 f"Grsai · {upstream}（gpt-image 系）。"
                 + (
@@ -440,15 +411,18 @@ MODELS: tuple[ModelSpec, ...] = (
                 upstream, qualities=qualities, output_formats=output_formats
             ),
         )
-        for upstream, label, qualities, output_formats in _GPT_MODELS
+        for upstream, label, old_label, qualities, output_formats in _GPT_MODELS
     )
 )
 
-#: 上游模型名 → 展示名。轮询时拿到的 `model` 可能是目录 id，也可能是展示名
-#: （历史记录），两种都要能还原成上游名。
+#: 上游模型名集合。`_real_model` 用它判断收到的是不是上游名（或 `grsai-<上游名>`
+#: 去掉前缀后的部分）；新旧展示名到 id 的映射由 `ModelRouter` 的 aliases 负责。
 _LABELS: Mapping[str, str] = {
-    **{upstream: label for upstream, label, _ in _NANO_MODELS},
-    **{upstream: label for upstream, label, _, _ in _GPT_MODELS},
+    **{upstream: label for upstream, label, _old, _sizes in _NANO_MODELS},
+    **{
+        upstream: label
+        for upstream, label, _old, _qualities, _formats in _GPT_MODELS
+    },
 }
 
 

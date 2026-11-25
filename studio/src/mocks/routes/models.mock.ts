@@ -53,7 +53,7 @@ const MOCK_MODELS = [
   // 两个模型的 count 上限不同（1 / 4），正好用来验证表单没有写死张数
   {
     id: 'agnes-image-2.5-flash',
-    label: 'Agnes Image 2.5 Flash',
+    label: 'Agnes · Image 2.5 Flash',
     capability: 'image',
     provider: 'agnes',
     description: '文生图，同步返回图片地址',

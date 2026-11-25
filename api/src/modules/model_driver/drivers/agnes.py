@@ -126,7 +126,8 @@ _MAX_REFERENCES = 4
 MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         id=_MODEL_25,
-        label="Agnes Image 2.5 Flash",
+        label="Agnes · Image 2.5 Flash",
+        aliases=("Agnes Image 2.5 Flash",),
         capability=Capability.IMAGE,
         provider="agnes",
         param_schema=_PARAM_SCHEMA,
@@ -137,7 +138,8 @@ MODELS: tuple[ModelSpec, ...] = (
     ),
     ModelSpec(
         id=_MODEL_21,
-        label="Agnes Image 2.1 Flash",
+        label="Agnes · Image 2.1 Flash",
+        aliases=("Agnes Image 2.1 Flash",),
         capability=Capability.IMAGE,
         provider="agnes",
         param_schema=_PARAM_SCHEMA,

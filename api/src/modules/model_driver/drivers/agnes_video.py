@@ -100,7 +100,8 @@ META = DriverMeta(
 )
 
 MODEL_ID = "agnes-video-2.5-flash"
-_MODEL_LABEL = "Agnes Video 2.5 Flash"
+_MODEL_LABEL = "Agnes · Video 2.5 Flash"
+_LEGACY_LABEL = "Agnes Video 2.5 Flash"
 
 # 上游只认 "720P" 这一个尺寸，具体像素由 aspect_ratio 决定：
 # 21:9→1680x720、16:9→1280x704、4:3→960x720、1:1→720x720、3:4→720x960、9:16→720x1280。
@@ -177,6 +178,7 @@ MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         id=MODEL_ID,
         label=_MODEL_LABEL,
+        aliases=(_LEGACY_LABEL,),
         capability=Capability.VIDEO,
         provider="agnes_video",
         param_schema=_PARAM_SCHEMA,
@@ -458,7 +460,7 @@ def _upstream_model(model: str) -> str:
     记录里存的是 label 而查不到任务。
     """
     value = (model or "").strip()
-    if not value or value in {MODEL_ID, _MODEL_LABEL}:
+    if not value or value in {MODEL_ID, _MODEL_LABEL, _LEGACY_LABEL}:
         return MODEL_ID
     raise BadRequest(f"agnes_video 驱动不认识模型 {model!r}，可用：{MODEL_ID}")
 

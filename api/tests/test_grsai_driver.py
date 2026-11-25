@@ -122,42 +122,40 @@ async def test_submit_authorization_header() -> None:
 
 
 async def test_submit_gpt_image_passes_quality_and_output_format() -> None:
-    """gpt-image 系多两个参数；nano-banana 系的 imageSize 不串味。"""
+    """保留的 gpt-image-2.6 仍传 quality / outputFormat；imageSize 不串味。"""
     recorder = _Recorder(_json({"id": "task-2", "status": "running"}))
     driver = GrsaiImageDriver(transport=httpx.MockTransport(recorder))
 
     await driver.submit(
         _image_request(
-            model="grsai-gpt-image-2.6-flare",
+            model="grsai-gpt-image-2.6",
             params={
                 "aspectRatio": "1:1",
-                "quality": "high",
+                "quality": "auto",
                 "outputFormat": "gif",
                 "background": "transparent",
             },
         )
     )
 
-    assert recorder.body["model"] == "gpt-image-2.6-flare"
-    assert recorder.body["quality"] == "high"
+    assert recorder.body["model"] == "gpt-image-2.6"
+    assert recorder.body["quality"] == "auto"
     assert recorder.body["outputFormat"] == "gif"
     assert recorder.body["background"] == "transparent"
     assert "imageSize" not in recorder.body
 
 
-async def test_submit_keeps_pixel_aspect_ratio_for_vip_model() -> None:
-    """只收像素值的型号，画幅原样传像素值（不做比例换算）。"""
+@pytest.mark.parametrize(
+    "retired_id",
+    ["grsai-gpt-image-2-vip", "grsai-gpt-image-2.6-flare", "grsai-nano-banana-pro-vip"],
+)
+async def test_retired_model_ids_are_rejected(retired_id: str) -> None:
+    """下线的型号连 id 都不能再提交 —— 否则目录裁剪了、老入口仍能绕过。"""
     recorder = _Recorder(_json({"id": "task-3", "status": "running"}))
     driver = GrsaiImageDriver(transport=httpx.MockTransport(recorder))
-
-    await driver.submit(
-        _image_request(
-            model="grsai-gpt-image-2-vip",
-            params={"aspectRatio": "2048x1152"},
-        )
-    )
-
-    assert recorder.body["aspectRatio"] == "2048x1152"
+    with pytest.raises(BadRequest, match="不认识模型"):
+        await driver.submit(_image_request(model=retired_id))
+    assert not recorder.requests, "下线型号不得发出任何上游请求"
 
 
 async def test_submit_splits_references_and_translates_mixed_refs() -> None:
@@ -460,7 +458,7 @@ def test_drivers_are_auto_loaded_and_routable() -> None:
 
     infos = {item.name: item for item in driver_summaries()}
     assert infos["grsai"].loaded is True
-    assert infos["grsai"].model_count == 20
+    assert infos["grsai"].model_count == 6
     assert infos["grsai_video"].loaded is True
     assert infos["grsai_video"].model_count == 1
 

@@ -134,7 +134,8 @@ _PARAM_SCHEMA = {
 MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
         id=MODEL_ID,
-        label="百炼万相3.0",
+        label="百炼 · 万相3.0",
+        aliases=("百炼万相3.0",),
         capability=Capability.VIDEO,
         provider="bailian",
         description="720P，参考视频 + 图 + 音频混合输入",
@@ -146,7 +147,8 @@ MODELS: tuple[ModelSpec, ...] = (
     ),
     ModelSpec(
         id=PRIME_MODEL_ID,
-        label="百炼万相3.0高速版",
+        label="百炼 · 万相3.0高速版",
+        aliases=("百炼万相3.0高速版",),
         capability=Capability.VIDEO,
         provider="bailian",
         description="与标准版同参数，出片更快、单价更高",
