@@ -1,7 +1,10 @@
 import { Navigate, useLocation } from 'react-router-dom';
 import { Info, Sparkles } from 'lucide-react';
 import { LoginForm } from '@/features/auth/LoginForm';
+import { useSubject } from '@/shared/access/use-access';
 import { useSessionStatus } from '@/shared/access/use-session';
+import { firstAccessiblePath } from '@/shared/registry';
+import { useRegistry } from '@/shared/registry/use-registry';
 import type { LoginRedirectState } from '@/shared/access/RequireAuth';
 import type { SignOutReason } from '@/shared/access/session';
 import {
@@ -9,7 +12,6 @@ import {
   APP_BRAND_EN,
   APP_NAME,
   APP_VERSION,
-  HOME_PATH,
   LOGIN_PATH,
 } from '@/shared/config/app';
 import { FullPageLoader } from '@/shared/ui/FullPageLoader';
@@ -32,7 +34,7 @@ const SESSION_ENDED_NOTICE: Partial<Record<SignOutReason, string>> = {
  * 登录页（`layout: 'bare'`，不套外壳）。
  *
  * 三种进入方式都要正确处理：
- * 1. 未登录直接打开 → 显示表单，登录后进首页；
+ * 1. 未登录直接打开 → 显示表单，登录后进「该用户能打开的第一个页面」；
  * 2. 被守卫从深链接拦过来 → 登录后回到原地址（`location.state.from`）；
  * 3. 已登录又访问 /login → 直接放行，不要出现「已登录还能看见登录页」。
  *
@@ -40,6 +42,8 @@ const SESSION_ENDED_NOTICE: Partial<Record<SignOutReason, string>> = {
  */
 export default function LoginPage() {
   const status = useSessionStatus();
+  const subject = useSubject();
+  const registry = useRegistry();
   const location = useLocation();
   const state = location.state as LoginRedirectState | null;
   const from = state?.from;
@@ -48,7 +52,10 @@ export default function LoginPage() {
   if (status === 'loading') return <FullPageLoader label="正在恢复登录状态…" />;
 
   if (status === 'authenticated') {
-    const target = from && from !== LOGIN_PATH ? from : HOME_PATH;
+    // 深链接被守卫拦过来时原路返回；否则落到该用户能打开的第一个页面。
+    // 判据与侧栏同源（firstAccessiblePath 走 navGroups + can），
+    // 不会把只有「生图」权限的人丢进无权访问的任务中心。
+    const target = from && from !== LOGIN_PATH ? from : firstAccessiblePath(subject, registry);
     return <Navigate to={target} replace />;
   }
 

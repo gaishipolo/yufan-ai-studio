@@ -1,7 +1,7 @@
 import { Suspense } from 'react';
-import { Navigate, createBrowserRouter } from 'react-router-dom';
-import { HOME_PATH } from '@/shared/config/app';
+import { createBrowserRouter } from 'react-router-dom';
 import { appRegistry } from '@/app/registry';
+import { HomeRedirect } from './HomeRedirect';
 import { RouteError } from '@/app/RouteError';
 import NotFoundPage from '@/pages/not-found/NotFoundPage';
 import { RequireAuth } from '@/shared/access/RequireAuth';
@@ -31,7 +31,7 @@ export const router = createBrowserRouter([
     ),
     errorElement: <RouteError />,
     children: [
-      { index: true, element: <Navigate to={HOME_PATH} replace /> },
+      { index: true, element: <HomeRedirect /> },
       ...shellRoutes.map(({ path, Component, permissions, moduleId }) => ({
         path: path.replace(/^\//, ''),
         handle: { moduleId },
