@@ -702,6 +702,16 @@ export function referenceChips(spec: TemplateSpecIn): RefChip[] {
   let ordinal = 0;
   return slots
     .filter(slot => (slot.refMode ?? 'mixed') === 'mixed' || slot.type === 'text')
+    /* 可选 + 用户填的槽位**不出现在 @ 菜单里**（2026-11-26 用户拍板）：
+       引用它就必须给它写「未选时文案」，而写它的唯一入口（框选正文）
+       会把那段正文让位成插入点 —— 作者只想补一句兜底话，却改动了一整段正文。
+       文本槽位例外：它是「填表时可换内容」的地方（{{Text N}}），必须能引用。 */
+    .filter(
+      slot =>
+        slot.type === 'text' ||
+        !isOptionalSlot(slot) ||
+        (slot.binding ?? 'user') === 'fixed',
+    )
     .slice()
     .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
     .flatMap(slot => {

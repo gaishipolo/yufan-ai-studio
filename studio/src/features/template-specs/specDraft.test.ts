@@ -75,7 +75,7 @@ describe('模板规格草稿', () => {
     const spec = blankSpec();
     spec.slots = [
       {...blankSlot(0), key: 'hero', label: '主图', minCount: 1, maxCount: 1},
-      {...blankSlot(1), key: 'detail', label: '细节', minCount: 0, maxCount: 3},
+      {...blankSlot(1), key: 'detail', label: '细节', minCount: 1, maxCount: 3},
       // 文本槽位是"提示词里唯一可变的地方"：编译成 {{Text N}}，必须能引用。
       {...blankSlot(2, 'text', []), key: 'brief', type: 'text', refMode: 'attachment', label: '口播'},
       {...blankSlot(3), key: 'bgm', type: 'audio', refMode: 'attachment'},
@@ -91,6 +91,25 @@ describe('模板规格草稿', () => {
     ]);
     // 音频没有编号空间，给入口就等于让用户写出一条必然 400 的引用。
     expect(chips.some(chip => chip.token.includes('bgm'))).toBe(false);
+  });
+
+  /* 可选 + 用户填的槽位**不出现在 @ 候选里**（2026-11-26 用户拍板）。
+     引用它就必须给它写「未选时文案」，而写它的唯一入口（框选正文）会把那段
+     正文让位成插入点 —— 作者只想补一句兜底话，却改动了一整段正文。
+     必填 / 已固定 / 文本槽位不受影响。 */
+  it('可选 + 用户填的槽位不进 @ 候选（必填 / 固定 / 文本仍在）', () => {
+    const spec = blankSpec();
+    spec.slots = [
+      {...blankSlot(0), key: 'hero', label: '主图', minCount: 1, maxCount: 1},
+      {...blankSlot(1), key: 'opt', label: '可选', minCount: 0, maxCount: 1},
+      {...blankSlot(2), key: 'fix', label: '固定', minCount: 0, maxCount: 1, binding: 'fixed'},
+      {...blankSlot(3, 'text', []), key: 'brief', type: 'text', refMode: 'attachment', label: '口播'},
+    ];
+    const tokens = referenceChips(spec).map(chip => chip.token);
+    expect(tokens).toContain('{{Mixed 1}}'); // 必填
+    expect(tokens).not.toContain('{{Mixed 2}}'); // 可选 + 用户填 → 不给
+    expect(tokens).toContain('{{Mixed 3}}'); // 已固定（素材一定在）
+    expect(tokens).toContain('{{slot:brief}}'); // 文本槽位
   });
 
   it('删槽位时把它在提示词里的引用一并清掉，并回条数', () => {
