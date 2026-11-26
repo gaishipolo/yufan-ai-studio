@@ -152,6 +152,12 @@ function pointOffset(root: HTMLElement, container: Node, offset: number): number
           return true;
         }
         acc += Math.min(offset, serializeText(node.textContent ?? '').length);
+      } else if (node instanceof HTMLElement && node.dataset.token) {
+        /* 胶囊是**一整枚**：边界落在它上面时，offset 1 = 它的**末尾**。
+           这里必须按 token 长度算（lengthOf 的口径 = data-token 的长度）——
+           按子节点（显示名）长度算会把选区截短，「主图 {{Mixed 1}}」被切成
+           「主图 {{M」+「ixed 1}}」，一半进默认描述、一半留在正文。 */
+        acc += offset > 0 ? lengthOf(node) : 0;
       } else {
         for (let i = 0; i < offset; i += 1) {
           const child = node.childNodes[i];

@@ -487,6 +487,55 @@ describe('模板封装 · 编辑器里的提示词', () => {
     const menu = await screen.findByRole('menu');
     expect(menu).toHaveTextContent('设为默认描述');
   });
+  /**
+   * 选区终点落在**胶囊元素**上时，选出的文字必须包含**整个 token**。
+   *
+   * 胶囊是一整枚（data-token = {{Mixed N}}，长度 10），显示名只有 3 个字。
+   * 边界换算按显示名算的话，「主图 {{Mixed 1}}」会被切成「主图 {{M」+「ixed 1}}」——
+   * 一半进默认描述、一半留在正文，作者看到的是一句莫名其妙的话。
+   */
+  it('框选终点落在胶囊上 → 选出的整段文字完整（含整个 token）', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'm',
+          prompt: '主图 {{Mixed 1}}，场景 {{Mixed 2}}',
+          slots: [
+            {
+              key: 'image_1', type: 'image', binding: 'user', refMode: 'mixed',
+              minCount: 1, maxCount: 1, label: '正面图', position: 0,
+            },
+            {
+              key: 'image_2', type: 'image', binding: 'user', refMode: 'mixed',
+              minCount: 0, maxCount: 1, label: '场景', position: 1,
+            },
+          ],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    const box = screen.getByRole('textbox', { name: '提示词' });
+    const chip = box.querySelector('[data-token]')!;
+    const range = document.createRange();
+    range.setStart(box.firstChild!, 0);
+    range.setEnd(chip, 1);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const menu = await screen.findByRole('menu');
+    await user.click(within(menu).getByRole('menuitem', { name: /场景/ }));
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', { name: '保存草稿' }));
+    const sent = mutations.save.mock.calls[0][0];
+    expect(sent.slots?.find((item) => item.label === '场景')?.emptyText).toBe('主图 {{Mixed 1}}');
+  });
 
   /** 端到端钉住刚修的「重新框选同一段」：组件里曾因函数同名自递归 +
       偏移整段平移，把正文切碎。纯函数测试抓不到接线错误。 */
