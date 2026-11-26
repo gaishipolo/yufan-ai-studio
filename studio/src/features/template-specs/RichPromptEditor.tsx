@@ -455,8 +455,22 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       return () => document.removeEventListener('selectionchange', report);
     }, [onSelectionChange]);
 
-    const chipOf = (token: string) =>
-      candidates.find(candidate => normalizeToken(candidate.token) === normalizeToken(token));
+    /** 胶囊上显示哪个槽位名。
+     *
+     * 正文里通常是**作者写法**（`{{Mixed 1}}`），但也可能是内部写法
+     * （`{{slot:hero}}`）—— 删过槽位的旧草稿里就有（那是 `stripSlotRefs`
+     * 留下的形态）。两种都要认得，否则胶囊上显示的是一串原始 token。
+     */
+    const chipOf = (token: string) => {
+      const norm = normalizeToken(token);
+      const direct = candidates.find(candidate => normalizeToken(candidate.token) === norm);
+      if (direct) return direct;
+      /* 内部写法（`{{slot:hero}}`）也要认得：删过槽位的旧草稿里就有这种形态，
+         认不出的话胶囊上显示的是一串原始 token，而不是槽位名。 */
+      const key = norm.match(/^\{\{slot:([a-z][a-z0-9_]{0,39})/)?.[1];
+      const label = key ? slotNames?.[key] : undefined;
+      return label ? {token, label, all: false} : undefined;
+    };
 
     /* 重建 DOM：text 节点 + 胶囊 + 高亮段交替。React 不管这些子节点。
      *

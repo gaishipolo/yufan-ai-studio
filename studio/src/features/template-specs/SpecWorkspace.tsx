@@ -88,7 +88,7 @@ import {
   slotTypeOf,
   slotsMissingTag,
   splitModelSelection,
-  stripSlotRefs,
+  stripSlotRefsAuthored,
   textsToClearForRequired,
   toMixedTokens,
   type SlotType,
@@ -790,7 +790,9 @@ export function SpecWorkspace() {
     let next = renumberRefs(draft, remaining);
     let stripped = 0;
     for (const key of keys) {
-      const result = stripSlotRefs(next.prompt ?? '', key, remaining);
+      /* 用 authored 版：正文里要留的仍是**作者写法**（`{{Mixed N}}`），
+         内部写法漏出去的话作者看到的是 `{{slot:hero}}`，胶囊也认不出槽位名。 */
+      const result = stripSlotRefsAuthored(next.prompt ?? '', key, remaining);
       // 槽位没了，正文里指向它的锚点也成了孤儿。摘掉标记、**保留那段字** ——
       // 它是作者写的提示词，不该因为删槽位就凭空消失。
       next = {...next, prompt: unwrapAnchor(result.text, key)};

@@ -678,6 +678,23 @@ export function toMixedTokens(text: string, slots: SpecSlotIn[] = []): string {
  * `modifier` 是三种写法共用的后缀（`""` / `"*"` / `".2"`），拼进来省得调用方
  * 各自切字符串。
  */
+/**
+ * 删掉某个槽位在正文里的引用，并保持正文的**作者写法**（`{{Mixed N}}`）。
+ *
+ * `stripSlotRefs` 为了「按 key 匹配」，会先把文本换成内部写法（`{{slot:key}}`）
+ * 再替换 —— 直接用它的返回值，正文里就留下了内部写法：作者看到的是
+ * `{{slot:hero}}` 而不是 `{{Mixed 1}}`，胶囊上也匹配不到槽位名。
+ * 这里补一次换回。
+ */
+export function stripSlotRefsAuthored(
+  text: string,
+  key: string,
+  slots: SpecSlotIn[] = [],
+): {text: string; count: number} {
+  const result = stripSlotRefs(text, key, slots);
+  return {text: toMixedTokens(result.text, slots), count: result.count};
+}
+
 export function slotRefToken(
   slots: SpecSlotIn[] | undefined,
   slot: SpecSlotIn,
