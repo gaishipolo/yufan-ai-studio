@@ -27,6 +27,25 @@ import { caretPointOf, selectionEndPoint } from './caretPoint';
 const TOKEN_RE =
   /\{\{\s*(?:slot:[a-z][a-z0-9_]{0,39}|Mixed\s+\d+)(?:\*|\.\d+)?\s*\}\}/g;
 
+/**
+ * 一整段「默认描述」锚点：⟦e:key⟧…⟦/e⟧。
+ *
+ * **段内的 token 是纯文字、不是胶囊**（作者写进默认描述里的引用，编译期才当引用看），
+ * 所以重绘判据必须把整段挖掉再数剩下的 token —— 见 paint effect 里的 expected。
+ */
+const ANCHOR_SEGMENT_RE = /⟦e:[a-z][a-z0-9_]{0,39}⟧[\s\S]*?⟦\/e⟧/g;
+
+/**
+ * 正文里应该画成**胶囊**的 token 有几个。
+ *
+ * **锚点段（默认描述）里的 token 不算** —— 那一段里的引用是纯文字，不是胶囊。
+ * 算进去的话两边永远不等 → 每次都重绘 → 鼠标拖选进行到一半时 DOM 被重建 →
+ * 选区塌缩 → 框选菜单不出现 → 「取消「XX」的默认描述」永远点不到。
+ */
+export function expectedCapsuleCount(value: string): number {
+  return (value.replace(ANCHOR_SEGMENT_RE, '').match(TOKEN_RE) ?? []).length;
+}
+
 /** 去掉空白后的 token：正文里的写法可能带空格，候选里的是规范形式。 */
 const normalizeToken = (raw: string) => raw.replace(/\s+/g, '');
 
@@ -564,7 +583,12 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       if (!root || composing.current) return;
 
       const painted = root.querySelectorAll('[data-token]').length;
-      const expected = (value.match(TOKEN_RE) ?? []).length;
+      /* expected 只数**锚点段外**的 token。
+         锚点段（默认描述）里的 token 渲染成**纯文字**，不是胶囊 —— 把它数进去，
+         两边永远不等 → 每次都重绘 → 正在进行的鼠标拖选被 DOM 重建打断
+         （选区塌缩 → 框选菜单不弹 → 「取消默认描述」永远点不到）。
+         症状正是「默认描述里含插槽引用时，那段框不出来」。 */
+      const expected = expectedCapsuleCount(value);
       if (serialize(root) === value && painted === expected) return;
 
       const caret = pendingCaret.current;

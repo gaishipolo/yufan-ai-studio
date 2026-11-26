@@ -488,6 +488,64 @@ describe('模板封装 · 编辑器里的提示词', () => {
     expect(menu).toHaveTextContent('设为默认描述');
   });
   /**
+   * 用户报过的坑：默认描述里**含插槽引用**时，那段框不出来 →
+   * 「取消「XX」的默认描述」永远点不到（作者想撤销只能重写一遍）。
+   *
+   * 根因在重绘判据：锚点段里的 token 渲染成**纯文字**、不是胶囊，
+   * 判据却把它算进「期望胶囊数」→ 两边永远不等 → 每次都重绘 →
+   * 鼠标拖选进行到一半时 DOM 被重建 → 选区塌缩 → 框选菜单不出现。
+   *
+   * 这条用例按**真实操作顺序**走：先指派一段含引用的文字，再框选它想取消。
+   */
+  it('默认描述里含插槽引用时，那段仍能框选 → 「取消」入口可用', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'm',
+          prompt: '主图 {{Mixed 1}}，场景 {{Mixed 2}}',
+          slots: [
+            {
+              key: 'image_1', type: 'image', binding: 'user', refMode: 'mixed',
+              minCount: 1, maxCount: 1, label: '正面图', position: 0,
+            },
+            {
+              key: 'image_2', type: 'image', binding: 'user', refMode: 'mixed',
+              minCount: 0, maxCount: 1, label: '场景', position: 1,
+            },
+          ],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    const box = screen.getByRole('textbox', { name: '提示词' });
+    // ① 框选「主图 + 正面图胶囊」→ 设为「场景」的默认描述（这段含插槽引用）
+    const chip = box.querySelector('[data-token]')!;
+    const first = document.createRange();
+    first.setStart(box.firstChild!, 0);
+    first.setEnd(chip, 1);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(first);
+    document.dispatchEvent(new Event('selectionchange'));
+    const menu1 = await screen.findByRole('menu');
+    await user.click(within(menu1).getByRole('menuitem', { name: /场景/ }));
+
+    // ② 重新框选那段 → 菜单里必须出现「取消」
+    const span = screen.getByRole('textbox', { name: '提示词' }).querySelector('[data-anchor]')!;
+    expect(span).not.toBeNull();
+    const again = document.createRange();
+    again.selectNodeContents(span);
+    window.getSelection()!.removeAllRanges();
+    window.getSelection()!.addRange(again);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const menu2 = await screen.findByRole('menu');
+    expect(menu2).toHaveTextContent('取消');
+  });
+  /**
    * 选区终点落在**胶囊元素**上时，选出的文字必须包含**整个 token**。
    *
    * 胶囊是一整枚（data-token = {{Mixed N}}，长度 10），显示名只有 3 个字。
