@@ -17,7 +17,7 @@ export interface LibraryTagPickerProps {
 }
 
 const PILL =
-  'inline-flex items-center gap-1 rounded-full border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
+  'inline-flex items-center gap-1 rounded-xs border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
 const IDLE =
   'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-primary-soft/60 hover:text-primary-deep';
 const ACTIVE = 'border-primary bg-primary text-white shadow-sm';

@@ -39,6 +39,22 @@ const FORBIDDEN = [
   { name: '错误条底色（半透明变体）', pattern: /bg-danger\/5\b/ },
 ];
 
+/**
+ * 模板封装页专属的配色守卫。
+ *
+ * 下面这几个硬编码值在**全仓**还有合法用途（`FormField` / `SearchInput` 的
+ * placeholder、`Button` 的悬停底等），所以不能塞进上面的全局 `FORBIDDEN`。
+ * 但模板封装页本身已经收敛到色板 token（`ink-mute` / `panel-soft` /
+ * `line-strong`）——这一块不许再抄一份硬编码回来，否则换主题时只有这里
+ * 不变、跟周围脱节。
+ */
+const TEMPLATE_SPECS_SCOPE = 'features/template-specs/';
+const TEMPLATE_SPECS_FORBIDDEN = [
+  { name: '占位符文字', pattern: /text-\[#a9b8bf\]/ },
+  { name: '菜单悬停底', pattern: /bg-\[#f1f6f7\]/ },
+  { name: '分段控件外环', pattern: /ring-\[rgba\(203,218,224,\.8\)\]/ },
+];
+
 /** 这些文件是配色的**来源**，扫描它们只会找到它们自己 */
 const EXEMPT = new Set([
   join('shared', 'ui', 'Notice.tsx'),
@@ -64,15 +80,32 @@ describe('提示条配色不许手抄', () => {
   });
 
   it.each(FORBIDDEN)('$name 没有再被手抄', ({ pattern }) => {
-    const offenders: string[] = [];
-    for (const file of files) {
-      const source = readFileSync(file, 'utf8');
-      if (!pattern.test(source)) continue;
-      /* 注释里提一嘴色值不算抄 —— 真正的问题是 className 里出现它。
-         判据：这一行同时含 `className` 或紧邻 JSX 属性位置。
-         这里保守一点：只要出现就报，宁可误报也不要漏。 */
-      offenders.push(relative(SRC_ROOT, file));
-    }
-    expect(offenders).toEqual([]);
+    expect(offendersOf(files, pattern)).toEqual([]);
+  });
+});
+
+/** 扫一组文件里有没有源文件含该硬编码。共用给全局与模块级守卫。 */
+function offendersOf(files: string[], pattern: RegExp): string[] {
+  const offenders: string[] = [];
+  for (const file of files) {
+    const source = readFileSync(file, 'utf8');
+    /* 注释里提一嘴色值不算抄 —— 这里保守一点：只要出现就报，宁可误报也不要漏。
+       因此新守卫的条目 comment 里不要写这些字面量。 */
+    if (pattern.test(source)) offenders.push(relative(SRC_ROOT, file));
+  }
+  return offenders;
+}
+
+describe('模板封装页配色不回退到硬编码', () => {
+  const files = walk(SRC_ROOT).filter((file) =>
+    relative(SRC_ROOT, file).replace(/\\/g, '/').startsWith(TEMPLATE_SPECS_SCOPE),
+  );
+
+  it('扫得到模板封装页（作用域没写错）', () => {
+    expect(files.length).toBeGreaterThan(10);
+  });
+
+  it.each(TEMPLATE_SPECS_FORBIDDEN)('$name 没有再被手抄', ({ pattern }) => {
+    expect(offendersOf(files, pattern)).toEqual([]);
   });
 });

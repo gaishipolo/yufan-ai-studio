@@ -8,7 +8,7 @@ import type { UsageRecordOut } from '@/entities/usage/model/types';
 /** 状态词 → Chip 的色调。`statusTone` 的 'bad' / 'mute' 在 Chip 里没有同名档。 */
 const TONE_MAP = {
   ok: 'ok',
-  warn: 'warn',
+  brand: 'brand',
   bad: 'danger',
   mute: 'default',
 } as const;
@@ -68,15 +68,15 @@ export function RecordsSection({
           <div className="-mx-3.5 overflow-x-auto">
             <table className="w-full min-w-[860px] border-collapse text-left">
               <thead>
-                <tr className="border-b border-line-soft text-meta text-ink-mute">
-                  <th className="px-3.5 py-2 font-normal">时间（UTC）</th>
-                  <th className="px-3.5 py-2 font-normal">来源</th>
-                  <th className="px-3.5 py-2 font-normal">标题</th>
-                  <th className="px-3.5 py-2 font-normal">模型</th>
-                  <th className="px-3.5 py-2 text-right font-normal">数量</th>
-                  <th className="px-3.5 py-2 text-right font-normal">时长</th>
-                  <th className="px-3.5 py-2 font-normal">状态</th>
-                  <th className="px-3.5 py-2 font-normal">使用人</th>
+                <tr className="font-mono text-micro tracking-[.1em] text-ink-soft">
+                  <th className="border-b-2 border-primary px-3.5 py-2 font-semibold">时间（UTC）</th>
+                  <th className="border-b-2 border-primary px-3.5 py-2 font-semibold">来源</th>
+                  <th className="border-b-2 border-primary px-3.5 py-2 font-semibold">标题</th>
+                  <th className="border-b-2 border-primary px-3.5 py-2 font-semibold">模型</th>
+                  <th className="border-b-2 border-primary px-3.5 py-2 text-right font-semibold">数量</th>
+                  <th className="border-b-2 border-primary px-3.5 py-2 text-right font-semibold">时长</th>
+                  <th className="border-b-2 border-primary px-3.5 py-2 font-semibold">状态</th>
+                  <th className="border-b-2 border-primary px-3.5 py-2 font-semibold">使用人</th>
                 </tr>
               </thead>
               <tbody>

@@ -134,13 +134,13 @@ export function TrendChart({ points, granularity, className }: TrendChartProps) 
 
       <div className="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1.5 text-meta text-ink-mute">
         <span className="inline-flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2 rounded-[2px] bg-primary" />已产出
+          <i className="inline-block h-2 w-2 rounded-xs bg-primary" />已产出
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2 rounded-[2px] bg-danger/70" />失败
+          <i className="inline-block h-2 w-2 rounded-xs bg-danger/70" />失败
         </span>
         <span className="inline-flex items-center gap-1.5">
-          <i className="inline-block h-2 w-2 rounded-[2px] bg-line-strong" />进行中
+          <i className="inline-block h-2 w-2 rounded-xs bg-line-strong" />进行中
         </span>
       </div>
     </div>

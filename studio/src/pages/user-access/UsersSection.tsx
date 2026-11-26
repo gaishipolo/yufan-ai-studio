@@ -211,7 +211,7 @@ export function UsersSection() {
               <div className="min-w-0 md:min-w-[1120px]">
                 <div
                   className={cn(
-                    'hidden gap-3 border-b border-line-soft bg-panel-soft px-3.5 py-2 text-meta font-semibold text-ink-mute md:grid',
+                    'hidden gap-3 border-b-2 border-primary px-3.5 py-2 font-mono text-micro font-semibold tracking-[.1em] text-ink-soft md:grid',
                     GRID,
                   )}
                 >
@@ -268,7 +268,7 @@ export function UsersSection() {
                             <span
                               className={cn(
                                 'inline-flex items-center gap-1 text-meta',
-                                user.isActive ? 'text-[#0f9c63]' : 'text-ink-mute',
+                                user.isActive ? 'text-ok' : 'text-ink-mute',
                               )}
                             >
                               <span

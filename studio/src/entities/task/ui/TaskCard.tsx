@@ -21,11 +21,18 @@ export interface TaskCardProps {
   liveProgress?: number;
 }
 
+/* 封面角标的底色：
+   - 在飞（排队中 / 生成中）= 深色底 + 一颗青点。青绿是这个系统的
+     「在飞」信号色（token 注释里写死了：只有真的在跑的东西才用它），
+     以前这里用的是蓝 —— 于是蓝同时兼任「行动、选中、在飞」三件事，
+     一屏全是蓝的，状态反而看不见了。
+   - 失败 = 红（唯一保留的实心色，因为失败必须一眼看到）。
+   - 完成 = 不摆角标（画面上没东西可失败，就别占位置）。 */
 const STATUS_STYLE: Record<VideoTask['status'], string> = {
-  queued: 'bg-[rgba(43,124,255,.92)]',
-  running: 'bg-[rgba(43,124,255,.92)]',
-  failed: 'bg-[rgba(242,84,75,.92)]',
-  completed: 'bg-[rgba(23,192,122,.9)]',
+  queued: 'bg-[rgba(10,22,28,.62)]',
+  running: 'bg-[rgba(10,22,28,.62)]',
+  failed: 'bg-[rgba(176,57,28,.92)]',
+  completed: 'bg-[rgba(10,22,28,.62)]',
 };
 
 export const TaskCard = memo(function TaskCard({
@@ -44,9 +51,8 @@ export const TaskCard = memo(function TaskCard({
   return (
     <article
       className={cn(
-        'group relative cursor-pointer overflow-hidden rounded-card border bg-panel transition-all duration-200',
-        'hover:-translate-y-0.5 hover:shadow-card',
-        selected ? 'border-primary shadow-[0_0_0_2px_rgba(43,124,255,.18)]' : 'border-line-soft hover:border-line-strong',
+        'group relative cursor-pointer overflow-hidden rounded-card border bg-panel transition-colors duration-200',
+        selected ? 'border-primary shadow-[0_0_0_2px_rgba(23,21,15,.20)]' : 'border-line-soft hover:border-line-strong',
       )}
     >
       {/* 整卡可点击区：用真实 button 铺满，键盘与读屏都能到（CODE_STYLE 3.7） */}
@@ -62,7 +68,8 @@ export const TaskCard = memo(function TaskCard({
           src={task.coverUrl}
           seed={task.id}
           alt={task.title}
-          className="aspect-[4/5] w-full"
+          /* 封面加一圈内描边：浅色封面直接贴在白卡片上，边界会糊掉 */
+          className="aspect-[4/5] w-full ring-1 ring-inset ring-[rgba(12,24,30,.10)]"
           imgClassName="transition-transform duration-300 group-hover:scale-[1.04]"
         />
 
@@ -71,16 +78,19 @@ export const TaskCard = memo(function TaskCard({
 
         <span
           className={cn(
-            'absolute left-2 top-2 rounded-pill px-1.5 py-px text-micro font-semibold text-white backdrop-blur-[6px]',
+            'absolute left-2 top-2 inline-flex items-center gap-1 rounded-xs px-1.5 py-px font-mono text-micro font-semibold tracking-[.06em] text-white backdrop-blur-[6px]',
             STATUS_STYLE[task.status],
             task.status === 'completed' && 'hidden',
           )}
         >
+          {inFlight && (
+            <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand motion-reduce:animate-none" aria-hidden />
+          )}
           {TASK_STATUS_LABEL[task.status]}
         </span>
 
         {task.status !== 'failed' && (
-          <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-pill border border-white/20 bg-[rgba(10,22,28,.5)] px-1.5 py-px text-micro text-white opacity-0 backdrop-blur-[6px] transition-opacity group-hover:opacity-100 focus-within:opacity-100">
+          <span className="absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-xs border border-white/20 bg-[rgba(10,22,28,.5)] px-1.5 py-px text-micro text-white opacity-0 backdrop-blur-[6px] transition-opacity group-hover:opacity-100 focus-within:opacity-100">
             <Play size={9} className="fill-current" />
             预览
           </span>
@@ -89,7 +99,7 @@ export const TaskCard = memo(function TaskCard({
         {!inFlight && task.status !== 'failed' && (
           /* 画幅与时长合并成一个角标：它们都是"这条片子是什么规格"，
              分成两个 pill 会把封面右下角塞满。失败的任务没有片子，不摆这张标签。 */
-          <span className="absolute bottom-2 right-2 rounded-[5px] bg-[rgba(10,22,28,.5)] px-1.5 py-px font-mono text-micro tabular-nums text-white">
+          <span className="absolute bottom-2 right-2 rounded-xs bg-[rgba(10,22,28,.5)] px-1.5 py-px font-mono text-micro tabular-nums text-white">
             {task.aspectRatio} · {formatDuration(task.durationSec)}
           </span>
         )}
@@ -104,7 +114,7 @@ export const TaskCard = memo(function TaskCard({
             onToggleSelect(task.id);
           }}
           className={cn(
-            'absolute right-2 top-2 z-[2] grid h-[17px] w-[17px] place-items-center rounded-[5px] border-[1.5px] transition-opacity',
+            'absolute right-2 top-2 z-[2] grid h-[17px] w-[17px] place-items-center rounded-md border-[1.5px] transition-opacity',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
             selected
               ? 'border-primary bg-primary text-white opacity-100'
@@ -120,16 +130,19 @@ export const TaskCard = memo(function TaskCard({
 
         {inFlight ? (
           <>
-            <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-line-soft">
+            <div className="mt-2 h-[3px] overflow-hidden rounded-xs bg-line-soft">
               <i
-                className="block h-full rounded-full bg-[linear-gradient(90deg,#4f9dff,#12c4c8)] transition-[width] duration-500"
+                /* 进度条也是「在飞」——所以它是青绿渐变，不是主色蓝。
+                   一屏里蓝留给选中与行动，青留给正在发生的。 */
+                /* 进度条是「在飞」—— 全站唯一的彩色，朱红。 */
+                className="block h-full rounded-xs bg-[linear-gradient(90deg,#c4552f,#a8341a)] transition-[width] duration-500"
                 style={{ width: `${shownProgress}%` }}
               />
             </div>
             <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
-              <Chip tone="primary" className="max-w-[70%] truncate">
-                {task.model}
-              </Chip>
+              {/* 模型名是**内容**，不是状态：中性 chip。
+                  一屏四张卡就有四块蓝底，真正该被看见的「生成中」反而被淹了。 */}
+              <Chip className="max-w-[70%] truncate">{task.model}</Chip>
               <span className="shrink-0 font-mono tabular-nums">{shownProgress}%</span>
             </div>
             {/* 「48% 卡了半小时」和「排第 3 位」看起来完全一样，差别只有上游知道。
@@ -143,15 +156,16 @@ export const TaskCard = memo(function TaskCard({
         ) : (
           /* 规格已经搬到封面角标上，这一行只留「哪个模型」和「什么时候」 */
           <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
-            <Chip tone="primary" className="max-w-[52%] truncate">
-              {task.model}
-            </Chip>
+            <Chip className="max-w-[52%] truncate">{task.model}</Chip>
             {erase?.status === 'completed' ? (
               <Chip tone="brand" className="shrink-0">
                 去字幕
               </Chip>
             ) : null}
-            <span className="ml-auto shrink-0 truncate">{formatDateTime(task.createdAt)}</span>
+            {/* 时间是数据：等宽 + tabular，跟下面那列的数字对得上 */}
+            <span className="ml-auto shrink-0 truncate font-mono tabular-nums">
+              {formatDateTime(task.createdAt)}
+            </span>
           </div>
         )}
         {eraseRunning ? (

@@ -216,7 +216,7 @@ function InlineThumb({
       onClick={onZoom}
       title="点击查看大图"
       className={cn(
-        'mx-0.5 inline-flex shrink-0 cursor-zoom-in overflow-hidden rounded-[3px] align-[-0.28em] ring-1 ring-line-strong transition-shadow hover:ring-primary',
+        'mx-0.5 inline-flex shrink-0 cursor-zoom-in overflow-hidden rounded-xs align-[-0.28em] ring-1 ring-line-strong transition-shadow hover:ring-primary',
         size === 'md' ? 'h-[1.45em] w-[1.45em]' : 'h-[1.2em] w-[1.2em]',
       )}
     >

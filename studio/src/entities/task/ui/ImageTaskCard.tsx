@@ -19,11 +19,14 @@ const STATUS_LABEL: Record<string, string> = {
   failed: '生成失败',
 };
 
+/* 角标底色与视频卡同一套语言：
+   在飞 = 深色底 + 青点（青绿是「在飞」信号色），失败 = 红，
+   其余不摆实心色 —— 一屏卡片里只有「正在发生」和「出问题」值得抢眼。 */
 const STATUS_STYLE: Record<string, string> = {
-  queued: 'bg-[rgba(43,124,255,.92)]',
-  running: 'bg-[rgba(43,124,255,.92)]',
-  succeeded: 'bg-[rgba(23,192,122,.9)]',
-  failed: 'bg-[rgba(242,84,75,.92)]',
+  queued: 'bg-[rgba(10,22,28,.62)]',
+  running: 'bg-[rgba(10,22,28,.62)]',
+  succeeded: 'bg-[rgba(10,22,28,.62)]',
+  failed: 'bg-[rgba(176,57,28,.92)]',
 };
 
 /** 任务中心里的生图卡片：与视频卡同栅格、同样可勾选（批量删除 / 下载都支持）。 */
@@ -39,10 +42,9 @@ export const ImageTaskCard = memo(function ImageTaskCard({
   return (
     <article
       className={cn(
-        'group relative cursor-pointer overflow-hidden rounded-card border bg-panel transition-all duration-200',
-        'hover:-translate-y-0.5 hover:shadow-card',
+        'group relative cursor-pointer overflow-hidden rounded-card border bg-panel transition-colors duration-200',
         selected
-          ? 'border-primary shadow-[0_0_0_2px_rgba(43,124,255,.18)]'
+          ? 'border-primary shadow-[0_0_0_2px_rgba(23,21,15,.20)]'
           : 'border-line-soft hover:border-line-strong',
       )}
     >
@@ -58,7 +60,8 @@ export const ImageTaskCard = memo(function ImageTaskCard({
           src={cover}
           seed={item.id}
           alt={item.title}
-          className="aspect-[4/5] w-full"
+          /* 封面加一圈内描边：浅色封面直接贴在白卡片上，边界会糊掉 */
+          className="aspect-[4/5] w-full ring-1 ring-inset ring-[rgba(12,24,30,.10)]"
           imgClassName="transition-transform duration-300 group-hover:scale-[1.04]"
         />
         <div className="pointer-events-none absolute inset-0 bg-[linear-gradient(180deg,rgba(8,20,26,.2)_0%,rgba(8,20,26,0)_32%,rgba(8,20,26,.46)_100%)]" />
@@ -70,16 +73,19 @@ export const ImageTaskCard = memo(function ImageTaskCard({
         {(item.status !== 'succeeded' || item.group === 'attention') && (
           <span
             className={cn(
-              'absolute bottom-2 left-2 rounded-pill px-1.5 py-px text-micro font-semibold text-white backdrop-blur-[6px]',
+              'absolute bottom-2 left-2 inline-flex items-center gap-1 rounded-xs px-1.5 py-px font-mono text-micro font-semibold tracking-[.06em] text-white backdrop-blur-[6px]',
               STATUS_STYLE[item.status] ?? 'bg-[rgba(10,22,28,.58)]',
             )}
           >
+            {inFlight && (
+              <i className="h-1.5 w-1.5 animate-pulse rounded-full bg-brand motion-reduce:animate-none" aria-hidden />
+            )}
             {item.group === 'attention'
               ? '成图待恢复'
               : (STATUS_LABEL[item.status] ?? item.status)}
           </span>
         )}
-        <span className="absolute bottom-2 right-2 rounded-[5px] bg-[rgba(10,22,28,.5)] px-1.5 py-px text-micro tabular-nums text-white">
+        <span className="absolute bottom-2 right-2 rounded-xs bg-[rgba(10,22,28,.5)] px-1.5 py-px font-mono text-micro tabular-nums text-white">
           {/* 后端 size 是 `1024x1024`：x 换成乘号，和模板库参数区同一写法 */}
           {(item.size ?? '').replace('x', '×')} · ×{item.count ?? 1}
         </span>
@@ -94,7 +100,7 @@ export const ImageTaskCard = memo(function ImageTaskCard({
             onToggleSelect(item.id);
           }}
           className={cn(
-            'absolute right-2 top-2 z-[2] grid h-[17px] w-[17px] place-items-center rounded-[5px] border-[1.5px] transition-opacity',
+            'absolute right-2 top-2 z-[2] grid h-[17px] w-[17px] place-items-center rounded-md border-[1.5px] transition-opacity',
             'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/50',
             selected
               ? 'border-primary bg-primary text-white opacity-100'
@@ -109,26 +115,28 @@ export const ImageTaskCard = memo(function ImageTaskCard({
         <p className="line-clamp-2 min-h-9 break-all text-xs leading-[18px] text-ink">{item.title}</p>
         {inFlight ? (
           <>
-            <div className="mt-2 h-[3px] overflow-hidden rounded-full bg-line-soft">
+            <div className="mt-2 h-[3px] overflow-hidden rounded-xs bg-line-soft">
               <i
-                className="block h-full rounded-full bg-[linear-gradient(90deg,#4f9dff,#12c4c8)] transition-[width] duration-500"
+                /* 进度条是「在飞」——青绿渐变，不是主色蓝 */
+                /* 进度条是「在飞」—— 全站唯一的彩色，朱红。 */
+                className="block h-full rounded-xs bg-[linear-gradient(90deg,#c4552f,#a8341a)] transition-[width] duration-500"
                 style={{ width: `${item.progress ?? 0}%` }}
               />
             </div>
             <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
-              <Chip tone="primary" className="max-w-[70%] truncate">
-                {item.model}
-              </Chip>
+              {/* 模型名是内容不是状态：中性 chip，把颜色让给状态 */}
+              <Chip className="max-w-[70%] truncate">{item.model}</Chip>
               <span className="shrink-0 font-mono tabular-nums">{item.progress ?? 0}%</span>
             </div>
           </>
         ) : (
           /* 与视频卡同一套节奏：模型在左、时间在右，规格已经在封面角标上 */
           <div className="mt-2 flex items-center justify-between gap-2 text-micro text-ink-mute">
-            <Chip tone="primary" className="max-w-[62%] truncate">
-              {item.model}
-            </Chip>
-            <span className="shrink-0 truncate">{formatDateTime(item.createdAt)}</span>
+            <Chip className="max-w-[62%] truncate">{item.model}</Chip>
+            {/* 时间是数据：等宽 + tabular */}
+            <span className="shrink-0 truncate font-mono tabular-nums">
+              {formatDateTime(item.createdAt)}
+            </span>
           </div>
         )}
       </div>

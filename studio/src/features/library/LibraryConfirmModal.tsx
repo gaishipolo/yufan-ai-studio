@@ -57,7 +57,7 @@ export function LibraryConfirmModal({
               onChange={(event) => setReason(event.target.value)}
               rows={3}
               placeholder={reasonPlaceholder}
-              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
+              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed text-ink outline-none focus:border-primary-line focus:bg-panel focus:shadow-ring"
               aria-label={reasonLabel}
             />
           </div>

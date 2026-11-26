@@ -268,7 +268,7 @@ function DetailBody({
               </Button>
             </div>
             {/* 纯文本，不做 Markdown → HTML 渲染，避免把用户正文当页面执行 */}
-            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-lg border border-line-soft bg-white px-2.5 py-2 text-body leading-relaxed text-ink-soft">
+            <pre className="max-h-[360px] overflow-auto whitespace-pre-wrap rounded-lg border border-line-soft bg-panel px-2.5 py-2 text-body leading-relaxed text-ink-soft">
               {text.isPending
                 ? '正在读取正文…'
                 : text.isError
@@ -310,7 +310,7 @@ function DetailBody({
       <section className="space-y-2">
         <SectionTitle>基础信息</SectionTitle>
         <div className="flex flex-wrap items-center gap-1.5">
-          <Chip tone="primary">{KIND_LABEL[asset.kind]}</Chip>
+          <Chip>{KIND_LABEL[asset.kind]}</Chip>
           <Chip>{ORIGIN_LABEL[asset.origin] ?? asset.origin}</Chip>
           <Chip tone={asset.state === 'active' ? 'ok' : asset.state === 'draft' ? 'warn' : 'danger'}>
             {STATE_LABEL[asset.state]}
@@ -342,7 +342,7 @@ function DetailBody({
                       ref={nameInput}
                       value={name}
                       onChange={(event) => setName(event.target.value)}
-                      className="h-7 w-full rounded-lg border border-primary-line bg-white px-2 text-body text-ink outline-none"
+                      className="h-7 w-full rounded-lg border border-primary-line bg-panel px-2 text-body text-ink outline-none"
                       aria-label="资产名称"
                       /* 这条约束（改完后缀还在）只在**编辑态**说，平时看不到后缀。
                          原来是一行常驻小字，占着编辑区一行 ——

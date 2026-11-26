@@ -3,6 +3,7 @@ import { ChevronDown, GripVertical, Trash2 } from 'lucide-react';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import type { SpecSlotIn } from '@/shared/api/schema';
 import { Button, FormField, MultiSelect, Select } from '@/shared/ui';
+import { MentionTextarea } from './MentionTextarea';
 import { cn } from '@/shared/lib/cn';
 import {
   SLOT_TYPE_LABELS,
@@ -14,8 +15,8 @@ import {
   slotRefToken,
   slotTypeOf,
 } from './specDraft';
-import { MentionTextarea } from './MentionTextarea';
 import { SLOT_TYPE_ICONS } from './slotIcons';
+import { parseAnchors } from './defaultText';
 
 /**
  * 一个槽位卡片。
@@ -72,24 +73,22 @@ export function SlotCard({
      实际生效的不一致 —— 这类错只在生成结果里显形。 */
   const optional = isOptionalSlot(slot);
 
-  /* 两段文案的**存在前提**只剩一条：这个槽位是**可选**的。
-     **必填 = 素材一定在 = 直接插编号**，没有「填了 / 没填」两种状态，
-     两段文案对它没有意义。
-
-     「提示词里有没有引用」**不再是前提**（2026-11-18 用户拍板）：
-     只要是可选就显示这两个框。先让人把话写下来，比先让人去正文里
-     插一个 token 再回来写更顺 —— 而且写作顺序不该由界面的门槛决定。
-
-     没有插入点时这两段文案**编译期用不上**（没有位置可插），所以
-     下面会照实说一句，而不是静默接受一个填了不生效的东西。 */
-  const hasInsertPoint = hasSingleSlotRef(prompt, slot.key, slots);
+  /* 插入点有两种写法，缺一不可识别：
+     1. 正文里的 `{{Mixed N}}` / `{{slot:key}}` 单张引用；
+     2. **框选设出来的默认描述段**（`⟦e:key⟧…⟦/e⟧`）—— 它在提交时会被
+        `anchorsToRefs` 换成单张引用，是同一个插入点的另一种编辑态写法。
+     只认第 1 种的话，作者刚设完默认描述，这里的占位符却还说
+     「要在正文写 {{Mixed N}} 引用才生效」—— 明明已经生效了。 */
+  const hasInsertPoint =
+    hasSingleSlotRef(prompt, slot.key, slots) ||
+    parseAnchors(prompt).some(item => item.slotKey === slot.key);
   const showTexts = optional;
   /* 占位符里的 token：**当前槽位自己的**引用。
      写死 `{{slot:image_1}}` 的话，第二个槽位显示的就是第一个槽位的 token ——
      作者照着抄进提示词，引用到的还是那个槽位自己（编号会错位）。 */
   const token = slotRefToken(slots, slot);
 
-  /* 两段文案的**占位提示**（不是常驻小字）。
+  /* 「选中时文案」的占位提示（不是常驻小字）。
      说明放在框内占位符里：提示跟着框走、不占额外版面、填了内容就自动消失。
 
      没有插入点时必须说清「填了用不上」—— 提示词里没有插这个槽位的地方，
@@ -97,9 +96,12 @@ export function SlotCard({
   const filledPlaceholder = hasInsertPoint
     ? '使用者填了素材时，提示词里这一段怎么说（打 @ 插入编号）'
     : `使用者填了素材时用这段；提示词里写下 ${token} 引用这个槽位，这段话才会被用上`;
-  const emptyPlaceholder = hasInsertPoint
-    ? '使用者不填素材时用这段（留空则发布会被拦）'
-    : `使用者没填素材时用这段；提示词里写下 ${token} 引用这个槽位，这段话才会被用上`;
+
+  /* 「未选时文案」不在这里显示（2026-11-25 用户定）：
+     它的唯一编辑与查看处就是提示词正文里那一段高亮文字。
+     卡片里再摆一遍正文的快照 —— 哪怕只读 —— 也是同一句话两处维护，
+     且会让作者以为「这里才是字段、正文只是显示」，改错地方。
+     正文里还没有时，选区菜单本身会告诉他可以框选。 */
 
   return (
     <div
@@ -122,13 +124,13 @@ export function SlotCard({
           title="拖动调整顺序（顺序即编号）"
         >
           <GripVertical size={13} />
-          <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-primary text-micro font-semibold text-white shadow-[0_1px_3px_rgba(43,124,255,.35)]">
+          <span className="flex h-[18px] w-[18px] items-center justify-center rounded-full bg-primary text-micro font-semibold text-white shadow-[0_1px_3px_rgba(23,21,15,.30)]">
             {index + 1}
           </span>
         </span>
 
         {/* 类型标记：以前类型藏在下拉框里，要点开才知道这个槽位要图片还是成片。
-            现在一眼可见，也提醒「改类型」这个动作存在（展开区里）。
+            现在一眼可见，也提示这个槽位的类型可以在下方那行改。
             改成图标是因为文字chip（"成片"/"图片"）在 14px 的行里跟展示名挤成一团，
             图标 + 可读名称（给读屏）最省地方。 */}
         <span
@@ -183,7 +185,7 @@ export function SlotCard({
                   })
                 }
                 className={cn(
-                  'rounded-[7px] px-2 py-[3px] text-micro transition-all',
+                  'rounded-lg px-2 py-[3px] text-micro transition-all',
                   active
                     ? 'bg-ink font-medium text-white shadow-[0_1px_2px_rgba(21,50,61,.28)]'
                     : 'text-ink-mute hover:text-ink-soft',
@@ -213,10 +215,13 @@ export function SlotCard({
                   aria-pressed={active}
                   title={item.hint}
                   onClick={() => onPatch(setSlotOptional(slot, item.optional))}
+                  /* 这一组比「谁定」轻一级：一行里两个都是实心黑会互相抢焦点，
+                     扫一眼分不出哪个才是这一行的主状态。用浅蓝底 + 描边表达
+                     「已选」，与「用户填」的实心黑形成主次。 */
                   className={cn(
-                    'rounded-[7px] px-2 py-[3px] text-micro transition-all',
+                    'rounded-lg px-2 py-[3px] text-micro transition-all',
                     active
-                      ? 'bg-ink font-medium text-white shadow-[0_1px_2px_rgba(21,50,61,.28)]'
+                      ? 'bg-primary-soft font-medium text-primary-deep ring-1 ring-inset ring-primary-line'
                       : 'text-ink-mute hover:text-ink-soft',
                   )}
                 >
@@ -251,18 +256,46 @@ export function SlotCard({
         </button>
       </div>
 
-      {/* 标签是发布闸门（用户填的图片/视频必须圈至少一个）。
-          设了就安静地待在展开区；没设就在主行给一枚醒目的提示 ——
-          缺它会在点发布时被 400 打回，而那句话不指名是哪个槽位。 */}
-      {needsTag && !fixed && !slot.tagIds?.length && (
-        <button
-          type="button"
-          onClick={() => setOpen(true)}
-          className="mt-2 inline-flex items-center gap-1 rounded-md bg-warn-soft px-1.5 py-0.5 text-micro text-warn-deep transition-colors hover:bg-warn/15"
-        >
-          缺标签 · 发布前必须选
-        </button>
-      )}
+      {/* 类型 + 候选标签**常驻主行下方**，默认可见，不用点「更多设置」。
+          两者都决定这个槽位「能不能配出来」：类型错了拿错素材，标签没圈
+          发布会被 400 打回 —— 都是发布前就要看到的东西，不是低频设置。
+
+          展开区那份同步删掉，不两处重复（同一件事两处维护必然漂移）。
+          类型对所有槽位都显示；候选标签只对「用户填的图片/视频」有意义。 */}
+      <div className="mt-2 flex items-center gap-2">
+        <div className="w-[150px] shrink-0">
+          <Select
+            aria-label="类型"
+            block
+            value={slot.type}
+            options={typeOptions}
+            onChange={event =>
+              onPatch({type: event.target.value as SpecSlotIn['type']})
+            }
+          />
+        </div>
+        {needsTag && !fixed && (
+          <>
+            <div className="min-w-0 flex-1">
+              {/* 槽位的标签是「圈定候选范围」，不是「打在素材上」：
+                  所以任意级别都能圈（分组也行），多个标签之间是并集。 */}
+              <MultiSelect
+                ariaLabel="候选标签"
+                options={tagOptions}
+                value={slot.tagIds ?? []}
+                onChange={values => onPatch({tagIds: values})}
+                placeholder="候选标签：不限（全部素材）"
+                emptyText="还没有标签"
+              />
+            </div>
+            {!slot.tagIds?.length && (
+              <span className="shrink-0 whitespace-nowrap rounded-md bg-warn-soft px-1.5 py-0.5 text-micro text-warn-deep">
+                缺标签 · 发布前必须选
+              </span>
+            )}
+          </>
+        )}
+      </div>
 
       {/* 固定槽位选好了东西：显示它是什么，而不是一串 id。
           单独一行、缩进对齐到槽位名，左边一道绿 —— 扫一眼就知道
@@ -288,44 +321,16 @@ export function SlotCard({
       {/* 更多设置：低频项收在这里。默认收起，主行只剩真正天天改的东西。 */}
       {open && (
         <div className="mt-3 grid gap-2 border-t border-line-soft pt-3 sm:grid-cols-2">
-          {/* 固定槽位没有「候选标签/最少/最多」，只剩「类型」一个字段 ——
-              不让它占满整行，右边留一块空白反而像漏了东西。 */}
-          <FormField label="类型" htmlFor="slot-type" className={fixed ? 'sm:col-span-2' : undefined}>
-            <Select
-              id="slot-type"
-              block
-              value={slot.type}
-              options={typeOptions}
-              onChange={event =>
-                onPatch({type: event.target.value as SpecSlotIn['type']})
-              }
-            />
-          </FormField>
-          {needsTag && !fixed && (
-            <FormField label="候选标签" htmlFor="slot-tag">
-              {/* 槽位的标签是「圈定候选范围」，不是「打在素材上」：
-                  所以任意级别都能圈（分组也行），多个标签之间是并集。 */}
-              <MultiSelect
-                id="slot-tag"
-                options={tagOptions}
-                value={slot.tagIds ?? []}
-                onChange={values => onPatch({tagIds: values})}
-                placeholder="不限（全部素材）"
-                emptyText="还没有标签"
-              />
-            </FormField>
-          )}
           {/* 文本槽位「占 {{Text N}}」、音频槽位「不占编号」这类**类型属性**
               已经写进类型下拉的选项名里（见 SpecWorkspace 的 TYPE_OPTIONS），
               不在这里再摆一行常驻小字 —— 同一件事说两遍，且那行还占版面。 */}
 
 
-          {/* 两段文案：**这个槽位在提示词里怎么说**。
+          {/* 「选中时文案」：**这个槽位在提示词里怎么说**。
 
               为什么放在槽位里而不是提示词正文：正文里 `{{slot:key}}` 是
               **唯一插入点**，而「有素材时这么说 / 没素材时那么说」是同一个
-              槽位的两种说法。写在正文里就得让作者把同一句话维护两遍
-              （正文一遍、槽位一遍），两处措辞一漂移，编译时就对不上。
+              槽位的两种说法。
 
               只对**「用户填 + 可选」**的槽位有意义：
               - 固定槽位的素材早就定死了，不存在「没素材」这一说；
@@ -335,41 +340,25 @@ export function SlotCard({
               自己的几种写法），不要手敲 `{{slot:key}}` —— 手敲拼错了要到
               编译期才报错，而槽位改名后手敲的引用会静默失效。 */}
           {!fixed && showTexts && (
-            <>
-              <FormField
-                label="选中时文案"
-                htmlFor="slot-filled-text"
-                className="sm:col-span-2"
-              >
-                <MentionTextarea
-                  id="slot-filled-text"
-                  aria-label="选中时文案"
-                  value={slot.filledText ?? ''}
-                  candidates={selfRefChips(slot, mixedIndexOf(slots, slot.key))}
-                  rows={2}
-                  placeholder={filledPlaceholder}
-                  panelHint="选择要插入的编号"
-                  onChange={text => onPatch({filledText: text})}
-                  onInsert={text => onPatch({filledText: text})}
-                />
-              </FormField>
-              <FormField
-                label="未选时文案"
-                htmlFor="slot-empty-text"
-                className="sm:col-span-2"
-              >
-                <textarea
-                  id="slot-empty-text"
-                  aria-label="未选时文案"
-                  value={slot.emptyText ?? ''}
-                  rows={2}
-                  placeholder={emptyPlaceholder}
-                  onChange={event => onPatch({emptyText: event.target.value})}
-                  className="w-full resize-y rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors placeholder:text-[#a9b8bf] hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10"
-                />
-              </FormField>
-            </>
+            <FormField
+              label="选中时文案"
+              htmlFor="slot-filled-text"
+              className="sm:col-span-2"
+            >
+              <MentionTextarea
+                id="slot-filled-text"
+                aria-label="选中时文案"
+                value={slot.filledText ?? ''}
+                candidates={selfRefChips(slot, mixedIndexOf(slots, slot.key))}
+                rows={2}
+                placeholder={filledPlaceholder}
+                panelHint="选择要插入的编号"
+                onChange={text => onPatch({filledText: text})}
+                onInsert={text => onPatch({filledText: text})}
+              />
+            </FormField>
           )}
+
         </div>
       )}
     </div>

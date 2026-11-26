@@ -108,6 +108,8 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
   {
     group: '运维',
     items: [
+      { code: 'model_driver:config:read', name: '查看运行时配置', description: '查看域名白名单与供应商接入状态；密钥只显示脱敏掩码与指纹，不显示明文' },
+      { code: 'model_driver:config:write', name: '修改运行时配置', description: '修改域名白名单与供应商密钥/地址，写回服务实际读取的 .env；下一次请求即生效。高危：白名单是 SSRF 防线，写错会让外部链接被当成可信来源' },
       { code: 'model_driver:refresh', name: '刷新模型驱动目录', description: '重新扫描驱动目录，把新增的驱动文件热接上（进程级：只影响本实例，多实例各自收敛）。改已加载的文件不热替换，要重启才生效' },
     ],
   },
@@ -116,7 +118,7 @@ export const PERMISSION_GROUPS: PermissionGroup[] = [
     items: [
       { code: 'page:image', name: '生图', description: '关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any', requires: ['catalog:read', 'image:create', 'image:delete', 'image:read', 'image:read:all', 'image:retry:any'], route: '/image' },
       { code: 'page:library', name: '资产库', description: '关联接口：library:case:read, library:create, library:delete, library:delete:any, library:draft:review, library:generation:ingest, library:read, library:share, library:share:approve, library:share:approve:group, library:share:approve:team, library:share:direct, library:tag:manage, library:update', requires: ['library:case:read', 'library:create', 'library:delete', 'library:delete:any', 'library:draft:review', 'library:generation:ingest', 'library:read', 'library:share', 'library:share:approve', 'library:share:approve:group', 'library:share:approve:team', 'library:share:direct', 'library:tag:manage', 'library:update'], route: '/library' },
-      { code: 'page:ops', name: '运维', description: '关联接口：model_driver:refresh', requires: ['model_driver:refresh'], route: '/ops' },
+      { code: 'page:ops', name: '运维', description: '关联接口：model_driver:config:read, model_driver:config:write, model_driver:refresh', requires: ['model_driver:config:read', 'model_driver:config:write', 'model_driver:refresh'], route: '/ops' },
       { code: 'page:shots', name: '镜头库', description: '关联接口：shot:read', requires: ['shot:read'], route: '/shots' },
       { code: 'page:storyboards', name: '分镜模板库', description: '关联接口：storyboard:read', requires: ['storyboard:read'], route: '/storyboards' },
       { code: 'page:studio', name: '生成工作台', description: '关联接口：catalog:read, image:create, task:create', requires: ['catalog:read', 'image:create', 'task:create'], route: '/studio' },
@@ -170,6 +172,8 @@ export const PERMISSION_CODES = [
   'library:update',
   'model_driver:cancel',
   'model_driver:cancel:any',
+  'model_driver:config:read',
+  'model_driver:config:write',
   'model_driver:create',
   'model_driver:read',
   'model_driver:read:all',

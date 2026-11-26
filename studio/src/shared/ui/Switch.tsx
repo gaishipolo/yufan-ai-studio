@@ -41,10 +41,10 @@ export function Switch({
       />
       <span
         className={cn(
-          'relative h-[15px] w-[26px] rounded-full bg-[#d9e4e8] transition-colors duration-150',
+          'relative h-[15px] w-[26px] rounded-full bg-line-strong transition-colors duration-150',
           'peer-checked:bg-primary',
           'after:absolute after:left-[2px] after:top-[2px] after:h-[11px] after:w-[11px] after:rounded-full',
-          'after:bg-white after:shadow-[0_1px_2px_rgba(0,0,0,.2)] after:transition-transform after:duration-150',
+          'after:bg-panel after:shadow-[0_1px_2px_rgba(0,0,0,.2)] after:transition-transform after:duration-150',
           'peer-checked:after:translate-x-[11px]',
           'peer-focus-visible:ring-2 peer-focus-visible:ring-primary/25',
         )}

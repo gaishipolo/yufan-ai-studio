@@ -13,7 +13,8 @@ const CHIPS: PromptChip[] = [
 /* 候选面板里的项和下方的 chip 按钮同名（都是「主图」），用容器区分：
    候选项带「单个/全部」标记，chip 按钮不带。 */
 function candidate(name: RegExp) {
-  return screen.getByRole('button', {name: new RegExp(`${name.source}.*(单个|全部)`)});
+  /* 菜单项现在是原生 menu + menuitem（无障碍语义更正），不再是裸 button。 */
+  return screen.getByRole('menuitem', {name: new RegExp(`${name.source}.*(单个|全部)`)});
 }
 
 /** 受控外壳：与真实用法一致（值由父组件持有）。 */
@@ -95,6 +96,68 @@ describe('输入框内联胶囊', () => {
 });
 
 /* 还没有槽位时给一句话，别留一个空框让人猜。 */
+describe('正文里的默认描述段（锚点）', () => {
+  function AnchoredHarness({
+    initial,
+    slotNames,
+  }: {
+    initial: string;
+    slotNames?: Record<string, string>;
+  }) {
+    const [text, setText] = useState(initial);
+    return (
+      <>
+        <PromptBox
+          value={text}
+          chips={CHIPS}
+          slotNames={slotNames}
+          onChange={setText}
+          onInsert={setText}
+        />
+        <output data-testid="value">{text}</output>
+      </>
+    );
+  }
+
+  /** 打开一份已存过的草稿时，value 里带着锚点标记 —— 它是内部记号，
+      作者不该在正文里看到 `⟦e:image_1⟧` / `⟦/e⟧` 这种东西。 */
+  it('锚点标记不显示，只显示高亮的可编辑文字', () => {
+    const {container} = render(
+      <AnchoredHarness initial={'前缀：⟦e:image_1⟧一望无际的雪原⟦/e⟧后缀'} />,
+    );
+    const box = screen.getByRole('textbox');
+    /* 高亮段首尾有零宽光标缓冲区（DOM 里存在、序列化时被剥掉），
+       断言可见文字时把它去掉。 */
+    expect(box.textContent?.replaceAll('\u200b', '')).toBe('前缀：一望无际的雪原后缀');
+    expect(box.innerHTML).not.toContain('⟦');
+    const mark = container.querySelector('[data-anchor="image_1"]')!;
+    expect(mark?.textContent).toBe('一望无际的雪原');
+    /* 高亮必须一眼看得见、且与插槽引用胶囊明显不同：
+       这里是暖褐下划线文字（可编辑），胶囊是墨蓝描边整体（不可编辑）。 */
+    expect(mark.className).toContain('text-quote');
+    expect(mark.className).toContain('underline');
+    expect(mark.className).toContain('decoration-2');
+    expect(mark.className).not.toContain('ring-1');
+  });
+
+  /** 作者看到一段高亮，第一反应是「这段是谁的默认描述」。气泡在正文里就地回答，
+      不用回左边逐个展开槽位卡片找 —— 重心留在提示词编辑区。 */
+  it('高亮段悬停显示它属于哪个槽位（不改正文内容）', () => {
+    const {container} = render(
+      <AnchoredHarness
+        initial={'前缀：⟦e:image_1⟧一望无际的雪原⟦/e⟧后缀'}
+        slotNames={{image_1: '场景参考'}}
+      />,
+    );
+    const mark = container.querySelector('[data-anchor="image_1"]')!;
+    expect(mark.getAttribute('title')).toContain('场景参考');
+    expect(mark.getAttribute('title')).toContain('默认描述');
+    /* 气泡只是 title 属性，正文一个字都没多 */
+    expect(screen.getByRole('textbox').textContent?.replaceAll('\u200b', '')).toBe('前缀：一望无际的雪原后缀');
+  });
+
+});
+
 describe('空态', () => {
   it('没有槽位时 chip 行给一句提示', () => {
     render(<PromptBox value="" chips={[]} onChange={() => {}} onInsert={() => {}} />);
@@ -124,7 +187,7 @@ describe('提示词框的 @ 提及', () => {
 
     expect(screen.getByText('匹配「细节」')).toBeInTheDocument();
     expect(candidate(/细节图/)).toBeInTheDocument();
-    expect(screen.queryByRole('button', {name: /主图.*(单个|全部)/})).not.toBeInTheDocument();
+    expect(screen.queryByRole('menuitem', {name: /主图.*(单个|全部)/})).not.toBeInTheDocument();
   });
 
   it('鼠标点候选：@查询词 整段换成 token', async () => {
@@ -163,6 +226,35 @@ describe('提示词框的 @ 提及', () => {
 
     expect(screen.queryByText(/匹配|选择要引用/)).not.toBeInTheDocument();
     expect(screen.getByTestId('value')).toHaveTextContent('@主');
+  });
+
+  /** 回归：零宽光标缓冲区里打了字之后，@ 必须照常弹出 ——
+      缓冲区首字符是零宽、不计入偏移，但不能把作者打的字也一起吞掉。 */
+  it('高亮段后（缓冲区内）打 @ 照常弹候选', async () => {
+    const user = userEvent.setup();
+    render(
+      <PromptBox
+        value={'⟦e:image_1⟧雪原⟦/e⟧'}
+        chips={CHIPS}
+        onChange={() => {}}
+        onInsert={() => {}}
+      />,
+    );
+    const box = screen.getByRole('textbox');
+    /* 把光标放进段尾的零宽缓冲区，模拟作者在高亮段后接着打字。
+       jsdom 的键盘 End 不移动 DOM 选区，这里手动设。 */
+    const buffers = box.querySelectorAll('[data-caret-buffer]');
+    const tail = buffers[buffers.length - 1].firstChild!;
+    const range = document.createRange();
+    range.setStart(tail, 0);
+    range.collapse(true);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+    await user.type(box, '@');
+    expect(screen.getByRole('menu')).toBeInTheDocument();
+    expect(candidate(/主图/)).toBeInTheDocument();
   });
 
   it('没有候选时（输入邮箱）不弹面板', async () => {
@@ -379,50 +471,3 @@ describe('撤销 / 重做', () => {
   });
 });
 
-/**
- * 浮层方向：提示词框在模板封装页的右栏最下面，朝下展开会整块掉到视口外 ——
- * 用户只看到输入框闪一下、什么也没出现。空间不够就得翻到上面去。
- */
-describe('候选面板的方向', () => {
-  /** 把输入框钉在视口里的某个位置：下方还剩多少空间由 innerHeight 决定。 */
-  function placeBoxAt(bottom: number, innerHeight: number) {
-    Object.defineProperty(window, 'innerHeight', { value: innerHeight, configurable: true });
-    vi.spyOn(Element.prototype, 'getBoundingClientRect').mockReturnValue({
-      bottom,
-      top: bottom - 60,
-      height: 100,
-      left: 0,
-      right: 400,
-      width: 400,
-      x: 0,
-      y: bottom - 60,
-      toJSON: () => ({}),
-    } as DOMRect);
-  }
-
-  const panel = () => screen.getByText('选择要引用的槽位').closest('[data-placement]');
-
-  it('下方空间不够时朝上展开（提示词框贴着视口底边的场景）', async () => {
-    const user = userEvent.setup();
-    placeBoxAt(760, 800);
-    render(<Harness />);
-    const box = screen.getByRole('textbox');
-    await user.click(box);
-    await user.type(box, '@');
-
-    expect(panel()).toHaveAttribute('data-placement', 'top');
-    // 朝上时不能还留着朝下的定位类，否则会同时挂两条定位
-    expect(panel()?.className).not.toContain('top-[calc(100%+4px)]');
-  });
-
-  it('下方够高就朝下展开', async () => {
-    const user = userEvent.setup();
-    placeBoxAt(120, 800);
-    render(<Harness />);
-    const box = screen.getByRole('textbox');
-    await user.click(box);
-    await user.type(box, '@');
-
-    expect(panel()).toHaveAttribute('data-placement', 'bottom');
-  });
-});

@@ -96,20 +96,18 @@ function renderSlot(
 }
 
 describe('槽位卡片', () => {
-  it('默认只露出高频项：类型、最少/最多都收着', () => {
+  it('类型常驻在主行下方，不用展开就能改', () => {
     renderSlot();
-    // 类型标记可见（一眼知道要什么）—— 现在是图标，名称留给读屏
+    // 主行的类型图标 + 下方那行的类型下拉都在（同一个字段两种呈现）
     expect(screen.getByRole('img', {name: '图片'})).toBeInTheDocument();
-    // 低频项默认不渲染
-    expect(screen.queryByLabelText('类型')).not.toBeInTheDocument();
+    expect(screen.getByRole('combobox', {name: '类型'})).toBeInTheDocument();
   });
 
-  it('点「更多设置」才展开低频项', async () => {
+  it('点「更多设置」展开的是低频项', async () => {
     const user = userEvent.setup();
     renderSlot();
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(screen.getByLabelText('类型')).toBeInTheDocument();
     // 数量框已移除：一槽固定一张，必填/可选由主行的开关表达，不再有「最少/最多」。
     expect(screen.queryByText('最少')).not.toBeInTheDocument();
     expect(screen.queryByText('最多')).not.toBeInTheDocument();
@@ -145,7 +143,15 @@ describe('槽位卡片', () => {
     );
   });
 
-  it('缺标签时主行给出醒目提示（发布闸门）', () => {
+  /** 候选标签移到主行下方常驻：不用点「展开更多设置」就能看到并操作。
+      它是发布闸门，藏在展开区里会让作者一路配完才发现发布被 400 打回。 */
+  it('候选标签常驻在主行下方，无需展开更多设置', () => {
+    renderSlot({type: 'image', binding: 'user', tagIds: []});
+    expect(screen.getByRole('button', {name: '候选标签'})).toBeInTheDocument();
+    expect(screen.getByRole('button', {name: '展开更多设置'})).toHaveAttribute('aria-expanded', 'false');
+  });
+
+  it('缺标签时给出醒目提示（发布闸门）', () => {
     renderSlot({type: 'image', binding: 'user', tagIds: []});
     expect(screen.getByText(/缺标签/)).toBeInTheDocument();
   });
@@ -159,8 +165,6 @@ describe('槽位卡片', () => {
     const user = userEvent.setup();
     const {onPatch} = renderSlot({type: 'image', binding: 'user', tagIds: []});
 
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
-    // 多选下拉的收起态：FormField 的 label 指向它，所以可访问名是「候选标签」
     await user.click(screen.getByRole('button', {name: '候选标签'}));
     await user.click(screen.getByRole('checkbox', {name: '产品'}));
     expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({tagIds: ['tag-1']}));
@@ -256,64 +260,39 @@ describe('槽位卡片', () => {
     );
   });
 
-  /* 「未选时文案」只在**可选**槽位上出现（必填槽位不填素材会直接报错，
-     用不上这段文案）。以前是「显示但禁用」—— 一个永远不能用的框，
-     摆在那里只会让人以为填了有用。 */
-  it('「未选时文案」只在可选槽位上出现（必填槽位直接不渲染）', async () => {
+  /* 「未选时文案」整块都不在槽位卡片里（2026-11-25 用户定）：
+     它只有一个真相来源 —— 提示词正文里那段高亮文字。
+     先前留了只读展示块，用户反馈「未选时文案还在呢」—— 看得见就还是
+     两份，作者会以为在卡片里也能改。彻底拿掉。 */
+  it('槽位卡片里完全没有「未选时文案」（无论可选 / 必填 / 是否设过）', async () => {
     const user = userEvent.setup();
-    const {unmount} = renderSlot({binding: 'user', minCount: 0});
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
-    expect(screen.getByLabelText('未选时文案')).toBeInTheDocument();
-    unmount();
-
-    renderSlot({binding: 'user', minCount: 1});
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
-    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
-  });
-
-  it('「未选时文案」输入能回传 emptyText', async () => {
-    const user = userEvent.setup();
-    const {onPatch} = renderSlot({binding: 'user', minCount: 0});
+    renderSlot({binding: 'user', minCount: 0, emptyText: '一望无际的雪原'});
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    await user.type(screen.getByLabelText('未选时文案'), '红裙');
-    expect(onPatch).toHaveBeenCalledWith(expect.objectContaining({emptyText: '红裙'}));
+    expect(screen.queryByText('未选时文案')).not.toBeInTheDocument();
+    expect(screen.queryByRole('textbox', {name: '未选时文案'})).not.toBeInTheDocument();
+    /* 已设的那段也不在卡片里重复展示 */
+    expect(screen.queryByText('一望无际的雪原')).not.toBeInTheDocument();
   });
 
-  it('两段文案默认收在「更多设置」里', () => {
-    renderSlot({binding: 'user'});
-    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
-  });
-
-  it('固定槽位没有两段文案（素材早定死，不存在「没素材」）', async () => {
-    const user = userEvent.setup();
-    renderSlot({binding: 'fixed'});
-
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
-    expect(screen.queryByLabelText('选中时文案')).not.toBeInTheDocument();
-    expect(screen.queryByLabelText('未选时文案')).not.toBeInTheDocument();
-  });
-
-  /* 两段文案的门槛只有一条：**槽位是可选的**（2026-11-18 用户拍板：
-     「不需要引用这个槽位，只要是可选就显示两个输入框」）。
+  /* 「选中时文案」的门槛只有一条：**槽位是可选的**（2026-11-18 用户拍板：
+     「不需要引用这个槽位，只要是可选就显示」）。
 
      之前还有一条「提示词里必须有单张引用」—— 那是在拿**写作顺序**
      当门槛：作者得先跳到正文插一个 token，再回来写话。写作顺序不该
      由界面的门槛决定。
 
-     没有插入点时这两段话**编译期用不上**，所以界面照实说一句
+     没有插入点时这段话**编译期用不上**，所以界面照实说一句
      （见下一条用例），而不是让人白填一场还不自知。 */
-  it('提示词里没引用这个槽位时，可选槽位仍然显示两段文案', async () => {
+  it('提示词里没引用这个槽位时，可选槽位仍然显示「选中时文案」', async () => {
     const user = userEvent.setup();
     renderSlot({binding: 'user', minCount: 0}, '把别的图放进画面');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
     expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
-    expect(screen.getByLabelText('未选时文案')).toBeInTheDocument();
   });
 
-  it('提示词里没引用时，照实说这两段话还用不上（写在占位提示里，不占版面）', async () => {
+  it('提示词里没引用时，照实说这段话还用不上（写在占位提示里，不占版面）', async () => {
     const user = userEvent.setup();
     renderSlot({binding: 'user', minCount: 0}, '把别的图放进画面');
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
@@ -321,18 +300,10 @@ describe('槽位卡片', () => {
     /* 说明放在框内的**占位提示**里，不是常驻小字 ——
        提示跟着框走、填了内容就自动消失、不占额外版面。 */
     const filled = screen.getByLabelText('选中时文案');
-    const empty = screen.getByLabelText('未选时文案');
     expect(filled).toHaveAttribute(
       'placeholder',
       expect.stringContaining('写下 {{Mixed 1}} 引用这个槽位，这段话才会被用上'),
     );
-    expect(empty).toHaveAttribute(
-      'placeholder',
-      expect.stringContaining('写下 {{Mixed 1}} 引用这个槽位，这段话才会被用上'),
-    );
-    /* 两个框的占位提示必须能分开 —— 文字一样的话使用者分不清
-       哪个框是「有素材」、哪个是「没素材」。 */
-    expect(filled.getAttribute('placeholder')).not.toBe(empty.getAttribute('placeholder'));
   });
 
   it('整组引用 {{slot:x*}} 同样显示两段文案（可选就显示）', async () => {
@@ -370,7 +341,8 @@ describe('槽位卡片', () => {
     await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
     expect(screen.getByLabelText('选中时文案')).toBeInTheDocument();
-    expect(screen.getByLabelText('未选时文案')).toBeInTheDocument();
+    /* 未选时文案不在卡片里，唯一入口是正文的高亮段 */
+    expect(screen.queryByText('未选时文案')).not.toBeInTheDocument();
   });
 
   /* 占位符不再写死 token —— 改成打 `@` 选，候选里是**当前槽位自己的**引用。
@@ -392,7 +364,7 @@ describe('槽位卡片', () => {
     await user.type(area, '@');
 
     // 候选按展示名显示，不暴露内部 key
-    expect(screen.getByRole('button', {name: /主图（单张）/})).toBeInTheDocument();
+    expect(screen.getByRole('menuitem', {name: /主图（单张）/})).toBeInTheDocument();
     expect(screen.queryByRole('button', {name: /image_7/})).not.toBeInTheDocument();
   });
 
@@ -404,7 +376,7 @@ describe('槽位卡片', () => {
     const area = screen.getByLabelText('选中时文案');
     await user.click(area);
     await user.type(area, '人物参考 @');
-    await user.click(screen.getByRole('button', {name: /单张/}));
+    await user.click(screen.getByRole('menuitem', {name: /单张/}));
 
     expect(onPatch).toHaveBeenCalledWith(
       expect.objectContaining({filledText: '人物参考 {{Mixed 1}}'}),
@@ -427,21 +399,17 @@ describe('槽位卡片', () => {
  * 留着就是一个「作者看不见、却还在影响模板库列什么」的隐藏状态。
  */
 describe('槽位卡片 · 没有「来源」这一项', () => {
-  it('独立槽位：展开后找不到', async () => {
-    const user = userEvent.setup();
+  it('独立槽位：找不到', () => {
     renderSlot();
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(screen.getByLabelText('类型')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', {name: '类型'})).toBeInTheDocument();
     expect(screen.queryByLabelText('来源')).not.toBeInTheDocument();
   });
 
-  it('容器里的槽位：同样找不到', async () => {
-    const user = userEvent.setup();
+  it('容器里的槽位：同样找不到', () => {
     renderSlot({group: 'g1'}, DEFAULT_PROMPT, {inGroup: true});
-    await user.click(screen.getByRole('button', {name: '展开更多设置'}));
 
-    expect(screen.getByLabelText('类型')).toBeInTheDocument();
+    expect(screen.getByRole('combobox', {name: '类型'})).toBeInTheDocument();
     expect(screen.queryByLabelText('来源')).not.toBeInTheDocument();
   });
 });

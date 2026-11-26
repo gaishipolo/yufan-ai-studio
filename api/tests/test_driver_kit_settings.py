@@ -9,7 +9,7 @@ import ast
 import os
 from pathlib import Path
 
-import modules.model_driver.kit.settings as kit_settings
+import infra.env_settings as kit_settings
 from modules.model_driver.kit.settings import clear_cache, vendor_settings
 
 

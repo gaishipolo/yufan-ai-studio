@@ -1,5 +1,10 @@
 import { api } from '@/shared/api/http';
-import type { RefreshOut } from '@/shared/api/schema';
+import type {
+  ConfigListOut,
+  ConfigUpdateIn,
+  ConfigUpdateOut,
+  RefreshOut,
+} from '@/shared/api/schema';
 
 /**
  * 驱动运维 API —— 目前只有「刷新驱动目录」一个动作。
@@ -12,4 +17,8 @@ import type { RefreshOut } from '@/shared/api/schema';
  */
 export const driverApi = {
   refresh: () => api.post<RefreshOut>('/model-driver/refresh'),
+  /** 运行时配置清单：密钥只有指纹，不回显明文 */
+  config: () => api.get<ConfigListOut>('/model-driver/config'),
+  updateConfig: (payload: ConfigUpdateIn) =>
+    api.put<ConfigUpdateOut>('/model-driver/config', payload),
 };

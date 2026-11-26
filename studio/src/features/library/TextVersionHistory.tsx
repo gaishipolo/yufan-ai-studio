@@ -104,7 +104,7 @@ export function TextVersionHistory({
             {(versions.data ?? []).map((item) => (
               <li key={item.version} className="rounded-lg border border-line-soft bg-panel p-2.5">
                 <div className="flex flex-wrap items-center gap-1.5">
-                  <Chip tone="primary">v{item.version}</Chip>
+                  <Chip>v{item.version}</Chip>
                   <span className="text-xs text-ink-mute">{formatDateTime(item.createdAt)}</span>
                   <span className="text-xs text-ink-mute">{item.createdBy}</span>
                   <code className="ml-auto text-meta text-ink-mute" title={item.sha256}>

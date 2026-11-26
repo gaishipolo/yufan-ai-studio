@@ -99,20 +99,23 @@ export function Modal({ open, onClose, title, children, width = 780, className }
         tabIndex={-1}
         style={{ width }}
         className={cn(
-          'max-h-[88vh] max-w-[94vw] overflow-auto rounded-[14px] bg-panel shadow-pop animate-popIn',
+          /* 弹窗是「压在台面上的东西」：半径给到 16（面板级），
+             配 shadow-pop。它跟白卡的 12 拉开一档，
+             用户不用看描边就知道这层浮在别的东西上面。 */
+          'max-h-[88vh] max-w-[94vw] overflow-auto rounded-2xl bg-panel shadow-pop animate-popIn',
           'outline-none',
           className,
         )}
       >
         <div className="sticky top-0 z-10 flex items-center justify-between border-b border-line-soft bg-panel px-[18px] py-[15px]">
-          <div id={titleId} className="text-lead font-semibold text-ink">
+          <div id={titleId} className="font-serif text-lead font-semibold text-ink">
             {title}
           </div>
           <button
             type="button"
             aria-label="关闭"
             onClick={onClose}
-            className="grid h-[26px] w-[26px] place-items-center rounded-lg text-ink-mute transition-colors hover:bg-[#eef4f6] hover:text-ink"
+            className="grid h-[26px] w-[26px] place-items-center rounded-lg text-ink-mute transition-colors hover:bg-panel-soft hover:text-ink"
           >
             <X size={15} />
           </button>

@@ -14,10 +14,12 @@ export function IconButton({ icon, label, tone = 'default', className, ...rest }
       aria-label={label}
       title={label}
       className={cn(
-        'grid h-[30px] w-[30px] place-items-center rounded-[9px] transition-colors',
+        /* 方形微圆：纸感里的工具按钮是「一枚铅字块」，
+           不是药丸也不是圆点。 */
+        'grid h-[30px] w-[30px] place-items-center rounded-md transition-colors',
         'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/30',
         tone === 'default'
-          ? 'text-ink-soft hover:bg-[#e8eff1] hover:text-ink'
+          ? 'text-ink-soft hover:bg-panel-soft hover:text-ink'
           : 'bg-panel-soft text-ink-soft hover:bg-line-soft',
         className,
       )}

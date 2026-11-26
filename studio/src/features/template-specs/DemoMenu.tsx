@@ -55,10 +55,10 @@ export function DemoMenu({
         aria-haspopup="menu"
         onClick={() => setOpen(value => !value)}
         className={cn(
-          'inline-flex h-7 items-center gap-1 rounded-lg border border-transparent px-2.5 text-xs font-medium',
-          'text-ink-soft transition-colors hover:bg-[#f1f6f7] hover:text-ink',
+          'inline-flex h-7 items-center gap-1 rounded-pill border border-transparent px-2.5 text-xs font-medium',
+          'text-ink-soft transition-colors hover:bg-panel-soft hover:text-ink',
           'disabled:cursor-not-allowed disabled:opacity-50',
-          open && 'bg-[#f1f6f7] text-ink',
+          open && 'bg-panel-soft text-ink',
         )}
       >
         设置案例

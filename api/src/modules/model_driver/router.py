@@ -12,9 +12,10 @@ from fastapi import APIRouter, Depends, Query
 from starlette.concurrency import run_in_threadpool
 
 from api.deps import rate_limit, require
-from core.config import settings
+from core.audit import record as audit
+from core.config import ENV_FILE, settings
 from core.context import CurrentUser
-from core.exceptions import NotFound
+from core.exceptions import BadRequest, NotFound
 from core.ports.model_generation import GenerationTicket, SubmitSpec
 from core.response import ApiResponse
 from modules.model_driver.registry import (
@@ -24,7 +25,12 @@ from modules.model_driver.registry import (
 from modules.model_driver.registry import (
     refresh as refresh_registry,
 )
+from modules.model_driver.runtime_config import apply_updates, list_items
 from modules.model_driver.schema import (
+    ConfigItemOut,
+    ConfigListOut,
+    ConfigUpdateIn,
+    ConfigUpdateOut,
     DriverListOut,
     DriverOut,
     ModelListOut,
@@ -47,6 +53,8 @@ DriverReadDep = Annotated[CurrentUser, Depends(require("model_driver:read"))]
 DriverCreateDep = Annotated[CurrentUser, Depends(require("model_driver:create"))]
 DriverCancelDep = Annotated[CurrentUser, Depends(require("model_driver:cancel"))]
 DriverRefreshDep = Annotated[CurrentUser, Depends(require("model_driver:refresh"))]
+ConfigReadDep = Annotated[CurrentUser, Depends(require("model_driver:config:read"))]
+ConfigWriteDep = Annotated[CurrentUser, Depends(require("model_driver:config:write"))]
 
 
 def _task_out(ticket: GenerationTicket) -> TaskOut:
@@ -192,5 +200,73 @@ async def refresh_drivers(
             errors=list(result.errors),
             operator=result.operator,
             refreshed_at=result.refreshed_at,
+        )
+    )
+
+
+@router.get("/config", summary="运行时配置清单（密钥脱敏）")
+async def get_runtime_config(actor: ConfigReadDep) -> ApiResponse[ConfigListOut]:
+    """列出运维页可编辑的配置项。
+
+    密钥字段的 `value` 恒为空，只有 `configured` 与 8 位指纹；
+    `source=environment` 的项由进程环境变量注入，改文件不生效，页面只读。
+    """
+    items = list_items()
+    return ApiResponse.ok(
+        ConfigListOut(
+            items=[
+                ConfigItemOut(
+                    key=item.key,
+                    label=item.label,
+                    group=item.group,
+                    secret=item.secret,
+                    value=item.value,
+                    configured=item.configured,
+                    fingerprint=item.fingerprint,
+                    masked=item.masked,
+                    source=item.source,
+                    editable=item.editable,
+                    hint=item.hint,
+                    required=item.required,
+                )
+                for item in items
+            ],
+            env_file=ENV_FILE,
+            groups=list(dict.fromkeys(item.group for item in items)),
+        )
+    )
+
+
+@router.put("/config", summary="修改运行时配置，下一次请求即生效")
+async def put_runtime_config(
+    payload: ConfigUpdateIn,
+    actor: ConfigWriteDep,
+    _: None = Depends(
+        rate_limit("model_driver.config.write", limit=settings.rate_limit_default_per_min)
+    ),
+) -> ApiResponse[ConfigUpdateOut]:
+    """写回服务实际读取的 `.env`，并清掉配置缓存使其立即生效。
+
+    `values` 里只提交要改的键；密钥空串表示「不改」（要清空请走改文件）。
+    只接受声明清单里的键，白名单值做 host 校验，避免把 `.env` 写成 SSRF 后门。
+    """
+    try:
+        result = await run_in_threadpool(apply_updates, dict(payload.values))
+    except ValueError as exc:
+        raise BadRequest(str(exc)) from exc
+    # 审计只记键名，不记值 —— 白名单值可回显，密钥值写进去就收不回来
+    if result.updated:
+        await audit(
+            "model_driver.config.update",
+            actor_id=actor.id,
+            target_type="runtime_config",
+            target_id="env",
+            detail={"keys": list(result.updated), "skipped": list(result.skipped)},
+        )
+    return ApiResponse.ok(
+        ConfigUpdateOut(
+            updated=list(result.updated),
+            unchanged=list(result.unchanged),
+            skipped=list(result.skipped),
         )
     )

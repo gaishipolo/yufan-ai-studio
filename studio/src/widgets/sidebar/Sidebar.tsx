@@ -24,19 +24,22 @@ function SidebarItem({ item }: { item: ResolvedNavItem }) {
       to={item.path}
       className={({ isActive }) =>
         cn(
-          'relative flex h-[33px] shrink-0 items-center gap-2 whitespace-nowrap rounded-[9px] px-2.5 text-xs transition-colors',
+          'relative flex h-[33px] shrink-0 items-center gap-2 whitespace-nowrap rounded-lg px-2.5 text-xs transition-colors',
+          /* 选中态：白底 + 一根发丝线（不是投影）+ 左侧那 3px 蓝条。
+             投影原来让这一项「浮」在侧栏上，反而和它旁边的项不在一个平面，
+             像一张飘着的纸片；换成内描边，它就回到了侧栏这块板子上。 */
           isActive
-            ? 'bg-panel font-semibold text-primary shadow-card'
-            : 'text-ink-soft hover:bg-[rgba(255,255,255,.75)] hover:text-ink',
+            ? 'bg-panel font-semibold text-ink ring-1 ring-inset ring-line'
+            : 'text-ink-soft hover:bg-panel/70 hover:text-ink',
         )
       }
     >
       {({ isActive }) => (
         <>
           {isActive && (
-            <span className="absolute -left-px bottom-2 top-2 w-[3px] rounded-[3px] bg-primary max-md:hidden" />
+            <span className="absolute -left-px bottom-2 top-2 w-[3px] rounded-full bg-primary max-md:hidden" />
           )}
-          <Icon size={15} className={isActive ? 'text-primary' : 'text-[#9fb0b8]'} />
+          <Icon size={15} className={isActive ? 'text-ink' : 'text-ink-mute'} />
           <span>{item.label}</span>
           {Badge && <Badge />}
         </>
@@ -73,8 +76,8 @@ function SidebarGroup({
         aria-expanded={!collapsed}
         aria-controls={panelId}
         className={cn(
-          'hidden w-full items-center gap-1 rounded-[6px] px-2.5 pb-1.5 pt-3 text-left',
-          'text-micro font-bold tracking-[.08em] text-[#a4b3bb] transition-colors md:flex',
+          'hidden w-full items-center gap-1 rounded-md px-2.5 pb-1.5 pt-3 text-left',
+          'font-mono text-micro tracking-[.12em] text-ink-mute transition-colors md:flex',
           'hover:text-ink-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40',
           hasActive && !collapsed && 'text-ink-soft',
         )}

@@ -36,13 +36,16 @@ export function MetricCard({
   className,
 }: MetricCardProps) {
   return (
-    <div className={cn('rounded-card border border-line-soft bg-panel p-4', className)}>
-      <p className="text-meta text-ink-mute">{label}</p>
+    <div className={cn('rounded-card border border-line bg-panel p-4', className)}>
+      {/* 眉标在上、数字在下：先说这是什么，再说有多少。
+          数字是等宽 tabular，一列能竖着扫；hero 用 34px 的 stat，
+          一页只给一个结论用这个量级。 */}
+      <p className="font-mono text-micro tracking-[.1em] text-ink-mute">{label}</p>
       <p className="mt-1.5 flex items-baseline gap-1.5">
         <span
           className={cn(
             'font-mono font-semibold tabular-nums leading-none text-ink',
-            size === 'hero' ? 'text-display' : 'text-title',
+            size === 'hero' ? 'text-stat' : 'text-title',
           )}
         >
           {value}

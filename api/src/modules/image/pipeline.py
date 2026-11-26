@@ -38,6 +38,7 @@ from generation.spec import (
 from infra import get_storage
 from infra.ai.base import Capability, GenerationRequest, PollCapable
 from infra.driver_config import DriverSettings, driver_config
+from infra.env_settings import vendor_settings
 from infra.media_channel import (
     MediaChannel,
     declared_channels,
@@ -108,8 +109,9 @@ class ImageAssetSettings(DriverSettings):
     timeout_sec: float = 60.0
 
 
-def get_image_asset_settings() -> ImageAssetSettings:
-    return ImageAssetSettings()
+# 与入库白名单、供应商配置共用同一套 mtime 指纹缓存：三处口径一致，
+# 运维页改一次 .env 就全链路生效，不存在「这里改了那里没改」。
+get_image_asset_settings = vendor_settings(ImageAssetSettings, env_prefix="IMAGE_ASSET")
 
 
 async def _guard(session: AsyncSession, record_id: str) -> ImageJob | None:

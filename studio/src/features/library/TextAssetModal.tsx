@@ -208,7 +208,7 @@ export function TextAssetModal({
             rows={12}
             placeholder="直接写正文；不会做 Markdown → HTML 渲染"
             aria-label="文本正文"
-            className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 font-mono text-xs leading-relaxed text-ink outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring"
+            className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 font-mono text-xs leading-relaxed text-ink outline-none transition placeholder:text-ink-mute focus:border-primary-line focus:bg-panel focus:shadow-ring"
           />
         </div>
 

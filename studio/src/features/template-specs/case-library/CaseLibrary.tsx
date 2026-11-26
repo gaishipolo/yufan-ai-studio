@@ -86,7 +86,7 @@ export function CaseLibrary({ onReuse }: CaseLibraryProps) {
             type="button"
             onClick={() => setCategory('')}
             className={
-              'rounded-full border px-2 py-[2px] text-micro transition-colors ' +
+              'rounded-xs border px-2 py-[2px] text-micro transition-colors ' +
               (category === ''
                 ? 'border-primary-line bg-primary-soft text-primary-deep'
                 : 'border-line-soft bg-panel text-ink-mute hover:text-ink-soft')
@@ -100,7 +100,7 @@ export function CaseLibrary({ onReuse }: CaseLibraryProps) {
               type="button"
               onClick={() => setCategory(item)}
               className={
-                'rounded-full border px-2 py-[2px] text-micro transition-colors ' +
+                'rounded-xs border px-2 py-[2px] text-micro transition-colors ' +
                 (category === item
                   ? 'border-primary-line bg-primary-soft text-primary-deep'
                   : 'border-line-soft bg-panel text-ink-mute hover:text-ink-soft')

@@ -38,11 +38,17 @@ export function statusLabel(status: string): string {
   return STATUS_LABELS[status?.trim().toLowerCase()] ?? status;
 }
 
-/** 状态对应的底色。取不到就是中性灰。 */
-export function statusTone(status: string): 'ok' | 'warn' | 'bad' | 'mute' {
+/**
+ * 状态对应的底色。取不到就是中性灰。
+ *
+ * 「进行中」用**青绿**而不是琥珀：青绿在这个系统里是「在飞」的信号色
+ * （卡片上的进度条、生成中的角标都是它），琥珀留给「需要注意但没失败」。
+ * 同一个状态在卡片上是青的、在表里是黄的，等于两个信号。
+ */
+export function statusTone(status: string): 'ok' | 'brand' | 'bad' | 'mute' {
   const normalized = status?.trim().toLowerCase();
   if (normalized === 'succeeded' || normalized === 'completed') return 'ok';
   if (normalized === 'failed' || normalized === 'error') return 'bad';
-  if (normalized === 'queued' || normalized === 'running' || normalized === 'pending') return 'warn';
+  if (normalized === 'queued' || normalized === 'running' || normalized === 'pending') return 'brand';
   return 'mute';
 }

@@ -130,7 +130,7 @@ function TemplateCard({
         'group flex flex-col items-stretch rounded-2xl border bg-panel p-1.5 text-left transition-all duration-200',
         selected
           ? 'border-primary-line shadow-[0_10px_24px_-12px_rgba(43,124,255,.55)] ring-1 ring-primary/20'
-          : 'border-line-soft shadow-[0_1px_2px_rgba(16,42,55,.05)] hover:-translate-y-0.5 hover:border-line hover:shadow-card',
+          : 'border-line-soft hover:border-line-strong',
       )}
     >
       {/* 显式 w-full + shrink-0：这层是卡片里第一个 flex item，某些 Edge 内核
@@ -162,10 +162,10 @@ function TemplateCard({
           ) : (
             <Chip tone="ok">素材已固定</Chip>
           )}
+          {/* 素材类型是**内容**，用中性徽章 —— 蓝色只留给身份标记
+              （颜色预算，见 docs/CODE_STYLE.md §3.5.1）。 */}
           {kinds.map(kind => (
-            <Chip key={kind} tone="primary">
-              {TYPE_LABEL[kind] ?? kind}
-            </Chip>
+            <Chip key={kind}>{TYPE_LABEL[kind] ?? kind}</Chip>
           ))}
         </div>
         {/* `mt-auto`：一行里卡片的 chip 数量不同时会换行成一两行，不推到底的话
@@ -178,7 +178,7 @@ function TemplateCard({
           </span>
           <span
             className={cn(
-              'flex shrink-0 items-center gap-0.5 rounded-full px-1.5 py-[1px] text-micro transition-colors',
+              'flex shrink-0 items-center gap-0.5 rounded-xs px-1.5 py-[1px] text-micro transition-colors',
               selected
                 ? 'bg-primary text-white'
                 : 'bg-panel-soft text-ink-soft ring-1 ring-inset ring-line-soft group-hover:bg-primary-soft group-hover:text-primary group-hover:ring-primary-line',
@@ -731,7 +731,9 @@ export function SpecLibrary() {
       }
       if (plan.kind === 'image') {
         const job = await generateImage.mutateAsync(plan.payload);
-        // 生图的 `name` 是从提示词派生的，会显示成 `{{Text 1}}`；用模板名更好认
+        /* 任务名已在 `toImagePayload` 里随 payload 传模板名（与视频那条对齐）。
+           不读 `job.name` 是因为这里只是「这一刻提交成功了吗」的提示，
+           用本地的 spec.name 即可，不必等响应字段。 */
         setNote(`已提交生图：${spec.name}（${job.id}）`);
         // 右栏那条提示是「这一刻的状态」，滚下去就看不见了；提交这种一次性动作
         // 还要一条会自己消失的反馈，用户才知道「点到了、东西进去了」。
@@ -803,7 +805,7 @@ export function SpecLibrary() {
             placeholder="按名称筛选"
             wrapperClassName="w-56"
           />
-          <span className="rounded-full bg-panel-soft px-2 py-[2px] text-micro text-ink-soft ring-1 ring-inset ring-line-soft">
+          <span className="rounded-xs bg-panel-soft px-2 py-[2px] text-micro text-ink-soft ring-1 ring-inset ring-line-soft">
             {items.length} 个模板
           </span>
         </div>
@@ -854,7 +856,7 @@ export function SpecLibrary() {
                   {spec.name}
                 </div>
                 <div className="mt-1.5 flex min-w-0 items-center gap-1.5 text-meta text-ink-mute">
-                  <span className="shrink-0 rounded-full bg-primary-soft px-1.5 py-[1px] text-micro font-medium text-primary-deep ring-1 ring-inset ring-primary-line/60">
+                  <span className="shrink-0 rounded-xs bg-primary-soft px-1.5 py-[1px] text-micro font-medium text-primary-deep ring-1 ring-inset ring-primary-line/60">
                     v{version.version}
                   </span>
                   <span className="truncate text-ink-soft">{model?.label ?? modelId}</span>

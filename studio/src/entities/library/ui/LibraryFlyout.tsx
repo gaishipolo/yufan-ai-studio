@@ -126,7 +126,7 @@ function FlyoutTagRow({
         aria-label={allLabel}
         aria-pressed={allActive}
         className={cn(
-          'shrink-0 rounded-full border px-2 py-[3px] text-micro transition',
+          'shrink-0 rounded-xs border px-2 py-[3px] text-micro transition',
           allActive
             ? 'border-primary-line bg-primary-soft text-primary-deep'
             : 'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
@@ -145,7 +145,7 @@ function FlyoutTagRow({
             aria-pressed={active}
             title={`筛选「${text}」· 当前入口 ${tag.assetCount ?? 0} 条`}
             className={cn(
-              'shrink-0 rounded-full border px-2 py-[3px] text-micro transition',
+              'shrink-0 rounded-xs border px-2 py-[3px] text-micro transition',
               active
                 ? 'border-primary-line bg-primary-soft font-semibold text-primary-deep'
                 : 'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',
@@ -307,7 +307,7 @@ export function LibraryFlyout({
                 onClick={() => pickKind(item.value)}
                 title={allowed ? `只看${item.label}` : `${item.label}只能浏览：本次只收 ${allowedLabels}`}
                 className={cn(
-                  'shrink-0 rounded-full border px-2 py-[3px] text-micro transition',
+                  'shrink-0 rounded-xs border px-2 py-[3px] text-micro transition',
                   active && 'border-primary-line bg-primary-soft font-semibold text-primary-deep',
                   !active &&
                     'border-line-soft bg-panel-soft text-ink-soft hover:border-line-strong',

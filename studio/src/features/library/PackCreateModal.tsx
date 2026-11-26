@@ -157,7 +157,7 @@ export function PackCreateModal({
               onChange={(event) => setName(event.target.value)}
               placeholder="如「6036 黑」；留空则叫「未命名封装」"
               aria-label="封装名称"
-              className="h-8 w-full rounded-lg border border-line bg-white px-2.5 text-body text-ink outline-none transition-colors placeholder:text-[#a9b8bf] hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10"
+              className="h-8 w-full rounded-lg border border-line bg-panel px-2.5 text-body text-ink outline-none transition-colors placeholder:text-ink-mute hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10"
             />
           </label>
 

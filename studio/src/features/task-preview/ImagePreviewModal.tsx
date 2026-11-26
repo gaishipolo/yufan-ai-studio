@@ -70,7 +70,7 @@ export function ImagePreviewModal({ item, onClose }: ImagePreviewModalProps) {
             src={outputUrl || image.coverUrl || ''}
             seed={item.id}
             alt={image.title}
-            className="mx-auto aspect-square w-full max-w-[280px] rounded-[10px] object-cover"
+            className="mx-auto aspect-square w-full max-w-[280px] rounded-xl object-cover"
           />
 
           <div className="min-w-0">

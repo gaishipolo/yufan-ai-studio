@@ -11,8 +11,8 @@ export const TextInput = forwardRef<HTMLInputElement, InputHTMLAttributes<HTMLIn
       <input
         ref={ref}
         className={cn(
-          'h-8 w-full min-w-0 rounded-lg border border-line bg-white px-2.5 text-body text-ink',
-          'outline-none transition-colors placeholder:text-[#a9b8bf]',
+          'h-8 w-full min-w-0 rounded-lg border border-line bg-panel px-2.5 text-body text-ink',
+          'outline-none transition-colors placeholder:text-ink-mute',
           'hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10',
           'disabled:cursor-not-allowed disabled:bg-panel-soft disabled:text-ink-mute',
           'aria-[invalid=true]:border-danger',

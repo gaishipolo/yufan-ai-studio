@@ -23,7 +23,7 @@ export interface LibraryTagBarProps {
 }
 
 const PILL =
-  'inline-flex shrink-0 items-center gap-1 rounded-full border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
+  'inline-flex shrink-0 items-center gap-1 rounded-xs border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
 const IDLE =
   'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-primary-soft/60 hover:text-primary-deep';
 const ACTIVE = 'border-primary bg-primary text-white shadow-sm';
@@ -99,7 +99,7 @@ export function LibraryTagBar({
           <button
             type="button"
             onClick={onManage}
-            className="inline-flex items-center gap-1 rounded-md border border-line-soft bg-panel-soft px-1.5 py-[2px] text-xs text-ink-soft transition hover:border-primary-line hover:text-primary-deep"
+            className="inline-flex items-center gap-1 rounded-pill border border-line-soft bg-panel-soft px-1.5 py-[2px] text-xs text-ink-soft transition hover:border-primary-line hover:text-primary-deep"
           >
             <Settings2 size={11} /> 管理标签
           </button>
@@ -247,7 +247,7 @@ function TagRow({
             <span className="max-w-[150px] truncate">{text}</span>
             <span
               className={cn(
-                'min-w-[18px] rounded-full px-1 text-center text-xs tabular-nums',
+                'min-w-[18px] rounded-xs px-1 text-center text-xs tabular-nums',
                 isActive ? 'bg-white/25 text-white' : 'bg-panel text-ink-mute',
               )}
             >

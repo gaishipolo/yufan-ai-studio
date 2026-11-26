@@ -5,6 +5,7 @@ import { driverApi } from '@/entities/model/api/driver.api';
 import { Button, Notice, PageHeader } from '@/shared/ui';
 import type { RefreshOut } from '@/shared/api/schema';
 import { ApiError } from '@/shared/api/types';
+import RuntimeConfigSection from './RuntimeConfigSection';
 
 /**
  * 运维页（P4）：目前只承载「刷新驱动目录」。
@@ -40,6 +41,8 @@ export default function OpsPage() {
           </Button>
         }
       />
+
+      <RuntimeConfigSection />
 
       <div className="mt-4 flex flex-col gap-3.5">
         <Notice tone="info" title="刷新是进程级的">

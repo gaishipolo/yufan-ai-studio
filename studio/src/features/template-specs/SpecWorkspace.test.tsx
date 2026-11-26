@@ -121,6 +121,8 @@ function specOf(overrides: Partial<TemplateSpecOut> = {}): TemplateSpecOut {
 /* toast store 是模块级单例：成功提示现在走 toast，每个用例必须从空开始 */
 beforeEach(() => {
   canState.caseWrite = true;
+  /* 图片插槽预设存在 localStorage；不清的话上一个用例改的预设会漏到下一个。 */
+  localStorage.clear();
   for (const item of useToastStore.getState().items) {
     useToastStore.getState().dismiss(item.id);
   }
@@ -385,6 +387,176 @@ describe('模板封装 · 编辑器里的提示词', () => {
     expect(await screen.findByText(/没有叫「image_9」的槽位/)).toBeInTheDocument();
     // 没写进去：框里还是空的
     expect(box.textContent).toBe('');
+  });
+
+  /**
+   * 这次改动的**核心守卫**：框选一段文字设为可选槽位的默认描述，
+   * 保存到服务端的正文必须变成槽位引用 —— 否则填了素材描述也不会消失
+   * （Q1=A）。纯函数那层的往返测试不够：这里要钉住「菜单 → 提交」整条链。
+   */
+  it('框选正文设为默认描述：提交时那段让位给引用，描述留在 emptyText', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'libtv-wan3-replacement',
+          prompt: '将一只猫放入场景这个场景：一望无际的雪原',
+          slots: [
+            {
+              key: 'image_1', type: 'image', binding: 'user', refMode: 'mixed',
+              minCount: 0, maxCount: 1, label: '场景', position: 0,
+            },
+          ],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    const box = screen.getByRole('textbox', { name: '提示词' });
+    // jsdom 里手动建选区：对准正文节点里「一望无际的雪原」那一段。
+    const textNode = Array.from(box.childNodes).find(
+      node => node.nodeType === Node.TEXT_NODE && node.textContent?.includes('一望无际的雪原'),
+    ) as Text;
+    const at = textNode.textContent!.indexOf('一望无际的雪原');
+    const range = document.createRange();
+    range.setStart(textNode, at);
+    range.setEnd(textNode, at + '一望无际的雪原'.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const menu = await screen.findByRole('menu');
+    expect(menu).toHaveTextContent('设为默认描述');
+    // 菜单里只列可选、用户填的槽位
+    const item = within(menu).getByRole('menuitem', { name: /场景/ });
+    await user.click(item);
+
+    // 正文里那段还在、可编辑、且被高亮（不是胶囊）
+    expect(box.querySelector('[data-anchor="image_1"]')?.textContent).toBe('一望无际的雪原');
+    expect(box.querySelector('[data-token]')).toBeNull();
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', { name: '保存草稿' }));
+
+    const sent = mutations.save.mock.calls[0][0];
+    expect(sent.prompt).toBe('将一只猫放入场景这个场景：{{Mixed 1}}');
+    expect(sent.slots?.[0].emptyText).toBe('一望无际的雪原');
+    // 不能把锚点标记或描述原文留在提交的正文里
+    expect(sent.prompt).not.toContain('⟦');
+    expect(sent.prompt).not.toContain('一望无际的雪原');
+  });
+
+  /** 端到端钉住刚修的「重新框选同一段」：组件里曾因函数同名自递归 +
+      偏移整段平移，把正文切碎。纯函数测试抓不到接线错误。 */
+  /** 指派可逆：取消后锚点没了、文字留在正文，槽位的 emptyText 也清空。 */
+  it('取消默认描述：摘掉高亮但保留正文，emptyText 清空', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({
+      draft: {
+        key: 'spec-1', name: '商品图模板', model: 'm',
+        prompt: '前缀 ⟦e:image_1⟧雪原⟦/e⟧ 后缀',
+        slots: [{
+          key: 'image_1', type: 'image', position: 0, label: '场景',
+          minCount: 0, maxCount: 1, emptyText: '雪原',
+        }],
+      },
+    })]);
+    await user.click(cardOf('商品图模板').getByRole('button', {name: '编辑'}));
+    const box = screen.getByRole('textbox', {name: '提示词'});
+    const span = box.querySelector('[data-anchor="image_1"]')!;
+    const range = document.createRange();
+    range.selectNodeContents(span.firstChild!);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const menu = await screen.findByRole('menu');
+    await user.click(within(menu).getByRole('menuitem', {name: /取消.*场景.*默认描述/}));
+
+    expect(box.querySelector('[data-anchor]')).toBeNull();
+    expect(box.textContent?.replaceAll('\u200b', '')).toBe('前缀 雪原 后缀');
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', {name: '保存草稿'}));
+    expect(mutations.save.mock.calls[0][0].slots?.[0].emptyText).toBe('');
+  });
+
+  it('对同一槽位重新指派：正文不碎，描述不变', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'libtv-wan3-replacement',
+          prompt: '前缀：⟦e:image_1⟧雪原⟦/e⟧后缀',
+          slots: [
+            {
+              key: 'image_1', type: 'image', binding: 'user', refMode: 'mixed',
+              minCount: 0, maxCount: 1, label: '场景', emptyText: '雪原', position: 0,
+            },
+          ],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    const box = screen.getByRole('textbox', { name: '提示词' });
+    const span = box.querySelector('[data-anchor="image_1"]')!;
+    expect(span.textContent).toBe('雪原');
+
+    const range = document.createRange();
+    range.selectNodeContents(span.firstChild!);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const menu = await screen.findByRole('menu');
+    /* 菜单里「指派给场景」和「取消场景的默认描述」都含「场景」——
+       这里要的是指派项（第一项）。 */
+    await user.click(within(menu).getAllByRole('menuitem', { name: /场景/ })[0]);
+
+    expect(box.textContent?.replaceAll('\u200b', '')).toBe('前缀：雪原后缀');
+    expect(box.querySelector('[data-anchor="image_1"]')?.textContent).toBe('雪原');
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', { name: '保存草稿' }));
+    expect(mutations.save.mock.calls[0][0].prompt).toBe('前缀：{{Mixed 1}}后缀');
+    expect(mutations.save.mock.calls[0][0].slots?.[0].emptyText).toBe('雪原');
+  });
+
+  it('老模板的 emptyText 没有锚点：打开再保存也不会被清空', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'libtv-wan3-replacement',
+          prompt: '将一只猫放入场景这个场景： {{Mixed 1}}',
+          slots: [
+            {
+              key: 'image_1', type: 'image', binding: 'user', refMode: 'mixed',
+              minCount: 0, maxCount: 1, label: '场景', emptyText: '一望无际的雪原',
+              filledText: '参考场景 {{Mixed 1}}', position: 0,
+            },
+          ],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+    // 作者只是打开、什么都没改
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', { name: '保存草稿' }));
+
+    const sent = mutations.save.mock.calls[0][0];
+    expect(sent.slots?.[0].emptyText).toBe('一望无际的雪原');
+    // 载入时被还原成高亮段，提交时又变回引用 —— 正文逐字不变。
+    expect(sent.prompt).toBe('将一只猫放入场景这个场景： {{Mixed 1}}');
   });
 });
 
@@ -1272,5 +1444,118 @@ describe('模板封装 · 固定槽位的素材要能随模板公开', () => {
     ).not.toBeInTheDocument();
     expect(libraryApi.setPurpose).not.toHaveBeenCalled();
     expect(await screen.findByRole('button', { name: '更换' })).toBeInTheDocument();
+  });
+});
+
+/**
+ * 图片插槽预设：作者配一次名称和「选中时文案」，以后加图片槽位点一下就带出来。
+ *
+ * 钉的是**整条链路**：配置弹窗写入 localStorage → 关掉后加槽位菜单的二级选项
+ * 出现 → 点它建槽位 → 保存草稿的 payload 里名称与文案都在，且文案引用的是
+ * 新槽位的 key（不是配置页里那个占位的 `key`）。
+ */
+describe('模板封装 · 图片插槽预设', () => {
+  const enter = async () => {
+    const user = userEvent.setup();
+    renderWorkspace([specOf({status: 'draft'})]);
+    await user.click(cardOf('商品图模板').getByRole('button', {name: '编辑'}));
+    return user;
+  };
+
+  it('配一个预设 → 加槽位点它 → 槽位带出名称与替换后的选中时文案', async () => {
+    const user = await enter();
+
+    await user.click(screen.getByRole('button', {name: '图片插槽配置'}));
+    const dialog = await screen.findByRole('dialog');
+    await user.clear(within(dialog).getAllByLabelText(/名称$/)[0]);
+    await user.type(within(dialog).getAllByLabelText(/名称$/)[0], '产品场景');
+    await user.clear(within(dialog).getAllByLabelText(/选择素材时文案$/)[0]);
+    await user.type(within(dialog).getAllByLabelText(/选择素材时文案$/)[0], '参考产品场景图');
+    await user.click(within(dialog).getByRole('button', {name: '完成'}));
+
+    await user.click(screen.getAllByRole('button', {name: /加槽位/})[0]);
+    const imageItem = screen.getByRole('menuitem', {name: /^图片/});
+    await user.click(imageItem);
+    const presetItem = await screen.findByRole('menuitem', {name: '产品场景'});
+    await user.click(presetItem);
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', {name: '保存草稿'}));
+    const sent = mutations.save.mock.calls[0][0];
+    const slot = sent.slots?.find((item) => item.label === '产品场景');
+    expect(slot).toBeDefined();
+    expect(slot?.type).toBe('image');
+    /* 「选中时文案」只属于可选槽位：必填带文案后端 422。
+       这里必须真的设成可选，不然配置出来的预设一保存就被拒。 */
+    expect(slot?.minCount).toBe(0);
+    expect(slot?.maxCount).toBe(1);
+    /* 默认模板没有槽位 → 新槽位是 image_1；文案里的占位符必须已换成它。 */
+    expect(slot?.filledText).toBe('参考产品场景图');
+  });
+
+  it('文案里带插引用按钮写的占位符时，建出来的槽位引用自己的 key', async () => {
+    const user = await enter();
+
+    await user.click(screen.getByRole('button', {name: '图片插槽配置'}));
+    const dialog = await screen.findByRole('dialog');
+    await user.clear(within(dialog).getAllByLabelText(/名称$/)[0]);
+    await user.type(within(dialog).getAllByLabelText(/名称$/)[0], '产品场景');
+    const textArea = within(dialog).getAllByLabelText(/选择素材时文案$/)[0];
+    await user.clear(textArea);
+    await user.type(textArea, '参考');
+    await user.click(within(dialog).getAllByRole('button', {name: '插引用（这次选中的图）'})[0]);
+    await user.type(textArea, '中的场景');
+    await user.click(within(dialog).getByRole('button', {name: '完成'}));
+
+    await user.click(screen.getAllByRole('button', {name: /加槽位/})[0]);
+    await user.click(screen.getByRole('menuitem', {name: /^图片/}));
+    await user.click(await screen.findByRole('menuitem', {name: '产品场景'}));
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', {name: '保存草稿'}));
+    const sent = mutations.save.mock.calls[0][0];
+    const slot = sent.slots?.find((item) => item.label === '产品场景');
+    /* 提交时 renumberRefs 会把自引用 {{slot:key}} 规范成 {{Mixed N}} ——
+       两种写法后端都收（normalize_refs 互转）。这里钉的是「引用到了自己」：
+       空模板自带一个 image_1，预设加出来的是 image_2，所以是 Mixed 2。 */
+    expect(slot?.key).toBe('image_2');
+    expect(slot?.filledText).toBe('参考{{Mixed 2}}中的场景');
+  });
+
+  it('「默认图片（不套预设）」加出来仍是空白槽位', async () => {
+    const user = await enter();
+    await user.click(screen.getAllByRole('button', {name: /加槽位/})[0]);
+    await user.click(screen.getByRole('menuitem', {name: /^图片/}));
+    await user.click(screen.getByRole('menuitem', {name: '默认图片（不套预设）'}));
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', {name: '保存草稿'}));
+    const slot = mutations.save.mock.calls[0][0].slots?.[0];
+    expect(slot?.label).toBe('');
+    expect(slot?.filledText).toBe('');
+  });
+
+  /** 同一预设插两次：两个槽位都能建出来，但名字自动区分，菜单里不再有两项一样。 */
+  it('同一预设重复插入 → 第二个槽位加序号，不再重名', async () => {
+    const user = await enter();
+    await user.click(screen.getByRole('button', {name: '图片插槽配置'}));
+    const dialog = await screen.findByRole('dialog');
+    await user.clear(within(dialog).getAllByLabelText(/名称$/)[0]);
+    await user.type(within(dialog).getAllByLabelText(/名称$/)[0], '角色');
+    await user.click(within(dialog).getByRole('button', {name: '完成'}));
+
+    for (let count = 0; count < 2; count += 1) {
+      await user.click(screen.getAllByRole('button', {name: /加槽位/})[0]);
+      await user.click(screen.getByRole('menuitem', {name: /^图片/}));
+      await user.click(screen.getByRole('menuitem', {name: '角色'}));
+    }
+
+    mutations.save.mockClear();
+    await user.click(screen.getByRole('button', {name: '保存草稿'}));
+    /* 空白模板自带一个未命名的默认槽位，只看预设加出来的那两个。 */
+    const labels = mutations.save.mock.calls[0][0].slots
+      ?.map((slot) => slot.label)
+      .filter((label) => label);
+    expect(labels).toEqual(['角色', '角色 2']);
   });
 });

@@ -55,14 +55,18 @@ describe('Segmented', () => {
     expect(screen.getByRole('radio', {name: '自定义'})).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('选中项不能只靠一块白底区分：滑块带淡蓝底 + 主色描边、标签用深主色', () => {
+  it('选中项不能只靠一块白底区分：滑块带墨边、标签用墨色', () => {
     const { container } = render(<Harness />);
     const thumb = container.querySelector<HTMLElement>('span[aria-hidden="true"]');
-    // 白底压在 #f7fbfc 的槽上几乎看不见 —— 这就是「切了像没切」的根因
-    expect(thumb?.className).toContain('ring-primary-line');
-    expect(thumb?.className).toContain('bg-primary-soft');
-    expect(screen.getByRole('radio', {name: '均衡'}).className).toContain('text-primary-deep');
-    expect(screen.getByRole('radio', {name: '随机'}).className).not.toContain('text-primary-deep');
+    // 纸白滑块压在纸色凹槽上几乎看不见 —— 这就是「切了像没切」的根因。
+    // 靠**描边 + 标签变墨色**区分，不靠底色块。
+    // 按 class **token** 判，不按子串：'text-ink-mute' 里也含 'text-ink'，
+    // 用 toContain 会把「未选中项」误判成选中了。
+    const tokens = (el: Element | null) => (el?.getAttribute('class') ?? '').split(/\s+/);
+    expect(tokens(thumb)).toContain('ring-line-strong');
+    expect(tokens(thumb)).toContain('bg-panel');
+    expect(tokens(screen.getByRole('radio', {name: '均衡'}))).toContain('text-ink');
+    expect(tokens(screen.getByRole('radio', {name: '随机'}))).not.toContain('text-ink');
   });
 
   it('禁用的档位显示但点不动，滑块也不会跑过去', async () => {

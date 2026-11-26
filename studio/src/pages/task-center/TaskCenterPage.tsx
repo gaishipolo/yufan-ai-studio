@@ -316,28 +316,8 @@ export default function TaskCenterPage() {
         title="任务中心"
       />
 
-      {/* 筛选一条：来源 / 范围 / 排序 / 仅可下载 / 搜索 / 刷新 / 条数 */}
-      <div className="mt-3">
-        <TaskFilterBar
-          keyword={keywordInput}
-          onKeywordChange={setKeywordInput}
-          source={source}
-          onSourceChange={v => patchFilter({ source: v === 'all' ? undefined : v })}
-          canReadImages={canReadImages}
-          scope={scope}
-          onScopeChange={v => patchFilter({ scope: v === 'mine' ? undefined : v })}
-          canReadAll={canReadAll}
-          sort={sort}
-          onSortChange={v => patchFilter({ sort: v === 'createdAt_desc' ? undefined : v })}
-          onlyAuthorized={onlyAuthorized}
-          onAuthorizedChange={v => patchFilter({ auth: v ? '1' : undefined })}
-          onRefresh={() => void refetch()}
-          isFetching={isFetching}
-          total={isError ? undefined : data?.total}
-          filtered={hasFilter}
-          onReset={resetFilter}
-        />
-      </div>
+      {/* 状态先于工具：账号队列这类横幅是「现在什么情况」，筛选条是「我要看什么」。
+          以前顺序反着 —— 横幅夹在筛选条和页签中间，读的时候要跳着读。 */}
 
       {data?.warnings.map(warning => (
         <p key={warning} role="alert" className="mt-3 text-meta text-danger">
@@ -352,9 +332,37 @@ export default function TaskCenterPage() {
         />
       ) : null}
 
-      {/* 页签与批量条同一行：没勾选时右边是"从模板生成"的入口，勾选后就地换成批量操作，
+      {/* 工具台：筛选条与页签收进同一块白面板。
+          台面退成浅灰之后，浮在台面上的控件就没有落脚点了 ——
+          一排输入框直接躺在灰地上，像没装完。收进白面板，
+          「工具」和「内容」就分成两层，跟资产库一个规矩。 */}
+      <div className="mt-3 space-y-3 rounded-card border border-line-soft bg-panel p-3">
+        {/* 筛选一条：来源 / 范围 / 排序 / 仅可下载 / 搜索 / 刷新 / 条数 */}
+        <div>
+          <TaskFilterBar
+            keyword={keywordInput}
+            onKeywordChange={setKeywordInput}
+            source={source}
+            onSourceChange={v => patchFilter({ source: v === 'all' ? undefined : v })}
+            canReadImages={canReadImages}
+            scope={scope}
+            onScopeChange={v => patchFilter({ scope: v === 'mine' ? undefined : v })}
+            canReadAll={canReadAll}
+            sort={sort}
+            onSortChange={v => patchFilter({ sort: v === 'createdAt_desc' ? undefined : v })}
+            onlyAuthorized={onlyAuthorized}
+            onAuthorizedChange={v => patchFilter({ auth: v ? '1' : undefined })}
+            onRefresh={() => void refetch()}
+            isFetching={isFetching}
+            total={isError ? undefined : data?.total}
+            filtered={hasFilter}
+            onReset={resetFilter}
+          />
+        </div>
+
+        {/* 页签与批量条同一行：没勾选时右边是"从模板生成"的入口，勾选后就地换成批量操作，
           不再让四个不可用按钮常驻页头 */}
-      <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center justify-between gap-2">
         <Tabs items={statusTabs} value={status} onChange={v => patchFilter({ status: v })} />
         {selected.size > 0 ? (
           <TaskBulkBar
@@ -371,11 +379,12 @@ export default function TaskCenterPage() {
         ) : (
           <Link
             to="/templates/library"
-            className="text-meta text-ink-mute transition-colors hover:text-primary"
+            className="text-meta font-medium text-ink-mute transition-colors hover:text-primary"
           >
             从模板生成 →
           </Link>
         )}
+        </div>
       </div>
 
       <div className="mt-3.5">

@@ -51,7 +51,9 @@ describe('UserAvatar', () => {
 
     rerender(<UserAvatar user={{ displayName: '赵' }} size={30} shape="square" tone="accent" />);
     const square = screen.getByText('赵');
-    expect(square.className).toContain('rounded-[9px]');
-    expect(square.className).toContain('text-white');
+    expect(square.className).toContain('rounded-lg');
+    /* accent = 墨底 + 浅纸字（纸墨版的主题色，不再是蓝青渐变） */
+    expect(square.className).toContain('bg-primary');
+    expect(square.className).toContain('text-primary-soft');
   });
 });

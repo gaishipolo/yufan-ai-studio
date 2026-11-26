@@ -8,7 +8,7 @@ import { cn } from '@/shared/lib/cn';
 export function FullPageLoader({ label = '加载中…' }: { label?: string }) {
   return (
     <div
-      className="grid min-h-screen place-items-center bg-[linear-gradient(180deg,#edf4f5_0%,#e8f0f2_100%)]"
+      className="grid min-h-screen place-items-center bg-[linear-gradient(180deg,#f8f4ea_0%,#ece6d7_100%)]"
       role="status"
       aria-live="polite"
     >

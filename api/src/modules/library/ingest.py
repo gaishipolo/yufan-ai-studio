@@ -65,7 +65,6 @@ import tempfile
 from collections.abc import Mapping
 from contextlib import ExitStack
 from datetime import UTC, datetime
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, ClassVar
 
@@ -81,6 +80,7 @@ from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
 from infra import get_storage
 from infra.archive import get_archive_storage
 from infra.driver_config import DriverSettings, driver_config
+from infra.env_settings import vendor_settings
 from infra.http import HttpError, fetch_to_file, validate_public_url
 from infra.media_probe import EXTENSIONS, MAX_BYTES, create_preview, inspect
 from infra.storage.base import ObjectStorage
@@ -120,9 +120,11 @@ class IngestDownloadSettings(DriverSettings):
     timeout_sec: float = 120.0
 
 
-@lru_cache
-def get_ingest_download_settings() -> IngestDownloadSettings:
-    return IngestDownloadSettings()
+# 配置热生效：与供应商配置同一套 mtime 指纹缓存。白名单写进 .env 后下一次
+# 入库即生效 —— 否则「补上 CDN 域名还得重启」正是这次漏配事故的延续。
+get_ingest_download_settings = vendor_settings(
+    IngestDownloadSettings, env_prefix="LIBRARY_INGEST"
+)
 
 
 def _allowed_hosts() -> frozenset[str]:

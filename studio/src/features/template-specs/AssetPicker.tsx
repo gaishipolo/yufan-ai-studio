@@ -171,7 +171,7 @@ export function AssetPicker({
             前者是作者传过的案例第二次挑不到，后者是钉住的那条要随模板公开，
             公开的素材就在案例池里。 */}
         {casePool && canReadCases && (
-          <div className="inline-flex w-fit items-center gap-0.5 rounded-xl bg-canvas/90 p-0.5 ring-1 ring-inset ring-[rgba(203,218,224,.8)]">
+          <div className="inline-flex w-fit items-center gap-0.5 rounded-xl bg-canvas/90 p-0.5 ring-1 ring-inset ring-line-strong">
             {(
               [
                 ['mine', '我的素材'],
@@ -184,7 +184,7 @@ export function AssetPicker({
                 aria-pressed={pool === value}
                 onClick={() => setPool(value)}
                 className={cn(
-                  'rounded-[10px] px-3 py-[5px] text-meta transition-all duration-150',
+                  'rounded-pill px-3 py-[5px] text-meta transition-all duration-150',
                   pool === value
                     ? 'bg-panel font-medium text-ink shadow-[0_1px_3px_rgba(21,50,61,.12)]'
                     : 'text-ink-mute hover:text-ink-soft',

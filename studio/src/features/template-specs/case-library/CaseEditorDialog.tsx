@@ -58,7 +58,7 @@ function CaseEditorForm({ item, onClose, onSave }: CaseEditorDialogProps) {
             maxLength={2000}
             placeholder="这份案例适合什么场景？"
             onChange={event => setDescription(event.target.value)}
-            className="w-full resize-y rounded-lg border border-line bg-white px-2.5 py-1.5 text-body text-ink outline-none transition-colors placeholder:text-[#a9b8bf] focus:border-primary-line focus:ring-2 focus:ring-primary/10"
+            className="w-full resize-y rounded-lg border border-line bg-panel px-2.5 py-1.5 text-body text-ink outline-none transition-colors placeholder:text-ink-mute focus:border-primary-line focus:ring-2 focus:ring-primary/10"
           />
         </FormField>
 

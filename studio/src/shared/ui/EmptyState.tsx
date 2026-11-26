@@ -23,8 +23,8 @@ export function EmptyState({
 }) {
   return (
     <div className={cn('flex flex-col items-center justify-center px-5 py-16 text-center', className)}>
-      {icon && <div className="mb-3 text-[#ccd9de]">{icon}</div>}
-      <p className="text-lead font-semibold text-ink">{title}</p>
+      {icon && <div className="mb-3 text-ink-mute">{icon}</div>}
+      <p className="font-serif text-lead font-semibold text-ink">{title}</p>
       {description && <p className="mt-1.5 max-w-sm text-meta text-ink-mute">{description}</p>}
       {action && <div className="mt-4">{action}</div>}
     </div>
@@ -32,7 +32,7 @@ export function EmptyState({
 }
 
 export function Skeleton({ className }: { className?: string }) {
-  return <div className={cn('animate-pulse rounded-lg bg-[#eef3f5]', className)} />;
+  return <div className={cn('animate-pulse rounded-lg bg-line-soft', className)} />;
 }
 
 export function CardSkeletonGrid({ count = 8 }: { count?: number }) {

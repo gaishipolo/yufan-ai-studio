@@ -54,7 +54,7 @@ export interface TagFilterProps {
 }
 
 const PILL =
-  'inline-flex shrink-0 items-center gap-1 rounded-full border px-2 py-[2px] text-micro leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
+  'inline-flex shrink-0 items-center gap-1 rounded-xs border px-2 py-[2px] text-micro leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
 const IDLE =
   'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-primary-soft/60 hover:text-primary-deep';
 const ACTIVE = 'border-primary bg-primary text-white shadow-sm';

@@ -163,7 +163,7 @@ export function GroupEditorModal({
               <ul className="max-h-[42vh] space-y-1 overflow-auto rounded-lg border border-line-soft p-1.5">
                 {(candidatesQuery.data?.items ?? []).map((user) => (
                   <li key={user.id}>
-                    <label className="flex cursor-pointer items-center gap-2 rounded-[7px] px-2 py-1.5 hover:bg-panel-soft">
+                    <label className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 hover:bg-panel-soft">
                       <input
                         type="checkbox"
                         className="h-3 w-3 accent-primary"

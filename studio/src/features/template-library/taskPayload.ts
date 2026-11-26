@@ -165,6 +165,7 @@ export function toTaskPayload(
 
 export function toImagePayload(
   compiled: SpecCompileOut,
+  title: string,
   defaults: PayloadDefaults = {},
   schema?: PayloadSchema,
 ): ImagePayloadResult {
@@ -182,6 +183,9 @@ export function toImagePayload(
   return {
     ok: true,
     payload: {
+      /* 任务名与视频那条对齐：模板库传模板名，后端用它当生图历史 / 任务中心的卡片名。
+         不传时后端仍从提示词派生（直接生图那条路）。 */
+      name: title,
       prompt: compiled.prompt,
       model: compiled.model,
       ...(size ? { size } : {}),
@@ -202,7 +206,7 @@ export function toSubmitPayload(
   schema?: PayloadSchema,
 ): SubmitResult {
   if (kind === 'image') {
-    const image = toImagePayload(compiled, defaults, schema);
+    const image = toImagePayload(compiled, title, defaults, schema);
     return image.ok ? { ok: true, kind: 'image', payload: image.payload } : image;
   }
   const video = toTaskPayload(compiled, title, defaults, schema);

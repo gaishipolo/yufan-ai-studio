@@ -14,7 +14,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
     <div
       className={cn(
         'flex h-[30px] min-w-0 items-center gap-1.5 rounded-lg border border-line bg-panel-soft px-2.5',
-        'transition-all focus-within:border-primary-line focus-within:bg-white focus-within:shadow-ring',
+        'transition-all focus-within:border-primary-line focus-within:bg-panel focus-within:shadow-ring',
         wrapperClassName,
       )}
     >
@@ -24,7 +24,7 @@ export const SearchInput = forwardRef<HTMLInputElement, SearchInputProps>(functi
         type="search"
         placeholder={placeholder}
         className={cn(
-          'h-full w-full min-w-0 bg-transparent text-xs text-ink outline-none placeholder:text-[#a9b8bf]',
+          'h-full w-full min-w-0 bg-transparent text-xs text-ink outline-none placeholder:text-ink-mute',
           '[&::-webkit-search-cancel-button]:appearance-none',
           className,
         )}

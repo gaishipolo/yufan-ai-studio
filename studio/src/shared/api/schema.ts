@@ -152,6 +152,41 @@ export interface CompiledSlotOut {
   assetIds?: string[];
 }
 
+/** 一项可编辑配置。密钥的 `value` 恒为空串，只有指纹，不回显明文。 */
+export interface ConfigItemOut {
+  key: string;
+  label: string;
+  group: string;
+  secret: boolean;
+  value?: string;
+  configured?: boolean;
+  fingerprint?: string;
+  masked?: string;
+  source?: string;
+  editable?: boolean;
+  hint?: string;
+  required?: boolean;
+}
+
+/** ConfigListOut */
+export interface ConfigListOut {
+  items?: ConfigItemOut[];
+  envFile?: string;
+  groups?: string[];
+}
+
+/** ConfigUpdateIn */
+export interface ConfigUpdateIn {
+  values?: Record<string, string>;
+}
+
+/** ConfigUpdateOut */
+export interface ConfigUpdateOut {
+  updated?: string[];
+  unchanged?: string[];
+  skipped?: string[];
+}
+
 /** CreateExportIn */
 export interface CreateExportIn {
   /** 数据源，见 enums.ExportSource */
@@ -399,6 +434,8 @@ export interface FromGenerationIn {
 export interface GenerateImageIn {
   /** 画面描述 */
   prompt: string;
+  /** 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 */
+  name?: string;
   /** 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` */
   size?: string;
   /** 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 */
@@ -2413,6 +2450,10 @@ export interface EndpointData {
   "DELETE /api/v1/library/trash/{asset_id}": null;
   /** 从回收站恢复（强制回到个人库，不恢复共享） */
   "POST /api/v1/library/trash/{asset_id}/restore": LibraryAssetDetailOut;
+  /** 运行时配置清单（密钥脱敏） */
+  "GET /api/v1/model-driver/config": ConfigListOut;
+  /** 修改运行时配置，下一次请求即生效 */
+  "PUT /api/v1/model-driver/config": ConfigUpdateOut;
   /** 已自动载入的模型驱动清单 */
   "GET /api/v1/model-driver/drivers": DriverListOut;
   /** LibTV 账号额度、免费权益与队列名额 */

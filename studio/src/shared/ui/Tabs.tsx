@@ -24,10 +24,13 @@ export function Tabs<T extends string = string>({ items, value, onChange, classN
             type="button"
             onClick={() => onChange(item.value)}
             className={cn(
-              'inline-flex h-[27px] items-center gap-1.5 rounded-pill px-2.5 text-xs transition-all duration-150',
+              /* 报纸栏目式页签：没有药丸、没有底色块，
+                 只有一条下划线 —— 选中是墨线墨字，未选中是浅字。
+                 页签是「目录里的条目」，不是按钮。 */
+              'inline-flex h-[27px] items-center gap-1.5 border-b-2 px-3 text-xs transition-colors duration-150',
               active
-                ? 'bg-primary font-semibold text-white shadow-[0_3px_9px_rgba(43,124,255,.28)]'
-                : 'text-ink-soft hover:bg-[#f2f7f8]',
+                ? 'border-primary font-semibold text-ink'
+                : 'border-transparent text-ink-mute hover:text-ink-soft',
             )}
           >
             {item.label}

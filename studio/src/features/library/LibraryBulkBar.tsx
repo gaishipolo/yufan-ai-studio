@@ -74,7 +74,7 @@ export function LibraryBulkBar({
   };
 
   return (
-    <div className="sticky bottom-3 z-20 space-y-2 rounded-card border border-primary-line bg-white px-2.5 py-2 shadow-float">
+    <div className="sticky bottom-3 z-20 space-y-2 rounded-card border border-primary-line bg-panel px-2.5 py-2 shadow-float">
       <div className="flex flex-wrap items-center gap-1.5">
         <span className="text-body font-semibold text-ink">已选 {count} 项</span>
         <Button size="sm" variant="ghost" icon={<X size={12} />} onClick={onClear}>

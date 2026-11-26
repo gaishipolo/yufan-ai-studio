@@ -138,7 +138,7 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
             aria-label="新标签所属上级"
             disabled={busy}
             onChange={(event) => setNewParent(event.target.value)}
-            className="h-8 w-[128px] shrink-0 rounded-lg border border-line bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+            className="h-8 w-[128px] shrink-0 rounded-lg border border-line bg-panel px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
           >
             <option value="">作为一级标签</option>
             {parents.map((parent) => (
@@ -160,7 +160,7 @@ export function LibraryTagManager({ tags, onClose }: LibraryTagManagerProps) {
               event.preventDefault();
               void submitCreate();
             }}
-            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-white px-2.5 text-body text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10 disabled:bg-panel-soft"
+            className="h-8 min-w-0 flex-1 rounded-lg border border-line bg-panel px-2.5 text-body text-ink placeholder:text-ink-mute focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10 disabled:bg-panel-soft"
           />
           <Button
             size="sm"
@@ -219,7 +219,7 @@ function ManagerRow({ tag, tags, busy, onRename, onMove, onDelete }: ManagerRowP
         disabled={busy}
         aria-label={`${tag.name} 的名称`}
         onChange={(event) => setName(event.target.value)}
-        className="h-7 min-w-[90px] flex-1 rounded-md border border-line-soft bg-white px-2 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+        className="h-7 min-w-[90px] flex-1 rounded-md border border-line-soft bg-panel px-2 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
       />
       <Button
         size="sm"
@@ -235,7 +235,7 @@ function ManagerRow({ tag, tags, busy, onRename, onMove, onDelete }: ManagerRowP
         disabled={selectDisabled}
         title={hasChildren ? '旗下已有下级，不能再挂到别处' : '调整所属上级'}
         onChange={(event) => void onMove(tag.id, event.target.value || null)}
-        className="h-7 w-[124px] shrink-0 rounded-md border border-line-soft bg-white px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
+        className="h-7 w-[124px] shrink-0 rounded-md border border-line-soft bg-panel px-1.5 text-body text-ink focus:border-primary-line focus:outline-none disabled:bg-panel-soft"
       >
         <option value="">一级标签</option>
         {moveParents.map((parent) => (

@@ -39,7 +39,7 @@ export function SlotTextField({
         maxLength={MAX_SLOT_TEXT}
         placeholder={placeholder}
         onChange={event => onChange(event.target.value)}
-        className="w-full resize-y rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors placeholder:text-[#a9b8bf] hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10"
+        className="w-full resize-y rounded-lg border border-line bg-panel px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors placeholder:text-ink-mute hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10"
       />
       <span className="self-end text-micro tabular-nums text-ink-mute">
         {value.length} 字

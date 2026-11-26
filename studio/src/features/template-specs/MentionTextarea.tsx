@@ -8,9 +8,10 @@ import {
   type ReactNode,
 } from 'react';
 import {cn} from '@/shared/lib/cn';
-import {useDropPlacement} from '@/shared/hooks/useDropPlacement';
 import {SLOT_TYPE_ICONS} from './slotIcons';
 import {insertRef, type SlotType} from './specDraft';
+import { CursorMenu, CursorMenuItem, CursorMenuGroup, type CaretPoint } from './CursorMenu';
+import { caretPointOf } from './caretPoint';
 import {
   applyMention,
   detectMention,
@@ -91,6 +92,11 @@ export const MentionTextarea = forwardRef<
 ) {
   const nodeRef = useRef<HTMLTextAreaElement>(null);
   const [mention, setMention] = useState<MentionQuery | null>(null);
+  const [caretPoint, setCaretPoint] = useState<CaretPoint | null>(null);
+  const updateMention = (next: MentionQuery | null) => {
+    setCaretPoint(next ? caretPointOf(nodeRef.current) : null);
+    setMention(next);
+  };
   const [active, setActive] = useState(0);
   /* 受控 textarea 在 value 变化后会把光标甩到末尾，所以插入完要自己放回去。 */
   const pendingCaret = useRef<number | null>(null);
@@ -132,9 +138,7 @@ export const MentionTextarea = forwardRef<
     [value, onInsert],
   );
 
-  const close = () => {
-    setMention(null);
-  };
+  const close = () => updateMention(null);
 
   /* 选中候选：把 `@查询词` 整段换成 token，光标停在 token 之后。 */
   const choose = (token: string) => {
@@ -168,18 +172,13 @@ export const MentionTextarea = forwardRef<
     }
   };
 
-  /* 候选面板的方向：**量出来**。空间不够就朝上弹（写死朝下会掉出视口）。 */
-  const anchorRef = useRef<HTMLDivElement>(null);
-  const popupRef = useRef<HTMLDivElement>(null);
   const open = mention !== null && matches.length > 0;
-  const {side, space} = useDropPlacement(anchorRef, popupRef, open);
-  const maxHeight = Math.max(140, Math.min(220, space));
 
   return (
     <div>
       {/* 面板的定位基准只包住 textarea：包住整块的话 top-full 会落到
           下面一行下面，弹窗跟输入框之间隔着一截，看着不像"就地弹出"。 */}
-      <div ref={anchorRef} className="relative z-20">
+      <div className="relative z-20">
         <textarea
           ref={nodeRef}
           id={id}
@@ -193,7 +192,7 @@ export const MentionTextarea = forwardRef<
             caretRef.current = at;
             onChange(text);
             // 提及面板由光标位置推导：输入变化后立刻重算，删掉 @ 它就自己收起。
-            setMention(detectMention(text, at));
+            updateMention(detectMention(text, at));
           }}
           onSelect={event => {
             const node = event.currentTarget;
@@ -202,76 +201,38 @@ export const MentionTextarea = forwardRef<
             /* 用 DOM 里的最新值，不是 props 的 value：选区事件常常紧跟着输入事件
                触发，那一刻 props 还是旧的（少打的那半个字），拿旧值算就会把刚弹出的
                候选面板判成 null —— 面板一闪就没了。 */
-            setMention(detectMention(node.value, at));
+            updateMention(detectMention(node.value, at));
           }}
           onKeyDown={onKeyDown}
           className={cn(
-            'w-full resize-y rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors placeholder:text-[#a9b8bf]',
+            'w-full resize-y rounded-lg border border-line bg-panel px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors placeholder:text-ink-mute',
             'hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10',
             open && 'border-primary-line bg-panel focus:ring-2 focus:ring-primary/10',
             className,
           )}
         />
 
-        {/* 提及面板：贴着输入框浮出，跟输入框同宽，像输入法的候选条。
-            空间不够就翻到输入框上方 —— 写死朝下会掉出视口。 */}
-        {open && (
-          <div
-            ref={popupRef}
-            data-placement={side}
-            style={{maxHeight}}
-            className={cn(
-              'absolute left-0 right-0 z-30 overflow-y-auto scroll-thin rounded-xl border border-line bg-panel p-1 shadow-pop',
-              side === 'top'
-                ? 'bottom-[calc(100%+4px)] animate-slideUp'
-                : 'top-[calc(100%+4px)] animate-slideDown',
-            )}
-          >
-            <p className="px-2 py-1 text-micro text-ink-mute">
-              {panelHint ??
-                (mention?.query ? `匹配「${mention.query}」` : '选择要引用的槽位')}
-            </p>
-            {matches.map((chip, index) => {
-              const Icon = chip.kind ? SLOT_TYPE_ICONS[chip.kind] : undefined;
-              return (
-                <button
-                  key={chip.token}
-                  type="button"
-                  onMouseDown={event => {
-                    // mousedown 先于 blur，click 会被输入框失焦吃掉 —— 用 mousedown 选中。
-                    event.preventDefault();
-                    choose(chip.token);
-                  }}
-                  onMouseEnter={() => setActive(index)}
-                  className={cn(
-                    'flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
-                    index === active
-                      ? 'bg-primary-soft text-primary'
-                      : 'text-ink-soft hover:bg-panel-soft',
-                  )}
-                >
-                  <span className="flex min-w-0 items-center gap-1.5">
-                    {Icon && <Icon size={12} className="shrink-0" />}
-                    <span className="truncate text-xs">{chip.label}</span>
-                  </span>
-                  {/* 角标说明这个候选代表「单个」还是「整组」—— 两种写法
-                      插进提示词后展开出来的内容不一样（一个编号 vs 一串编号）。 */}
-                  <span
-                    className={cn(
-                      'shrink-0 rounded px-1 text-micro',
-                      chip.all
-                        ? 'bg-violet/10 text-violet'
-                        : 'bg-panel-soft text-ink-mute',
-                    )}
-                  >
-                    {chip.all ? '全部' : '单个'}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        )}
       </div>
+      <CursorMenu point={open ? caretPoint : null} onDismiss={close}>
+        <CursorMenuGroup
+          label={panelHint ?? (mention?.query ? `匹配「${mention.query}」` : '选择要引用的槽位')}
+        >
+          {matches.map((chip, index) => {
+            const Icon = chip.kind ? SLOT_TYPE_ICONS[chip.kind] : undefined;
+            return (
+              <CursorMenuItem
+                key={chip.token}
+                label={chip.label}
+                hint={chip.all ? '全部' : '单个'}
+                icon={Icon && <Icon size={12} />}
+                active={index === active}
+                onSelect={() => choose(chip.token)}
+                onHover={() => setActive(index)}
+              />
+            );
+          })}
+        </CursorMenuGroup>
+      </CursorMenu>
       {children}
     </div>
   );

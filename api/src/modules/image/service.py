@@ -51,7 +51,10 @@ from modules.image.schema import GenerateImageIn, ImageJobOut
 
 logger = get_logger(__name__)
 
-_MAX_JOB_NAME = 120
+#: 作业名上限。跟 `image_jobs.name` 的列宽（200）与视频任务标题
+#: （`CreateTaskIn.title` 上限 200）对齐：模板名允许 160 字，模板库把它原样
+#: 当任务名传，截在 120 会让同一模板的生图任务与视频任务在卡片上显示成两个名字。
+_MAX_JOB_NAME = 200
 
 
 def _reference_mime(storage_key: str, declared: str) -> str:
@@ -247,12 +250,15 @@ class ImageService:
         count = int(params.get("count") or payload.count or 1)  # type: ignore[call-overload]
         extra = {key: value for key, value in params.items() if key not in ("size", "count")}
 
-        # 作业名给人看（生图历史 / 任务中心卡片），所以把 `{{Text N}}` 换成正文：
-        # 模板生成的图取名 `{{Text 1}}` 谁也不知道那是什么。真正的 prompt 列
-        # 保持原样（重试与注入都读它）。文本已在上面冻结，这里只做展示替换。
+        # 作业名给人看（生图历史 / 任务中心卡片）。
+        # 优先用提交方给的名字（模板库传模板名）：一长段提示词会把卡片挤满，
+        # 也与同名模板的视频任务对不上。留空时才退回从提示词派生 ——
+        # 直接提交（不经过模板库）的生图没有模板名，仍按老行为取名。
+        # 派生时把 `{{Text N}}` 换成正文；真正的 prompt 列保持原样（重试读它）。
+        given = payload.name.strip()
         display = inject_text_refs(payload.prompt, text_refs).strip()
         job = ImageJob(
-            name=display[:_MAX_JOB_NAME] or "未命名",
+            name=(given or display)[:_MAX_JOB_NAME] or "未命名",
             prompt=payload.prompt,
             size=size,
             count=count,

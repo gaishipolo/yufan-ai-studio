@@ -83,6 +83,8 @@ import {
   referenceChips,
   renumberRefs,
   rekeySlot,
+  setSlotOptional,
+  slotRefToken,
   slotTypeOf,
   slotsMissingTag,
   splitModelSelection,
@@ -91,6 +93,28 @@ import {
   toMixedTokens,
   type SlotType,
 } from './specDraft';
+import {
+  anchorsToRefs,
+  assignDefaultText,
+  defaultTextHasRef,
+  hydrateAnchors,
+  parseAnchors,
+  readDefaultText,
+  rekeyAnchor,
+  replaceAnchorWithRef,
+  stripAnchors,
+  syncDefaultTexts,
+  unwrapAnchor,
+} from './defaultText';
+import {DefaultTextMenu} from './DefaultTextMenu';
+import { ImageSlotPresetModal } from './ImageSlotPresetModal';
+import type { CaretPoint } from './CursorMenu';
+import {
+  filledTextOf,
+  loadPresets,
+  nextPresetLabel,
+  type ImageSlotPreset,
+} from './imageSlotPresets';
 
 /* 槽位类型 = 产品定的四种（图片 / 成片 / 音频 / 文本）。取值不跟着资产库走 ——
    库里多一类，槽位不该自己多出一档；展示名仍取自资产库的 kind 词表。
@@ -113,8 +137,38 @@ const PACK_CHILD_OPTIONS = TYPE_OPTIONS.filter(
   item => item.value === 'image' || item.value === 'video',
 );
 
+/** 预设在菜单里的值前缀：和槽位类型值区分开，回调里一眼能认出来。 */
+const PRESET_VALUE_PREFIX = 'preset:';
+
+/**
+ * 带图片插槽预设的「加槽位」选项。
+ *
+ * 图片这一项带二级：`默认图片`（不套预设，走的还是老路）+ 每个预设。
+ * 单独留「默认图片」是为了让作者能加一个完全空白的图片槽位 ——
+ * 预设只省文案，不该变成「加图片就必须套一个模板」的强制。
+ */
+function addSlotOptions(
+  presets: ImageSlotPreset[],
+  base: {value: string; label: string}[],
+) {
+  return base.map((item) =>
+    item.value !== 'image'
+      ? item
+      : {
+          ...item,
+          children: [
+            {value: 'image', label: '默认图片（不套预设）'},
+            ...presets.map((preset) => ({
+              value: `${PRESET_VALUE_PREFIX}${preset.id}`,
+              label: preset.name.trim() || '未命名预设',
+            })),
+          ],
+        },
+  );
+}
+
 /** 顶层「加槽位」菜单：四类槽位 + 一个封装容器。 */
-const ADD_SLOT_OPTIONS = [
+const ADD_SLOT_BASE = [
   ...TYPE_OPTIONS,
   {value: '__pack__', label: '封装（一次选包填多格）'},
 ];
@@ -191,10 +245,22 @@ export function SpecWorkspace() {
   /** 有未保存改动：只有这时才拦离开。 */
   const dirty = draft !== null && authoredFingerprint(draft) !== baseline;
 
-  /** 进入编辑：设草稿并把当前内容记成基线。 */
+  /**
+   * 进入编辑：设草稿并把当前内容记成基线。
+   *
+   * **先把提交形态还原成编辑形态**：服务端存的是 `{{Mixed N}}` + `emptyText`
+   * 字段（编译契约），正文里没有锚点。不还原的话，作者下次打开只看到一枚
+   * 胶囊，那段兜底文案又躲回卡片里，没法在正文里二次编辑 —— 这个功能的
+   * 整个意义就没了。`hydrateAnchors` 按「有兜底文案 + 有单张引用」定位，
+   * 存量模板不会凭空长出高亮段。
+   */
   const openDraft = (next: TemplateSpecIn) => {
-    setDraft(next);
-    setBaseline(authoredFingerprint(next));
+    const restored: TemplateSpecIn = {
+      ...next,
+      prompt: hydrateAnchors(next.prompt ?? '', next.slots ?? []),
+    };
+    setDraft(restored);
+    setBaseline(authoredFingerprint(restored));
   };
 
   const [picker, setPicker] = useState<PickTarget | null>(null);
@@ -312,6 +378,24 @@ export function SpecWorkspace() {
         normalize(draft),
         userSelectableKeys,
       );
+      /*
+       * **锚点段 → 槽位引用**（`⟦e:key⟧描述⟦/e⟧` → `{{Mixed N}}`）。
+       *
+       * 光剥标记是不够的：那段描述会原样留在正文里，填了素材也不会消失，
+       * 提示词里更没有放素材的地方。锚点段其实是**插入点**：提交时让位给
+       * 单张引用，描述文字退到槽位的 `emptyText`。后端按既有规则展开 ——
+       * 填了 → 编号（描述消失，Q1=A），没填 → `emptyText`（描述出现）。
+       *
+       * 剩下的裸标记（作者自己敲的、没闭合的半截锚点）才剥掉：
+       * 它们不是引用，后端会把 `⟦…⟧` 当普通字混进提示词。
+       */
+      const strippedPrompt = stripAnchors(
+        anchorsToRefs(payload.prompt ?? '', payload.slots ?? []),
+      );
+      const payloadWithoutAnchors: typeof payload = {
+        ...payload,
+        prompt: strippedPrompt,
+      };
       // 发布闸门的前端预检：后端要求「要让用户填的图片/视频槽位必须圈候选标签」，
       // 而它只会说"这些槽位要圈标签"、不指哪里。先在本地拦一次并点名，
       // 省掉「点发布 → 400 → 回头逐个槽位找」那一轮。保存草稿不判（草稿允许半成品）。
@@ -326,11 +410,11 @@ export function SpecWorkspace() {
         }
       }
       if (action === 'validate') {
-        const result = await validate.mutateAsync(payload);
+        const result = await validate.mutateAsync(payloadWithoutAnchors);
         toast(`预检通过 · 指纹 ${result.fingerprint.slice(0, 12)}`, 'success');
         return true;
       }
-      const saved = await save.mutateAsync(payload);
+      const saved = await save.mutateAsync(payloadWithoutAnchors);
       openDraft(fromSpecOut(saved));
       if (action === 'save') {
         toast(`已保存（第 ${saved.revision} 次修订）`, 'success');
@@ -443,6 +527,24 @@ export function SpecWorkspace() {
   /* 两个提示词框各自一条提示：共用一个的话，在随机档那段里写错引用，
      错误会显示在主提示词下面，作者会去改错的那一段。 */
   const [randomHint, setRandomHint] = useState('');
+  /* 「设为槽位默认描述」菜单：框选正文后弹出来。
+     **只对主提示词**：随机档那段是整段替换的（不是追加），
+     那里的默认描述会跟主提示词互相矛盾 —— 两处都要一份同一个槽位的兜底，
+     编译期只会用其中一处，另一处就成了没人认领的死数据。 */
+  const [defaultTextRange, setDefaultTextRange] = useState<{start: number; end: number} | null>(null);
+  /* 框选菜单的锚点：编辑器上报选区时一起给（视口坐标），菜单浮在框选的那段字旁。 */
+  const [defaultTextPoint, setDefaultTextPoint] = useState<CaretPoint | null>(null);
+  const reportTextSelection = (
+    range: {start: number; end: number} | null,
+    point?: CaretPoint | null,
+  ) => {
+    setDefaultTextRange(range);
+    setDefaultTextPoint(range ? point ?? null : null);
+  };
+  /* 图片插槽预设：配置页改的是本地存储，不触发当前页重渲染 ——
+     关掉配置弹窗时重新读一遍，二级菜单才会立刻出现刚加的预设。 */
+  const [presets, setPresets] = useState<ImageSlotPreset[]>(() => loadPresets());
+  const [presetConfigOpen, setPresetConfigOpen] = useState(false);
   const patchSlot = (index: number, patch: Partial<SpecSlotIn>) => {
     if (!draft) return;
     const nextSlots = slots.slice();
@@ -503,11 +605,24 @@ export function SpecWorkspace() {
        为什么必须重编号：把图片槽位改成文本，它就从视觉编号里退出去了，
        后面的槽位整体前移 —— 不动的话 `{{Mixed 3}}` 会静默指向另一个槽位。 */
     const renumbered = renumberRefs(draft, nextSlots);
-    const rekeyed =
-      patch.type !== undefined
-        ? rekeySlot(renumbered.slots ?? [], index, slotTypeOf(next.type), renumbered.prompt ?? '')
-        : renumbered.slots;
-    setDraft({...renumbered, slots: rekeyed});
+    let prompt = renumbered.prompt ?? '';
+    /* 锚点跟着正文走，但它的 key 是槽位 key —— 槽位改名时必须同步改，
+       否则锚点指向一个不存在的槽位，提交时被当成裸标记剥掉、描述全丢。 */
+    if (patch.type !== undefined) {
+      const oldKey = slots[index].key;
+      const rekeyed = rekeySlot(renumbered.slots ?? [], index, slotTypeOf(next.type), prompt);
+      const newKey = rekeyed[index]?.key;
+      if (newKey && newKey !== oldKey) prompt = rekeyAnchor(prompt, oldKey, newKey);
+      setDraft({...renumbered, prompt, slots: rekeyed});
+      return;
+    }
+    /* 切成必填 / 固定后，后端禁止带两段文案：锚点段要变成**普通单张引用**，
+       那一段从此由素材编号接管（必填一定有素材）。留成纯文字的话素材再也
+       不进提示词；留成锚点则提交时没有兜底文案，发布闸会拦。 */
+    if ((next.minCount ?? 1) >= 1 || next.binding === 'fixed') {
+      prompt = replaceAnchorWithRef(prompt, slots[index].key, slotRefToken(nextSlots, next));
+    }
+    setDraft({...renumbered, prompt});
   };
 
   /**
@@ -583,7 +698,11 @@ export function SpecWorkspace() {
     setDraft(renumberRefs(draft, next));
   };
 
-  const addSlot = (type: SlotType = 'image', group = '') => {
+  const addSlot = (
+    type: SlotType = 'image',
+    group = '',
+    preset?: ImageSlotPreset,
+  ) => {
     if (!draft) return;
     /* 容器成员必须**挨着**（后端 `_validate_groups` 会拦）：所以往容器里加槽位时
        插在它最后一个成员的后面，而不是一路 append 到末尾。 */
@@ -594,6 +713,17 @@ export function SpecWorkspace() {
         )
       : slots.length;
     const slot = blankSlot(at, type, slots, group);
+    if (preset) {
+      /* 名称与选中时文案一次带出。文案里的 `{{slot:key}}` 换成新槽位的真实 key ——
+         后端编译期再按位置展开成 `{{Mixed N}}`，比这里直接算编号更稳（拖动排序不影响）。
+
+         **必须设成可选**：后端 `_validate_slot_texts` 对必填槽位带文案直接 422
+         （必填一定有素材，两段文案没有意义）。「选中时文案」本身就暗示这是
+         可选槽位；用 `setSlotOptional` 同一套规则，不在这里手抄 minCount/maxCount。 */
+      Object.assign(slot, setSlotOptional(slot, true));
+      slot.label = nextPresetLabel(preset.name, slots);
+      slot.filledText = filledTextOf(preset, slot.key);
+    }
     const next = [...slots.slice(0, at), slot, ...slots.slice(at)].map((item, index) => ({
       ...item,
       position: index,
@@ -602,6 +732,16 @@ export function SpecWorkspace() {
     if (type === 'text') {
       setPicker({target: 'slot', index: next.findIndex(item => item.key === slot.key)});
     }
+  };
+
+  /** 菜单值 → 加槽位。`preset:` 开头的是二级里的预设，其余是槽位类型。 */
+  const addFromMenu = (value: string, group = '') => {
+    if (value.startsWith(PRESET_VALUE_PREFIX)) {
+      const preset = presets.find((item) => item.id === value.slice(PRESET_VALUE_PREFIX.length));
+      if (preset) addSlot('image', group, preset);
+      return;
+    }
+    addSlot(slotTypeOf(value), group);
   };
 
   /**
@@ -650,7 +790,9 @@ export function SpecWorkspace() {
     let stripped = 0;
     for (const key of keys) {
       const result = stripSlotRefs(next.prompt ?? '', key, remaining);
-      next = {...next, prompt: result.text};
+      // 槽位没了，正文里指向它的锚点也成了孤儿。摘掉标记、**保留那段字** ——
+      // 它是作者写的提示词，不该因为删槽位就凭空消失。
+      next = {...next, prompt: unwrapAnchor(result.text, key)};
       stripped += result.count;
     }
     setDraft(
@@ -830,14 +972,40 @@ export function SpecWorkspace() {
       setHint(error);
       return false;
     }
+    /* 后端规则：empty_text 不许含槽位引用。正文里已框选的默认描述段是
+       emptyText 的真相来源，所以段内同样不许插入引用 —— 否则指派时能拦、
+       在段内打 @ 却溜过去，到发布才吃 400（两处规则不一致，用户很困惑）。 */
+    if (parseAnchors(text).some((span) => defaultTextHasRef(text.slice(span.start, span.end)))) {
+      setHint('默认描述里不能带素材引用（没填素材时没有编号可指）；请在框选段之外引用');
+      return false;
+    }
     setHint('');
     /* 存进去的永远是**作者写法**：手打或粘进来的 `{{slot:image_1}}`（内部 key）
        当场换成 `{{Mixed 1}}`。这样正文里只有一种写法，胶囊也能对上标签。 */
-    setDraft({...draft, prompt: toMixedTokens(text, draft.slots ?? [])});
+    const authored = toMixedTokens(text, draft.slots ?? []);
+    /* 正文里的「默认描述段」是**唯一真相来源**：
+       作者在正文里改了某段文字，那段就是对应槽位的「未选时文案」——
+       同步过去，别让槽位卡片里的那份变成过期副本。
+       （`syncDefaultTexts` 顺带处理「作者把整段删了」：该槽位的兜底文案清空，
+       不留一段没人认领的死数据。） */
+    const slots = syncDefaultTexts(authored, draft.slots ?? [], draft.prompt ?? '');
+    setDraft({...draft, prompt: authored, slots});
     return true;
   };
 
   const chips = draft ? referenceChips(draft) : [];
+  /* 正文里框选出的默认描述段悬停时，气泡要说出它属于哪个槽位。
+     只取展示名，不重复那段描述文本（唯一真相仍在正文）。 */
+  const slotNames = useMemo(
+    () =>
+      Object.fromEntries(
+        (draft?.slots ?? []).map((slot) => [
+          slot.key,
+          slot.label?.trim() || SLOT_TYPE_LABELS[slotTypeOf(slot.type)],
+        ]),
+      ),
+    [draft?.slots],
+  );
 
   /* 随机档提示词：与主提示词**同一套**引用规则（都引用同一批槽位），
      只是写进另一个字段。校验也要各管各的提示，见 `randomHint` 的注释。 */
@@ -851,6 +1019,54 @@ export function SpecWorkspace() {
     setRandomHint('');
     setDraft({...draft, randomPrompt: toMixedTokens(text, draft.slots ?? [])});
     return true;
+  };
+
+  /**
+   * 把正文里选中的那段设为某槽位的「默认描述」。
+   *
+   * **正文是唯一真相来源**：那段文字**原地留在正文里**（加锚点标记，
+   * 渲染成高亮），同时成为该槽位的 `emptyText`（= 编译期的未选时文案）。
+   * 作者在正文里二次编辑它，`applyPromptText` 会把改动同步回槽位。
+   *
+   * **旧的那段先摘掉**：同一个槽位只能有一段默认描述 ——
+   * 否则正文里留下两段都声称是这个槽位的兜底，编译期用哪段就成了
+   * 「看谁先被匹配上」的事。
+   */
+  const handleAssignDefaultText = (slotKey: string, range: {start: number; end: number}) => {
+    if (!draft) return;
+    const authored = draft.prompt ?? '';
+    /* 偏移换算放在纯函数里（含「重新框选同一段」的情况）：
+       组件里按整段长度平移曾把正文切碎，见 defaultText.assignDefaultText。 */
+    const next = assignDefaultText(authored, slotKey, range);
+    /* 后端规则：`emptyText` 不许含任何槽位引用（没素材就没有编号可指）。
+       作者框到一段带胶囊的文字时，在这里就拦住并说清为什么 —— 否则要等到
+       发布才吃一个 400，而那时界面早就看不出是哪一段惹的祸。 */
+    const picked = readDefaultText(next, slotKey);
+    if (defaultTextHasRef(picked)) {
+      setHint('默认描述里不能带素材引用（没填素材时没有编号可指）；请重新框一段纯文字');
+      return;
+    }
+    const slots = syncDefaultTexts(next, draft.slots ?? [], authored);
+    setDraft({...draft, prompt: next, slots});
+    setDefaultTextRange(null);
+    const slot = slots.find(item => item.key === slotKey);
+    const name = slot?.label?.trim() || '该槽位';
+    toast(`「${name}」的默认描述已设为「${slot?.emptyText?.trim() ?? ''}」`, 'success');
+  };
+
+  /**
+   * 取消一段默认描述：摘掉锚点标记、文字留在正文（作者写的字不该凭空消失），
+   * 同步清掉槽位的 emptyText。这样指派就可逆了。
+   */
+  const handleCancelDefaultText = (slotKey: string) => {
+    if (!draft) return;
+    const authored = draft.prompt ?? '';
+    const next = unwrapAnchor(authored, slotKey);
+    if (next === authored) return;
+    const slots = syncDefaultTexts(next, draft.slots ?? [], authored);
+    setDraft({...draft, prompt: next, slots});
+    setDefaultTextRange(null);
+    toast('已取消默认描述，这段文字仍是普通正文', 'success');
   };
 
   /* 提示词上限：**能不能发布**的那个数（执行层，按原文字数比）。
@@ -942,7 +1158,7 @@ export function SpecWorkspace() {
           {/* 分段控件：外圈是一层凹槽（软底 + 内描边），选中项是"浮起来的白片"。
               以前是两颗胶囊共享一个圆角边框，选中只换字色 —— 在一排白卡上面几乎看不出
               当前在哪一档。 */}
-          <div className="inline-flex items-center gap-0.5 rounded-xl bg-canvas/90 p-0.5 shadow-[inset_0_1px_2px_rgba(21,50,61,.06)] ring-1 ring-inset ring-[rgba(203,218,224,.8)]">
+          <div className="inline-flex items-center gap-0.5 rounded-xl bg-canvas/90 p-0.5 shadow-[inset_0_1px_2px_rgba(21,50,61,.06)] ring-1 ring-inset ring-line-strong">
             {viewTabs.map(tab => (
               <button
                 key={tab.value}
@@ -952,7 +1168,7 @@ export function SpecWorkspace() {
                   clear();
                 }}
                 className={cn(
-                  'rounded-[10px] px-3 py-[5px] text-meta transition-all duration-150',
+                  'rounded-pill px-3 py-[5px] text-meta transition-all duration-150',
                   view === tab.value
                     ? 'bg-panel font-medium text-ink shadow-[0_1px_3px_rgba(21,50,61,.12)]'
                     : 'text-ink-mute hover:text-ink-soft',
@@ -1052,6 +1268,15 @@ export function SpecWorkspace() {
             )}
           </>
         )}
+
+        {/* 图片插槽预设配置：关掉时重新读本地存储，二级菜单立刻出现刚加的预设。 */}
+        <ImageSlotPresetModal
+          open={presetConfigOpen}
+          onClose={() => {
+            setPresets(loadPresets());
+            setPresetConfigOpen(false);
+          }}
+        />
 
         {/* 案例选择器：新建模板流程里的「从案例库复用」入口。 */}
         <CasePickerDialog
@@ -1213,12 +1438,24 @@ export function SpecWorkspace() {
           <Section
             title="槽位"
             extra={
-              /* 「加槽位」也按资产库的 kind 生成：库里多一类，这里就多一个入口，
-                 和槽位卡片里的「类型」下拉同源（曾经这里写死四个按钮）。 */
-              <AddSlotMenu
-                options={ADD_SLOT_OPTIONS}
-                onAdd={type => (type === '__pack__' ? addPackGroup() : addSlot(slotTypeOf(type)))}
-              />
+              <div className="flex items-center gap-1.5">
+                {/* 配置入口紧挨着「加槽位」：预设就是在那儿用的，分两处找会漏。 */}
+                <button
+                  type="button"
+                  onClick={() => setPresetConfigOpen(true)}
+                  title="配置「加槽位 → 图片」下的预设"
+                  className="inline-flex h-7 items-center gap-1 rounded-pill border border-line bg-panel px-2.5 text-xs font-medium text-ink-soft transition-colors hover:border-line-strong hover:text-ink"
+                >
+                  <Layers size={12} />
+                  图片插槽配置
+                </button>
+                <AddSlotMenu
+                  options={addSlotOptions(presets, ADD_SLOT_BASE)}
+                  onAdd={(value) =>
+                    value === '__pack__' ? addPackGroup() : addFromMenu(value)
+                  }
+                />
+              </div>
             }
           >
             {/* 三个动作（拖动排序 / 改名称 / 切绑定）**不需要教** ——
@@ -1371,8 +1608,8 @@ export function SpecWorkspace() {
                     </div>
                     <div className="mt-1 flex justify-end">
                       <AddSlotMenu
-                        options={PACK_CHILD_OPTIONS}
-                        onAdd={type => addSlot(slotTypeOf(type), run.group)}
+                        options={addSlotOptions(presets, PACK_CHILD_OPTIONS)}
+                        onAdd={value => addFromMenu(value, run.group)}
                       />
                     </div>
                     </div>
@@ -1418,16 +1655,38 @@ export function SpecWorkspace() {
               「+ 文本素材」也去掉了：左栏「槽位」板块的加号菜单已经能加
               任意类型（含文本），同一个动作摆两个入口，用户还得判断
               哪个才是"正确"的。 */}
-          <div className="rounded-2xl border border-line bg-panel p-4 shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
-            <p className="mb-2 text-meta font-medium text-ink">提示词</p>
-            <PromptBox
-              value={draft.prompt ?? ''}
-              chips={chips}
-              /* 两条写入路径（手打 / 按钮与 @）走**同一个**校验：
-                 合法的引用与按钮插入的是同一个 token，没有理由区别对待。 */
-              onChange={applyPromptText}
-              onInsert={applyPromptText}
-            />
+          <div className="rounded-2xl border border-line bg-panel p-4">
+            {/* 这一页真正在写的东西，字阶与「展示案例」的分区标题同级（lead）——
+                以前用 meta，比次级分区还小，扫一眼先看到「展示案例」，层次反了。
+                仍只是一行字，不套整条标题带。 */}
+            <p className="mb-2 flex items-center gap-2 text-lead font-semibold tracking-[.2px] text-ink">
+              <span className="h-3.5 w-[3px] rounded-full bg-primary" />
+              提示词
+            </p>
+            <div className="relative">
+              <PromptBox
+                value={draft.prompt ?? ''}
+                chips={chips}
+                slotNames={slotNames}
+                /* 两条写入路径（手打 / 按钮与 @）走**同一个**校验：
+                   合法的引用与按钮插入的是同一个 token，没有理由区别对待。 */
+                onChange={applyPromptText}
+                onInsert={applyPromptText}
+                onSelectionChange={reportTextSelection}
+              />
+              {/* 「设为槽位默认描述」菜单：框选正文里的一段就弹出来。
+                  菜单贴着提示词框 —— 作者的注意力在那段文字上，
+                  菜单飘到别处就得再找一次「刚才框的是哪段」。 */}
+              <DefaultTextMenu
+                slots={draft.slots ?? []}
+                range={defaultTextRange}
+                point={defaultTextPoint}
+                prompt={draft.prompt ?? ''}
+                onPick={handleAssignDefaultText}
+                onCancel={handleCancelDefaultText}
+                onDismiss={() => setDefaultTextRange(null)}
+              />
+            </div>
             <div className="mt-2 flex flex-wrap items-center gap-2">
               {hint && <p className="text-meta text-warn-deep">{hint}</p>}
               {/* 字数是一门**约束**（超了发不出去），不是解释，必须留着。
@@ -1452,6 +1711,7 @@ export function SpecWorkspace() {
               <PromptBox
                 value={draft.randomPrompt ?? ''}
                 chips={chips}
+                slotNames={slotNames}
                 onChange={applyRandomPromptText}
                 onInsert={applyRandomPromptText}
                 placeholder="模板库选「随机」时整段替换上面那段；留空则这一档不可用"
@@ -1556,7 +1816,7 @@ export function SpecWorkspace() {
         title="把这条素材设为案例"
         width={460}
       >
-        <div className="flex flex-col gap-3 p-[18px]">
+        <div className="flex flex-col gap-3 px-[18px] py-4">
           {/* 先把它要动的是哪一条摆出来：文件名一长，混在正文里就看不见了。
               平时素材列表里也是这么一条一行，形状认得出来。 */}
           <div className="flex items-center gap-2 rounded-lg border border-line-soft bg-panel-soft px-2.5 py-2">
@@ -1615,7 +1875,7 @@ export function SpecWorkspace() {
         title="还有未保存的修改"
         width={440}
       >
-        <div className="flex flex-col gap-3 p-[18px]">
+        <div className="flex flex-col gap-3 px-[18px] py-4">
           <p className="text-body leading-relaxed text-ink-soft">
             这些修改只存在当前页面，离开就没了。
           </p>
@@ -1672,6 +1932,16 @@ export function SpecWorkspace() {
         categories={caseMeta.data?.categories ?? []}
         onClose={() => setPublishCaseOpen(false)}
         onSubmit={publishCase}
+      />
+
+      {/* 图片插槽预设配置。编辑器与列表是两个独立的 render 分支，
+          按钮只在编辑器里，所以这里也要挂一份（关掉时刷新二级选项）。 */}
+      <ImageSlotPresetModal
+        open={presetConfigOpen}
+        onClose={() => {
+          setPresets(loadPresets());
+          setPresetConfigOpen(false);
+        }}
       />
     </section>
   );
@@ -1753,7 +2023,7 @@ function Section({
     // 分区卡片：标题单独做成一条"带子"（浅底 + 下边线），内容区是白的。
     // 以前标题和内容同一片白，四块卡片只剩四根 1px 边框在区分——缩到 50% 看，
     // 整页就是四块一样的方块。有带子之后，眼睛能先认出「这是哪一块」，再读内容。
-    <div className="relative rounded-2xl border border-line bg-panel shadow-[0_1px_2px_rgba(16,42,55,0.04)]">
+    <div className="relative rounded-2xl border border-line bg-panel">
       {/* 标题带子的圆角靠它自己那层裁（`rounded-t-2xl`），整张卡片不用
           `overflow-hidden` —— 提示词里的 @ 候选面板要从卡片里浮出去，
           被裁掉的话用户只看到输入框闪一下、什么也没出现。 */}
@@ -1819,8 +2089,8 @@ function SpecCard({
         // 只描边的话，浅色封面与白底会连成一片（案例图经常是浅色），
         // 卡片边界得靠投影与封面内描边一起撑住。
         'group flex flex-col overflow-hidden rounded-2xl border border-line-soft bg-panel',
-        'shadow-[0_1px_2px_rgba(16,42,55,.05)] transition-all duration-200',
-        'hover:-translate-y-0.5 hover:border-line hover:shadow-card',
+        'transition-all duration-200',
+        'hover:border-line-strong',
       )}
     >
       <button

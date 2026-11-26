@@ -63,7 +63,7 @@ export function UserMenu() {
         aria-expanded={open}
         aria-controls={menuId}
         aria-label={`账号菜单，当前账号 ${subject.name}`}
-        className="flex items-center gap-1 rounded-[11px] p-0.5 pr-1 transition-colors hover:bg-[#f1f6f7]"
+        className="flex items-center gap-1 rounded-xl p-0.5 pr-1 transition-colors hover:bg-panel-soft"
       >
         <UserAvatar
           user={me ?? { displayName: subject.name }}
@@ -82,7 +82,7 @@ export function UserMenu() {
       {open && (
         <div
           id={menuId}
-          className="absolute right-0 top-[calc(100%+8px)] z-50 w-[228px] overflow-hidden rounded-[12px] border border-line-soft bg-panel shadow-pop animate-popIn"
+          className="absolute right-0 top-[calc(100%+8px)] z-50 w-[228px] overflow-hidden rounded-xl border border-line-soft bg-panel shadow-pop animate-popIn"
         >
           <div className="border-b border-line-soft px-3 py-2.5">
             <div className="truncate text-xs font-semibold text-ink" title={subject.name}>
@@ -105,7 +105,7 @@ export function UserMenu() {
             <button
               type="button"
               onClick={signOut}
-              className="flex w-full items-center gap-2 rounded-lg px-2 py-[7px] text-left text-xs text-ink-soft transition-colors hover:bg-[#fdeceb] hover:text-danger"
+              className="flex w-full items-center gap-2 rounded-lg px-2 py-[7px] text-left text-xs text-ink-soft transition-colors hover:bg-danger-soft hover:text-danger"
             >
               <LogOut size={14} aria-hidden />
               退出登录

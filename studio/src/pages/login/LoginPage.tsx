@@ -62,38 +62,53 @@ export default function LoginPage() {
   return (
     <div className="grid min-h-screen md:grid-cols-[1.05fr_minmax(0,1fr)]">
       {/* 品牌区：移动端隐藏，避免把小屏的登录表单挤出首屏 */}
-      <aside className="relative hidden flex-col justify-between overflow-hidden bg-[linear-gradient(155deg,#0d2431_0%,#123a4a_48%,#0b5a63_100%)] p-10 text-white md:flex">
+      {/* 品牌区：墨底纸字。深青渐变是上一代的配色，
+          跟整套纸墨语言打架 —— 换成一块墨，像报纸的封面版。 */}
+      <aside className="relative hidden flex-col justify-between overflow-hidden bg-[#17150f] p-10 text-[#f2eee4] md:flex">
+        {/* 胶片齿孔边：和顶栏那道是同一个签名，只是反色。
+            登录页是这套视觉语言的第一次亮相 —— 签名要在这里也出现，
+            否则品牌面板和内页像两个产品。 */}
+        <div className="film-edge film-edge-dark absolute inset-x-0 top-0" aria-hidden />
+
         <div
-          className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(18,196,200,.35),transparent_65%)]"
+          className="pointer-events-none absolute -right-24 -top-24 h-72 w-72 rounded-full bg-[radial-gradient(circle,rgba(176,57,28,.20),transparent_65%)]"
           aria-hidden
         />
 
         <div className="relative flex items-center gap-2.5">
           <BrandMark size={32} />
           <div className="flex flex-col leading-none">
-            <b className="text-lead font-extrabold tracking-[3px] text-white">{APP_BRAND}</b>
-            <span className="mt-1 text-[7.5px] tracking-[1.8px] text-white/45">{APP_BRAND_EN}</span>
+            <b className="font-serif text-lead font-bold tracking-[3px] text-[#f2eee4]">{APP_BRAND}</b>
+            <span className="mt-1 font-mono text-[7.5px] tracking-[1.8px] text-[#f2eee4]/45">{APP_BRAND_EN}</span>
           </div>
-          <div className="h-4 w-px bg-white/25" />
-          <span className="text-sm font-semibold tracking-[.3px] text-white/90">{APP_NAME}</span>
+          <div className="h-4 w-px bg-[#f2eee4]/25" />
+          <span className="text-sm font-semibold tracking-[.3px] text-[#f2eee4]/85">{APP_NAME}</span>
         </div>
 
         <div className="relative max-w-[420px]">
-          <h1 className="text-display font-bold leading-[1.35] tracking-[.5px]">
+          {/* 大字报式标题：38px、紧字距。中文标题在这么大的字号下
+              不适合加粗，600 足够压住画面，又留得住笔画。 */}
+          <h1 className="font-serif text-[38px] font-semibold leading-[1.16] tracking-[-.6px]">
             从一句创意
             <br />
             到可直接投放的短视频
           </h1>
-          <p className="mt-3 text-xs leading-[1.8] text-white/65">
+          <p className="mt-4 text-body leading-[1.75] text-[#f2eee4]/70">
             分镜、生成、素材与审核在同一条流水线上完成，
             团队按角色分工，权限精确到按钮。
           </p>
 
-          <ul className="mt-6 space-y-2.5">
+          {/* 卖点之间用发丝线分开，不靠间距堆 —— 深色底上的一条线
+              比一层淡背景更安静，也更像编辑部排版而不是 PPT。 */}
+          <ul className="mt-7 border-t border-[#f2eee4]/15">
             {['全链路任务追踪，失败自动重试', '模型与时长按项目统一配置', '账号、角色、权限点三件套'].map(
               (item) => (
-                <li key={item} className="flex items-center gap-2 text-xs text-white/75">
-                  <Sparkles size={12} className="shrink-0 text-[#59e2d6]" aria-hidden />
+                <li
+                  key={item}
+                  className="flex items-center gap-2 border-b border-[#f2eee4]/15 py-2.5 text-body text-[#f2eee4]/85"
+                >
+                  {/* 朱红圆点：编辑部的红笔标记 —— 只在「要读的那几行」上出现 */}
+                  <Sparkles size={12} className="shrink-0 text-[#b0391c]" aria-hidden />
                   {item}
                 </li>
               ),
@@ -101,7 +116,7 @@ export default function LoginPage() {
           </ul>
         </div>
 
-        <p className="relative text-meta text-white/40">
+        <p className="relative font-mono text-meta tracking-[.08em] text-[#f2eee4]/45">
           © 2026 {APP_BRAND} {APP_BRAND_EN} · {APP_VERSION}
         </p>
       </aside>
@@ -110,7 +125,7 @@ export default function LoginPage() {
         <div className="w-full max-w-[336px]">
           <div className="mb-6 flex items-center gap-2 md:hidden">
             <BrandMark size={26} />
-            <b className="shrink-0 whitespace-nowrap text-lead font-extrabold tracking-[3px] text-ink">
+            <b className="shrink-0 whitespace-nowrap font-serif text-lead font-bold tracking-[3px] text-ink">
               {APP_BRAND}
             </b>
             <span className="whitespace-nowrap text-body font-semibold text-ink">{APP_NAME}</span>
@@ -133,7 +148,7 @@ export default function LoginPage() {
             </Notice>
           )}
 
-          <div className="mt-4 rounded-panel border border-line-soft bg-panel p-4 shadow-card">
+          <div className="mt-4 rounded-panel border border-line-soft bg-panel p-4">
             {/* 跳转由上面的 authenticated 分支完成：会话一变就重定向，
                 在表单里再 navigate 一次只会多一条历史记录 */}
             <LoginForm />

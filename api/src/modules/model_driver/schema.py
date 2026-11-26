@@ -10,6 +10,10 @@ from pydantic import Field
 from core.schema import CamelModel
 
 __all__ = [
+    "ConfigItemOut",
+    "ConfigListOut",
+    "ConfigUpdateIn",
+    "ConfigUpdateOut",
     "DriverListOut",
     "DriverOut",
     "ModelListOut",
@@ -18,6 +22,42 @@ __all__ = [
     "SubmitIn",
     "TaskOut",
 ]
+
+
+class ConfigItemOut(CamelModel):
+    """一项可编辑配置。密钥的 `value` 恒为空串，只有指纹，不回显明文。"""
+
+    key: str
+    label: str
+    group: str
+    secret: bool
+    value: str = ""
+    configured: bool = False
+    fingerprint: str = ""
+    # 密钥的脱敏展示（前 4 + *** + 后 4），认「是哪把 key」用；明文永不回显
+    masked: str = ""
+    # environment = 由进程环境变量注入，改文件不生效 → 页面只读
+    source: str = "default"
+    editable: bool = True
+    hint: str = ""
+    required: bool = False
+
+
+class ConfigListOut(CamelModel):
+    items: list[ConfigItemOut] = Field(default_factory=list)
+    env_file: str = ""
+    groups: list[str] = Field(default_factory=list)
+
+
+class ConfigUpdateIn(CamelModel):
+    # 只提交要改的键；空串表示「清空」（密钥除外，密钥空串表示不改）
+    values: dict[str, str] = Field(default_factory=dict)
+
+
+class ConfigUpdateOut(CamelModel):
+    updated: list[str] = Field(default_factory=list)
+    unchanged: list[str] = Field(default_factory=list)
+    skipped: list[str] = Field(default_factory=list)
 
 
 class DriverOut(CamelModel):

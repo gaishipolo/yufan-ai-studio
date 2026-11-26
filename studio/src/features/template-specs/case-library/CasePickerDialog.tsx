@@ -53,7 +53,7 @@ export function CasePickerDialog({ open, onClose, onPick }: CasePickerDialogProp
                 <div className="min-w-0 flex-1">
                   <div className="flex flex-wrap items-center gap-1.5">
                     <span className="truncate text-body font-medium text-ink">{item.name}</span>
-                    {item.category && <Chip tone="primary">{item.category}</Chip>}
+                    {item.category && <Chip>{item.category}</Chip>}
                   </div>
                   {item.description && (
                     <p className="mt-0.5 line-clamp-2 text-meta leading-[1.5] text-ink-soft">

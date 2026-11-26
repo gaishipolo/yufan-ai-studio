@@ -174,7 +174,7 @@ export function LibraryShareModal({
                 ? '例：这版人物形象已废弃，换成 v3 重新上传'
                 : '可选：说明这批素材的用途'
             }
-            className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed text-ink outline-none focus:border-primary-line focus:bg-white focus:shadow-ring"
+            className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed text-ink outline-none focus:border-primary-line focus:bg-panel focus:shadow-ring"
           />
         </div>
 

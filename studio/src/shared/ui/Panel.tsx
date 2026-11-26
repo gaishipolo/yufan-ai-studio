@@ -15,7 +15,7 @@ export interface PanelProps {
 
 export function Panel({ children, className }: PanelProps) {
   return (
-    <section className={cn('rounded-card border border-line-soft bg-panel p-3.5', className)}>
+    <section className={cn('rounded-card border border-line bg-panel p-3.5', className)}>
       {children}
     </section>
   );

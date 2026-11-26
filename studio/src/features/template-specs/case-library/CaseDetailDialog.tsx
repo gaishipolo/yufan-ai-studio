@@ -49,7 +49,7 @@ export function CaseDetailDialog({ item, onClose, onReuse }: CaseDetailDialogPro
           <Chip tone={item.status === 'published' ? 'ok' : 'warn'}>
             {CASE_STATUS_LABELS[item.status] ?? item.status}
           </Chip>
-          {item.category && <Chip tone="primary">{item.category}</Chip>}
+          {item.category && <Chip>{item.category}</Chip>}
           {item.sourceMissing && <Chip tone="warn">源模板已删除</Chip>}
         </div>
 

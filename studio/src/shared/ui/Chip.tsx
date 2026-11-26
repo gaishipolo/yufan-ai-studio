@@ -26,7 +26,9 @@ export function Chip({
   return (
     <span
       className={cn(
-        'inline-flex items-center whitespace-nowrap rounded-[5px] border px-1.5 py-px text-micro leading-[15px]',
+        /* 徽章是一枚直角小标签（印刷的铅字块），不是药丸。
+           字号 11px —— 徽章常和模型名、计数并排，10px 在中文里已经糊成一团。 */
+        'inline-flex items-center whitespace-nowrap rounded-xs border px-1.5 py-px text-meta leading-[16px]',
         TONES[tone],
         className,
       )}

@@ -667,7 +667,7 @@ export function LibraryWorkspace() {
         actions={
           <Button
             size="sm"
-            variant="ghost"
+            variant="secondary"
             icon={<Download size={13} />}
             onClick={() => setDownloadsOpen(true)}
           >

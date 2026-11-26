@@ -5610,6 +5610,78 @@
         ]
       }
     },
+    "/api/v1/model-driver/config": {
+      "get": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "运行时配置清单（密钥脱敏）",
+        "description": "列出运维页可编辑的配置项。\n\n密钥字段的 `value` 恒为空，只有 `configured` 与 8 位指纹；\n`source=environment` 的项由进程环境变量注入，改文件不生效，页面只读。",
+        "operationId": "get_runtime_config_api_v1_model_driver_config_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ConfigListOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "模型驱动"
+        ],
+        "summary": "修改运行时配置，下一次请求即生效",
+        "description": "写回服务实际读取的 `.env`，并清掉配置缓存使其立即生效。\n\n`values` 里只提交要改的键；密钥空串表示「不改」（要清空请走改文件）。\n只接受声明清单里的键，白名单值做 host 校验，避免把 `.env` 写成 SSRF 后门。",
+        "operationId": "put_runtime_config_api_v1_model_driver_config_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ConfigUpdateIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_ConfigUpdateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/model-driver/libtv/account": {
       "get": {
         "tags": [
@@ -7902,6 +7974,60 @@
         "type": "object",
         "title": "ApiResponse[BulkOut]"
       },
+      "ApiResponse_ConfigListOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigListOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ConfigListOut]"
+      },
+      "ApiResponse_ConfigUpdateOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ConfigUpdateOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[ConfigUpdateOut]"
+      },
       "ApiResponse_DeleteImagesOut_": {
         "properties": {
           "code": {
@@ -10001,6 +10127,140 @@
         "title": "CompiledSlotOut",
         "description": "哪几张素材拿到了哪个编号 —— 只给前端画角标，不参与提交。"
       },
+      "ConfigItemOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "label": {
+            "type": "string",
+            "title": "Label"
+          },
+          "group": {
+            "type": "string",
+            "title": "Group"
+          },
+          "secret": {
+            "type": "boolean",
+            "title": "Secret"
+          },
+          "value": {
+            "type": "string",
+            "title": "Value",
+            "default": ""
+          },
+          "configured": {
+            "type": "boolean",
+            "title": "Configured",
+            "default": false
+          },
+          "fingerprint": {
+            "type": "string",
+            "title": "Fingerprint",
+            "default": ""
+          },
+          "masked": {
+            "type": "string",
+            "title": "Masked",
+            "default": ""
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "default"
+          },
+          "editable": {
+            "type": "boolean",
+            "title": "Editable",
+            "default": true
+          },
+          "hint": {
+            "type": "string",
+            "title": "Hint",
+            "default": ""
+          },
+          "required": {
+            "type": "boolean",
+            "title": "Required",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "label",
+          "group",
+          "secret"
+        ],
+        "title": "ConfigItemOut",
+        "description": "一项可编辑配置。密钥的 `value` 恒为空串，只有指纹，不回显明文。"
+      },
+      "ConfigListOut": {
+        "properties": {
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/ConfigItemOut"
+            },
+            "type": "array",
+            "title": "Items"
+          },
+          "envFile": {
+            "type": "string",
+            "title": "Envfile",
+            "default": ""
+          },
+          "groups": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Groups"
+          }
+        },
+        "type": "object",
+        "title": "ConfigListOut"
+      },
+      "ConfigUpdateIn": {
+        "properties": {
+          "values": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Values"
+          }
+        },
+        "type": "object",
+        "title": "ConfigUpdateIn"
+      },
+      "ConfigUpdateOut": {
+        "properties": {
+          "updated": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Updated"
+          },
+          "unchanged": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Unchanged"
+          },
+          "skipped": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Skipped"
+          }
+        },
+        "type": "object",
+        "title": "ConfigUpdateOut"
+      },
       "CreateExportIn": {
         "properties": {
           "dataSource": {
@@ -10962,6 +11222,13 @@
             "minLength": 1,
             "title": "Prompt",
             "description": "画面描述"
+          },
+          "name": {
+            "type": "string",
+            "maxLength": 200,
+            "title": "Name",
+            "description": "任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。",
+            "default": ""
           },
           "size": {
             "type": "string",

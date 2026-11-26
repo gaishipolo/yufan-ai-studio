@@ -7,7 +7,6 @@ import {
   useState,
 } from 'react';
 import { cn } from '@/shared/lib/cn';
-import { useDropPlacement } from '@/shared/hooks/useDropPlacement';
 import { SLOT_TYPE_ICONS } from './slotIcons';
 import { insertRef } from './specDraft';
 import {
@@ -17,6 +16,9 @@ import {
   type MentionQuery,
 } from './mention';
 import type { MentionCandidate, MentionTextareaHandle } from './MentionTextarea';
+import {parseAnchors} from './defaultText';
+import { CursorMenu, CursorMenuItem, CursorMenuGroup, type CaretPoint } from './CursorMenu';
+import { caretPointOf, selectionEndPoint } from './caretPoint';
 
 /**
  * 正文里的素材占位。**两边允许空格**（`{{ slot:key }}`）：后端与 `specDraft`
@@ -53,14 +55,46 @@ const normalizeToken = (raw: string) => raw.replace(/\s+/g, '');
  * Chrome 的 `input` 事件在组字中途照样会来。
  */
 
-/** 序列化：DOM → 带 token 的纯文本。这是「界面上是什么」的唯一真相来源。 */
+/**
+ * 序列化：DOM → 带 token 与锚点的纯文本。这是「界面上是什么」的唯一真相来源。
+ *
+ * **锚点标记在这里被重建**：DOM 里默认描述段显示的是高亮文字（没有标记），
+ * 但 `value` 里必须留着 `⟦e:key⟧…⟦/e⟧` —— 它记着「这段归哪个槽位」，
+ * 作者改字后靠它把位置找回来。
+ */
+/**
+ * 光标缓冲区：高亮段首尾各放一个只含零宽字符的文本节点。
+ *
+ * 没有它时，若高亮段是正文第一段/最后一段，浏览器找不到段外的文本节点放光标，
+ * 会把光标塞进高亮段里 —— 作者在段首打「前缀」，字却变成了默认描述的一部分
+ * （高亮跟着变大），而不是普通正文。零宽节点给光标一个**段外**的落点。
+ *
+ * 序列化时只剥**独占**的零宽字符，作者真的打进来的字照常保留。
+ */
+const CARET_BUFFER = '\u200b';
+
+/** 缓冲区节点：只含零宽字符、带标记。作者真的在里面打字时它仍有内容。 */
+function isBuffer(node: Node): boolean {
+  return node instanceof HTMLElement && node.dataset.caretBuffer === '';
+}
+
+function serializeText(text: string): string {
+  return text.replaceAll(CARET_BUFFER, '');
+}
+
 function serialize(root: HTMLElement): string {
   let out = '';
   for (const node of Array.from(root.childNodes)) {
-    if (node.nodeType === Node.TEXT_NODE) {
-      out += node.textContent ?? '';
+    /* 缓冲区整体跳过它自己的零宽字符；作者打进来的普通字照常收。 */
+    if (isBuffer(node)) {
+      out += serializeText(node.textContent ?? '');
+    } else if (node.nodeType === Node.TEXT_NODE) {
+      out += serializeText(node.textContent ?? '');
     } else if (node instanceof HTMLElement && node.dataset.token) {
       out += node.dataset.token;
+    } else if (node instanceof HTMLElement && node.dataset.anchor) {
+      // 默认描述段：包回锚点标记，中间是作者写的字。
+      out += `⟦e:${node.dataset.anchor}⟧${serialize(node)}⟦/e⟧`;
     } else if (node instanceof HTMLElement) {
       // 浏览器有时会自己包一层（粘贴、输入法），递归下去
       out += serialize(node);
@@ -71,9 +105,23 @@ function serialize(root: HTMLElement): string {
 
 /** 一串内容在「文本偏移」上占多长：chip 按它的 token 长度算，不按显示名。 */
 function lengthOf(node: Node): number {
-  if (node.nodeType === Node.TEXT_NODE) return (node.textContent ?? '').length;
+  /* 缓冲区在文本偏移上占 0：作者的操作坐标里不该有这个内部节点。 */
+  if (isBuffer(node)) return 0;
+  if (node.nodeType === Node.TEXT_NODE) return serializeText(node.textContent ?? '').length;
   if (node instanceof HTMLElement) {
     if (node.dataset.token) return node.dataset.token.length;
+    /* 锚点段：文本偏移上占「标记 + 内容 + 标记」——
+       `value` 里锚点占着位置，DOM 里没有，偏移换算必须把它算进去，
+       否则光标位置会随着锚点数量漂移。 */
+    if (node.dataset.anchor) {
+      const open = `⟦e:${node.dataset.anchor}⟧`.length;
+      const close = '⟦/e⟧'.length;
+      return (
+        open +
+        close +
+        Array.from(node.childNodes).reduce((sum, child) => sum + lengthOf(child), 0)
+      );
+    }
     return Array.from(node.childNodes).reduce((sum, child) => sum + lengthOf(child), 0);
   }
   return 0;
@@ -86,9 +134,24 @@ function pointOffset(root: HTMLElement, container: Node, offset: number): number
   let acc = 0;
   let found = -1;
   const visit = (node: Node): boolean => {
+    /* 锚点段：`value` 里标记占着位置，DOM 里没有。
+       进去之前加开始标记的长度，出来之后加结束标记的长度 ——
+       否则同一段文字在有锚点与无锚点两种正文里偏移不一样。 */
+    const anchor = node instanceof HTMLElement ? node.dataset.anchor : undefined;
+    if (anchor) acc += `⟦e:${anchor}⟧`.length;
+
     if (node === container) {
       if (node.nodeType === Node.TEXT_NODE) {
-        acc += Math.min(offset, (node.textContent ?? '').length);
+        /* 缓冲区里的光标折算成 0（它前面的字已在别处计过），
+           这样「在段首缓冲区打字」得到的位置正好在锚点之前。 */
+        if (node.parentElement && isBuffer(node.parentElement)) {
+          /* 缓冲区首字符是零宽（序列化时不算），之后作者打进来的字才算偏移。
+             光标在 `@` 后面时必须报出那个 `@` 的位置，否则 @ 候选检测失效。 */
+          const visible = Math.max(0, Math.min(offset, (node.textContent ?? '').length) - 1);
+          found = acc + visible;
+          return true;
+        }
+        acc += Math.min(offset, serializeText(node.textContent ?? '').length);
       } else {
         for (let i = 0; i < offset; i += 1) {
           const child = node.childNodes[i];
@@ -102,10 +165,16 @@ function pointOffset(root: HTMLElement, container: Node, offset: number): number
       acc += lengthOf(node);
       return false;
     }
+    let hit = false;
     for (const child of Array.from(node.childNodes)) {
-      if (visit(child)) return true;
+      if (visit(child)) {
+        hit = true;
+        break;
+      }
     }
-    return false;
+    // 没在里面找到：这个锚点整段算过去了（标记 + 内容 + 标记）。
+    if (anchor && !hit) acc += '⟦/e⟧'.length;
+    return hit;
   };
   for (const child of Array.from(root.childNodes)) {
     if (visit(child)) break;
@@ -149,8 +218,22 @@ function setCaret(root: HTMLElement, offset: number): void {
   let point: { node: Node; offset: number } | null = null;
 
   const visit = (node: Node): boolean => {
+    /* 锚点段：`value` 里标记占着位置，DOM 里没有。
+       进去之前加开始标记的长度，出来之后加结束标记的长度。 */
+    const anchor = node instanceof HTMLElement ? node.dataset.anchor : undefined;
+    if (anchor) acc += `⟦e:${anchor}⟧`.length;
+
     if (node.nodeType === Node.TEXT_NODE) {
-      const len = (node.textContent ?? '').length;
+      /* 缓冲区：偏移上占 0，只在 offset 正好落在它这里时作为落点。
+         作者打字时光标停在缓冲区里，重绘后要放回同一处。 */
+      if (node.parentElement && isBuffer(node.parentElement)) {
+        if (acc >= offset) {
+          point = {node, offset: 0};
+          return true;
+        }
+        return false;
+      }
+      const len = serializeText(node.textContent ?? '').length;
       if (acc + len >= offset) {
         point = { node, offset: Math.max(0, offset - acc) };
         return true;
@@ -170,10 +253,15 @@ function setCaret(root: HTMLElement, offset: number): void {
       acc += len;
       return false;
     }
+    let hit = false;
     for (const child of Array.from(node.childNodes)) {
-      if (visit(child)) return true;
+      if (visit(child)) {
+        hit = true;
+        break;
+      }
     }
-    return false;
+    if (anchor && !hit) acc += '⟦/e⟧'.length;
+    return hit;
   };
   for (const child of Array.from(root.childNodes)) {
     if (visit(child)) break;
@@ -197,12 +285,31 @@ export interface RichPromptEditorProps {
   value: string;
   candidates: MentionCandidate[];
   /**
+   * 槽位 key → 展示名。用来给正文里已框选的默认描述段加 hover 气泡：
+   * 作者把鼠标停在一段高亮文字上，就知道「这是哪个槽位的默认描述」，
+   * 不用回左边逐个展开槽位卡片去找。只影响 title，不改正文内容。
+   */
+  slotNames?: Record<string, string>;
+  /**
    * 用户改动。返回 `false` = 这次写入**被拒**（父组件对引用有校验），
    * 编辑器会把 DOM 对齐回 `value`（见 `syncFromDom`）。
    */
   onChange: (text: string) => void | boolean;
   /** 程序写入（`@` 候选选中 / 粘贴）后的回调；返回值同上。 */
   onInsert: (text: string) => void | boolean;
+  /**
+   * 选区变化。父组件用它弹「设为槽位默认描述」的菜单。
+   *
+   * **只报有内容的选择**（`start !== end`）—— 光标停着不算选区，
+   * 不然菜单会一直挂在光标旁边不走。
+   *
+   * 偏移是**带锚点标记**的正文坐标（与 `value` 同一坐标系），
+   * 父组件可以直接拿去切正文。
+   */
+  onSelectionChange?: (
+    range: {start: number; end: number} | null,
+    point?: CaretPoint | null,
+  ) => void;
   placeholder?: string;
   className?: string;
   id?: string;
@@ -212,11 +319,28 @@ export interface RichPromptEditorProps {
 
 export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEditorProps>(
   function RichPromptEditor(
-    { value, candidates, onChange, onInsert, placeholder, className, id, 'aria-label': ariaLabel, panelHint },
+    { value, candidates, slotNames, onChange, onInsert, onSelectionChange, placeholder, className, id, 'aria-label': ariaLabel, panelHint },
     ref,
   ) {
     const rootRef = useRef<HTMLDivElement>(null);
     const [mention, setMention] = useState<MentionQuery | null>(null);
+    /* 菜单锚在**打字的那一刻**的光标处，之后不跟着每个字符跑。
+       setMention 的同一个时刻读一次，键盘选中下一项时光标没动、菜单也不抖。 */
+    const [caretPoint, setCaretPoint] = useState<CaretPoint | null>(null);
+    const updateMention = (next: MentionQuery | null) => {
+      /* 默认描述段里不许引用（emptyText 不许含引用）。光标在段内时不弹 @ 候选。
+         直接看 DOM 里光标是否落在高亮段内 —— 用文本偏移算会被锚点标记和
+         零宽缓冲区的换算绕进去，误伤正文其它位置的 @（用户报过「@ 全失效」）。 */
+      let allowed = next;
+      if (allowed) {
+        const selection = window.getSelection();
+        const node = selection?.anchorNode;
+        const el = node instanceof HTMLElement ? node : node?.parentElement;
+        if (el?.closest('[data-anchor]')) allowed = null;
+      }
+      setCaretPoint(allowed ? caretPointOf(rootRef.current) : null);
+      setMention(allowed);
+    };
     const [active, setActive] = useState(0);
     /** 组字中：这期间不重渲染 DOM，否则拼音会被吞掉 */
     const composing = useRef(false);
@@ -252,20 +376,118 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       setActive(0);
     }, [matches.length, mention?.query]);
 
+    /*
+     * 选区上报：父组件据此弹「设为槽位默认描述」的菜单。
+     *
+     * **用 `selectionchange` 而不是 `mouseup`**：作者可能用键盘
+     * （Shift+方向键）选一段，那条路没有 `mouseup`。
+     *
+     * **只报有内容的选择**：光标停着（`start === end`）不算 ——
+     * 不然菜单会一直挂在光标旁边不走。
+     *
+     * **失焦时报 null**：点菜单本身会让编辑框失焦，那一刻要把菜单收起来，
+     * 等下一次选区变化再弹（菜单按钮的 `onMouseDown` 阻止默认，
+     * 所以焦点其实不会丢，见菜单那侧的处理）。
+     */
+    useEffect(() => {
+      if (!onSelectionChange) return;
+      const report = () => {
+        const root = rootRef.current;
+        if (!root) return;
+        const range = selectionOffsets(root);
+        if (!range || range.start === range.end) {
+          onSelectionChange(null, null);
+          return;
+        }
+        /* 第二个参数是选区右下角的视口坐标：框选菜单要浮在框的那段字旁边。 */
+        onSelectionChange(range, selectionEndPoint());
+      };
+      document.addEventListener('selectionchange', report);
+      return () => document.removeEventListener('selectionchange', report);
+    }, [onSelectionChange]);
+
     const chipOf = (token: string) =>
       candidates.find(candidate => normalizeToken(candidate.token) === normalizeToken(token));
 
-    /* 重建 DOM：text 节点 + 胶囊交替。React 不管这些子节点。 */
+    /* 重建 DOM：text 节点 + 胶囊 + 高亮段交替。React 不管这些子节点。
+     *
+     * **两类特殊内容**：
+     * - `{{Mixed N}}` 之类的引用 token → 胶囊（`contenteditable=false`）；
+     * - `⟦e:key⟧…⟦/e⟧` 包住的默认描述 → **高亮的普通文本**。
+     *
+     * 高亮段为什么不是胶囊：它**要能被作者二次编辑**（改几个字）。
+     * 胶囊是 `contenteditable=false` 的整体，退格一次整枚消失 ——
+     * 而这段文字是作者要改的正文。`contenteditable` 的 span 里放普通文本，
+     * 作者可以直接进去打字。
+     */
     const paint = (root: HTMLElement, text: string) => {
       root.textContent = '';
-      let last = 0;
-      for (const match of text.matchAll(TOKEN_RE)) {
-        const at = match.index ?? 0;
-        if (at > last) root.appendChild(document.createTextNode(text.slice(last, at)));
-        root.appendChild(capsule(match[0], chipOf(match[0])));
-        last = at + match[0].length;
+      /* 先切出「锚点段」：它内部的 token 仍按普通文本处理
+         （作者写的 `{{Mixed 1}}` 在默认描述里就是纯文字，
+         编译器那边它也不该被当成引用 —— `empty_text` 不许含引用）。 */
+      const anchors = parseAnchors(text);
+      const segments: {text: string; anchorKey?: string}[] = [];
+      let cursor = 0;
+      for (const span of anchors) {
+        /* `AnchorSpan.start/end` 是**内容**范围，标记本身在它外面。
+           只按内容切会把 `⟦e:key⟧` / `⟦/e⟧` 当普通字画出来 ——
+           作者打开一份已存过的草稿，正文里就明晃晃挂着两串内部标记。 */
+        const openAt = text.lastIndexOf(`⟦e:${span.slotKey}⟧`, span.start);
+        const closeAt = span.end + '⟦/e⟧'.length;
+        if (openAt > cursor) segments.push({text: text.slice(cursor, openAt)});
+        segments.push({text: text.slice(span.start, span.end), anchorKey: span.slotKey});
+        cursor = closeAt;
       }
-      if (last < text.length) root.appendChild(document.createTextNode(text.slice(last)));
+      if (cursor < text.length) segments.push({text: text.slice(cursor)});
+
+      for (const segment of segments) {
+        if (segment.anchorKey) {
+          /* 前后各垫一枚零宽缓冲区：高亮段是首段/末段时，浏览器找不到段外的
+             文本节点放光标，会把字打进高亮里（默认描述凭空多出几个字）。
+             缓冲区给光标一个段外落点，序列化时零宽字符被剥掉。 */
+          root.appendChild(caretBuffer());
+          root.appendChild(highlight(segment.text, segment.anchorKey));
+          root.appendChild(caretBuffer());
+          continue;
+        }
+        let last = 0;
+        for (const match of segment.text.matchAll(TOKEN_RE)) {
+          const at = match.index ?? 0;
+          if (at > last) root.appendChild(document.createTextNode(segment.text.slice(last, at)));
+          root.appendChild(capsule(match[0], chipOf(match[0])));
+          last = at + match[0].length;
+        }
+        if (last < segment.text.length) {
+          root.appendChild(document.createTextNode(segment.text.slice(last)));
+        }
+      }
+    };
+
+    /** 光标缓冲区：零宽字符不可见，但浏览器会把它当文本节点放光标。 */
+    const caretBuffer = () => {
+      const span = document.createElement('span');
+      span.dataset.caretBuffer = '';
+      span.textContent = CARET_BUFFER;
+      return span;
+    };
+
+    /**
+     * 默认描述段：**带下划线的可编辑文字**，暖褐（quote）色系。
+     *
+     * 必须与「插槽引用胶囊」一眼可分：胶囊是**墨蓝描边的整体 token**
+     * （contenteditable=false、有边框、不可逐字改）；这里是**作者写的字**
+     * （软底 + 下划线、无边框、可直接编辑）。两者曾都用 primary 色 + 圆角边框，
+     * 作者反馈「看着像一类东西」—— 但它们语义相反：一个是占位、一个是描述。
+     */
+    const highlight = (text: string, slotKey: string) => {
+      const span = document.createElement('span');
+      span.dataset.anchor = slotKey;
+      span.className = cn(
+        'bg-quote/8 px-0.5 font-medium text-quote',
+        'underline decoration-quote/60 decoration-2 underline-offset-[3px]',
+      );
+      span.textContent = text;
+      return span;
     };
 
     const capsule = (token: string, candidate?: MentionCandidate) => {
@@ -275,9 +497,9 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       span.setAttribute('contenteditable', 'false');
       span.dataset.token = token;
       span.className = cn(
-        'mx-0.5 inline-flex translate-y-[1px] cursor-default items-center rounded-[5px] border px-1.5 py-px align-baseline text-[0.95em] font-medium',
+        'mx-0.5 inline-flex translate-y-[1px] cursor-default items-center rounded-xs border px-1.5 py-px align-baseline text-[0.95em] font-medium',
         candidate?.all
-          ? 'border-violet/30 bg-violet/10 text-violet'
+          ? 'border-quote/30 bg-quote/10 text-quote'
           : 'border-primary-line bg-primary-soft text-primary-deep',
       );
       span.textContent = candidate?.label ?? token;
@@ -330,6 +552,21 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [value, candidates]);
 
+    /* 给默认描述高亮段加 hover 气泡。直接改 DOM 的 title，不重跑 paint ——
+       重跑会把光标甩掉，作者可能正停在那段字上编辑。槽位改名时这个 effect
+       会重跑，气泡跟着更新。 */
+    useEffect(() => {
+      const root = rootRef.current;
+      if (!root) return;
+      root.querySelectorAll<HTMLElement>('[data-anchor]').forEach((span) => {
+        const key = span.dataset.anchor ?? '';
+        const name = slotNames?.[key]?.trim();
+        span.title = name
+          ? `「${name}」的默认描述 · 使用者没选素材时用这段`
+          : '某个槽位的默认描述';
+      });
+    }, [value, slotNames]);
+
     /*
      * 两条写入路径**必须分开**，不能都走 `onChange`：
      *
@@ -361,7 +598,7 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       [value, onInsert],
     );
 
-    const close = () => setMention(null);
+    const close = () => updateMention(null);
 
     const choose = (token: string) => {
       if (!mention) return;
@@ -388,11 +625,11 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
         paint(root, value);
         caretRef.current = back;
         setCaret(root, back);
-        setMention(detectMention(value, back));
+        updateMention(detectMention(value, back));
         return;
       }
       // 提及面板由光标位置推导：删掉 `@` 它就自己收起
-      setMention(detectMention(text, at));
+      updateMention(detectMention(text, at));
     };
 
     /** 退（-1）/ 进（+1）一份历史。返回 false = 没得退/进，或父组件拒了。 */
@@ -473,15 +710,9 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       insert(value.slice(0, range.start) + pasted + value.slice(range.end), caret);
     };
 
-    /* 候选面板方向：**量出来**。写死朝下会掉出视口。 */
-    const anchorRef = useRef<HTMLDivElement>(null);
-    const popupRef = useRef<HTMLDivElement>(null);
-    const { side, space } = useDropPlacement(anchorRef, popupRef, open);
-    const maxHeight = Math.max(140, Math.min(220, space));
-
     return (
       <div>
-        <div ref={anchorRef} className="relative z-20">
+        <div className="relative z-20">
           <div
             ref={rootRef}
             id={id}
@@ -513,7 +744,7 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
               close();
             }}
             className={cn(
-              'w-full overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-white px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors',
+              'w-full overflow-y-auto whitespace-pre-wrap break-words rounded-lg border border-line bg-panel px-2.5 py-2 text-xs leading-[1.7] text-ink outline-none transition-colors',
               'hover:border-line-strong focus:border-primary-line focus:ring-2 focus:ring-primary/10',
               /* **固定高度**，内容多了在框里滚。
                  之前只写了 `min-h` + `overflow-y-auto`：没有高度上限时
@@ -528,63 +759,32 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
           {/* 占位符单独渲染：`contenteditable` 里的 `:empty` 不可靠 ——
               用户删空之后浏览器常留一个 `<br>`，`:empty` 就不成立了。 */}
           {!value && placeholder && (
-            <span className="pointer-events-none absolute inset-x-2.5 top-2 text-xs leading-[1.7] text-[#a9b8bf]">
+            <span className="pointer-events-none absolute inset-x-2.5 top-2 text-xs leading-[1.7] text-ink-mute">
               {placeholder}
             </span>
           )}
-          {open && (
-            <div
-              ref={popupRef}
-              data-placement={side}
-              style={{ maxHeight }}
-              className={cn(
-                'absolute left-0 right-0 z-30 overflow-y-auto scroll-thin rounded-xl border border-line bg-panel p-1 shadow-pop',
-                side === 'top'
-                  ? 'bottom-[calc(100%+4px)] animate-slideUp'
-                  : 'top-[calc(100%+4px)] animate-slideDown',
-              )}
-            >
-              <p className="px-2 py-1 text-micro text-ink-mute">
-                {panelHint ??
-                  (mention?.query ? `匹配「${mention.query}」` : '选择要引用的槽位')}
-              </p>
-              {matches.map((chip, index) => {
-                const Icon = chip.kind ? SLOT_TYPE_ICONS[chip.kind] : undefined;
-                return (
-                  <button
-                    key={chip.token}
-                    type="button"
-                    onMouseDown={event => {
-                      // mousedown 先于 blur，click 会被输入框失焦吃掉
-                      event.preventDefault();
-                      choose(chip.token);
-                    }}
-                    onMouseEnter={() => setActive(index)}
-                    className={cn(
-                      'flex w-full items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-left transition-colors',
-                      index === active
-                        ? 'bg-primary-soft text-primary'
-                        : 'text-ink-soft hover:bg-panel-soft',
-                    )}
-                  >
-                    <span className="flex min-w-0 items-center gap-1.5">
-                      {Icon && <Icon size={12} className="shrink-0" />}
-                      <span className="truncate text-xs">{chip.label}</span>
-                    </span>
-                    <span
-                      className={cn(
-                        'shrink-0 rounded px-1 text-micro',
-                        chip.all ? 'bg-violet/10 text-violet' : 'bg-panel-soft text-ink-mute',
-                      )}
-                    >
-                      {chip.all ? '全部' : '单个'}
-                    </span>
-                  </button>
-                );
-              })}
-            </div>
-          )}
         </div>
+
+        <CursorMenu point={open ? caretPoint : null} onDismiss={close}>
+        <CursorMenuGroup
+          label={panelHint ?? (mention?.query ? `匹配「${mention.query}」` : '选择要引用的槽位')}
+        >
+          {matches.map((chip, index) => {
+            const Icon = chip.kind ? SLOT_TYPE_ICONS[chip.kind] : undefined;
+            return (
+              <CursorMenuItem
+                key={chip.token}
+                label={chip.label}
+                hint={chip.all ? '全部' : '单个'}
+                icon={Icon && <Icon size={12} />}
+                active={index === active}
+                onSelect={() => choose(chip.token)}
+                onHover={() => setActive(index)}
+              />
+            );
+          })}
+        </CursorMenuGroup>
+        </CursorMenu>
       </div>
     );
   },

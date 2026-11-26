@@ -97,6 +97,17 @@ class DeleteImagesOut(CamelModel):
 
 class GenerateImageIn(CamelModel):
     prompt: str = Field(min_length=1, max_length=2000, description="画面描述")
+    name: str = Field(
+        default="",
+        max_length=200,
+        description=(
+            "任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。"
+            "模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，"
+            "同名模板的多条任务也看不出是同一个模板出的。"
+            "上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，"
+            "模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。"
+        ),
+    )
     size: str = Field(
         default="",
         max_length=32,

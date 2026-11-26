@@ -123,7 +123,7 @@ export function TaskFilterBar({
           <button
             type="button"
             onClick={onReset}
-            className="rounded-md px-1.5 py-1 text-xs text-ink-mute transition-colors hover:bg-panel-soft hover:text-ink"
+            className="rounded-pill px-2 py-1 text-xs text-ink-mute transition-colors hover:bg-panel-soft hover:text-ink"
           >
             重置筛选
           </button>

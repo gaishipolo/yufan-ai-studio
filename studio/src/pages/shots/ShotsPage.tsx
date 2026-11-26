@@ -48,7 +48,7 @@ export default function ShotsPage() {
                   toast(`已复制运镜指令：${shot.promptFragment.slice(0, 24)}…`, 'success');
                 }}
                 aria-label={`复制运镜指令：${shot.name}`}
-                className="group w-full cursor-pointer overflow-hidden rounded-card border border-line-soft bg-panel text-left transition-all hover:-translate-y-0.5 hover:border-line-strong hover:shadow-card focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
+                className="group w-full cursor-pointer overflow-hidden rounded-card border border-line-soft bg-panel text-left transition-all hover:border-line-strong focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40"
               >
                 <div className="relative">
                   <CoverImage
@@ -57,7 +57,7 @@ export default function ShotsPage() {
                     className="aspect-video w-full"
                     imgClassName="transition-transform duration-300 group-hover:scale-[1.03]"
                   />
-                  <span className="absolute right-[7px] top-[7px] rounded-[5px] bg-[rgba(10,22,28,.55)] px-1.5 py-px text-micro text-white backdrop-blur-[4px]">
+                  <span className="absolute right-[7px] top-[7px] rounded-pill bg-[rgba(10,22,28,.55)] px-1.5 py-px text-micro text-white backdrop-blur-[4px]">
                     {formatDuration(shot.durationSec)}
                   </span>
                 </div>

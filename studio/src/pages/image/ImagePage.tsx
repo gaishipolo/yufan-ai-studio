@@ -187,7 +187,7 @@ export default function ImagePage() {
               onChange={(e) => setPrompt(e.target.value)}
               rows={4}
               placeholder="例：赛博朋克街头，霓虹灯牌，雨夜地面反光，电影级打光，超高细节"
-              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring"
+              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-ink-mute focus:border-primary-line focus:bg-panel focus:shadow-ring"
             />
           </div>
 
@@ -288,7 +288,7 @@ export default function ImagePage() {
                     title={job.errorMessage ?? undefined}
                     className={cn(
                       'overflow-hidden rounded-card border border-line-soft bg-panel transition-all',
-                      'hover:-translate-y-0.5 hover:border-line-strong hover:shadow-card',
+                      'hover:border-line-strong',
                     )}
                   >
                     <div className="relative">

@@ -23,7 +23,7 @@ export interface UserAvatarProps {
 const TONES = {
   soft: 'bg-primary-soft text-primary-deep',
   muted: 'bg-line-soft text-ink-mute',
-  accent: 'bg-[linear-gradient(140deg,#4f8cff,#12c4c8)] text-white shadow-[0_4px_10px_rgba(43,124,255,.3)]',
+  accent: 'bg-primary text-primary-soft shadow-[0_2px_8px_rgba(23,21,15,.22)]',
 } as const;
 
 /**
@@ -45,7 +45,7 @@ export function UserAvatar({
 
   const url = user.avatarUrl?.trim() || null;
   const showImage = url !== null && failedUrl !== url;
-  const radius = shape === 'circle' ? 'rounded-full' : 'rounded-[9px]';
+  const radius = shape === 'circle' ? 'rounded-full' : 'rounded-lg';
 
   if (showImage) {
     return (

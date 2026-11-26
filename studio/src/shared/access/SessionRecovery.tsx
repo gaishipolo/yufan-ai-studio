@@ -25,8 +25,8 @@ export interface SessionRecoveryProps {
 
 export function SessionRecovery({ error, onRetry }: SessionRecoveryProps) {
   return (
-    <div className="grid min-h-screen place-items-center bg-[linear-gradient(180deg,#edf4f5_0%,#e8f0f2_100%)] px-4">
-      <div className="w-full max-w-md rounded-card border border-line-soft bg-panel px-4 pb-4 pt-5 shadow-card">
+    <div className="grid min-h-screen place-items-center bg-[linear-gradient(180deg,#f8f4ea_0%,#ece6d7_100%)] px-4">
+      <div className="w-full max-w-md rounded-card border border-line-soft bg-panel px-4 pb-4 pt-5">
         <h1 className="text-center text-lead font-semibold text-ink">无法恢复登录状态</h1>
         <p className="mx-auto mt-1.5 max-w-xs text-center text-meta leading-[1.6] text-ink-mute">
           本机有登录凭证，但没能确认它属于谁。这通常是网络或服务端临时故障，

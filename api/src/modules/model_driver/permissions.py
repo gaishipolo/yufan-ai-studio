@@ -20,6 +20,10 @@ PERM_CANCEL_ANY = "model_driver:cancel:any"
 # 不能挂在 read 上（看模型目录的人不该能改进程里装了什么），
 # 也不该只凭 read:all —— 那是「看别人任务」的开关，与此无关。
 PERM_REFRESH = "model_driver:refresh"
+# 运行时配置读写：改的是 .env 里的 SSRF 白名单与供应商密钥，属于运维级高危动作。
+# 读/写分开：能看配置（含密钥指纹）的人未必该能改；写权限不挂在 read 上。
+PERM_CONFIG_READ = "model_driver:config:read"
+PERM_CONFIG_WRITE = "model_driver:config:write"
 # 运维页：刷新动作原来登记为「后台能力」（有权限码、没有页面可点）。P4 拍板
 # 单独建一页承载它 —— 页面码与接口码分开，关页面时接口也跟着关。审计（谁在
 # 什么时候刷了什么）后端目前只有日志、没有可查询记录，留待下一步。
@@ -63,12 +67,31 @@ SPECS = (
         ),
         pages=(PAGE,),
     ),
+    PermissionSpec(
+        PERM_CONFIG_READ,
+        "查看运行时配置",
+        group="运维",
+        description="查看域名白名单与供应商接入状态；密钥只显示脱敏掩码与指纹，不显示明文",
+        pages=(PAGE,),
+    ),
+    PermissionSpec(
+        PERM_CONFIG_WRITE,
+        "修改运行时配置",
+        group="运维",
+        description=(
+            "修改域名白名单与供应商密钥/地址，写回服务实际读取的 .env；"
+            "下一次请求即生效。高危：白名单是 SSRF 防线，写错会让外部链接被当成可信来源"
+        ),
+        pages=(PAGE,),
+    ),
 )
 
 __all__ = [
     "PAGE",
     "PERM_CANCEL",
     "PERM_CANCEL_ANY",
+    "PERM_CONFIG_READ",
+    "PERM_CONFIG_WRITE",
     "PERM_CREATE",
     "PERM_READ",
     "PERM_READ_ALL",

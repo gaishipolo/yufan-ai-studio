@@ -23,10 +23,10 @@ export function RatioBar({ value, className, tone }: RatioBarProps) {
   const resolved = tone ?? (clamped >= 0.9 ? 'ok' : clamped >= 0.7 ? 'primary' : 'warn');
 
   return (
-    <div className={cn('h-2 w-full overflow-hidden rounded-full bg-line-soft', className)}>
+    <div className={cn('h-2 w-full overflow-hidden rounded-xs bg-line-soft', className)}>
       <div
         className={cn(
-          'h-full rounded-full transition-[width,background-color] duration-300 ease-smooth',
+          'h-full rounded-xs transition-[width,background-color] duration-300 ease-smooth',
           resolved === 'ok' && 'bg-ok',
           resolved === 'primary' && 'bg-primary',
           resolved === 'warn' && 'bg-warn',

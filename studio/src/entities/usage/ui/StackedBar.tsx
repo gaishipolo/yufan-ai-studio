@@ -37,7 +37,7 @@ export function StackedBar({ segments, className, ariaLabel }: StackedBarProps) 
 
   return (
     <div
-      className={cn('flex h-2 w-full overflow-hidden rounded-full bg-line-soft', className)}
+      className={cn('flex h-2 w-full overflow-hidden rounded-xs bg-line-soft', className)}
       role="img"
       aria-label={ariaLabel}
     >

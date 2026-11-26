@@ -2,7 +2,7 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 146 条（来自 `schema.ts` 的 `EndpointData`），
+后端端点 148 条（来自 `schema.ts` 的 `EndpointData`），
 已注册 mock 路由 80 条（来自 `mockRouteTable()`），
 按「同方法 + 正则能匹配」判定疑似覆盖 83 条。
 
@@ -69,6 +69,8 @@
 | PATCH | `/api/v1/library/packs/{}` |
 | PATCH | `/api/v1/library/tags/{}/parent` |
 | POST | `/api/v1/library/text-assets` |
+| GET | `/api/v1/model-driver/config` |
+| PUT | `/api/v1/model-driver/config` |
 | GET | `/api/v1/model-driver/drivers` |
 | GET | `/api/v1/model-driver/libtv/account` |
 | GET | `/api/v1/model-driver/libtv/consumption` |
@@ -101,4 +103,4 @@
 | GET | `/api/v1/template-specs/trash` |
 | POST | `/api/v1/template-specs/validate` |
 
-（未命中 63 条；已命中 83 条不在本表重复列出。）
+（未命中 65 条；已命中 83 条不在本表重复列出。）

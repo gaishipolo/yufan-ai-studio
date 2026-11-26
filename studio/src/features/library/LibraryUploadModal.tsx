@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import { CheckCircle2, FileUp, Loader2, Upload, XCircle } from 'lucide-react';
+import { CheckCircle2, FileUp, Loader2, Upload, X, XCircle } from 'lucide-react';
 import { Button, Chip, Modal, MultiSelect } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { formatBytes } from '@/shared/lib/format';
@@ -30,6 +30,10 @@ export interface LibraryUploadModalProps {
   onClose: () => void;
 }
 
+/** 只接从桌面拖来的文件。素材库内部拖拽用的是自定义 MIME，`Files` 不沾边。 */
+const carriesFiles = (dataTransfer: DataTransfer) =>
+  Array.from(dataTransfer.types ?? []).includes('Files');
+
 /**
  * 上传弹窗：一次挑多个文件，逐条上传、逐条给结果。
  *
@@ -44,6 +48,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
   const [items, setItems] = useState<UploadItem[]>([]);
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
+  const [dragOver, setDragOver] = useState(false);
   /* 上传成功后的自动关闭定时器：**必须存下来**。
      600ms 内点「关闭」再重新打开，旧定时器照样触发 → 刚选的文件无声消失、
      弹窗自己关掉。关闭 / 卸载时都清掉。 */
@@ -63,6 +68,7 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
     setItems([]);
     setTagIds([]);
     setBusy(false);
+    setDragOver(false);
     if (input.current) input.current.value = '';
   };
 
@@ -91,6 +97,12 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
       return { file, kind, status: 'ready', ratio: 0 };
     });
     setItems((previous) => [...previous, ...next]);
+  };
+
+  /** 只让「待上传」的项被移除：已上传的在库里了、上传中的请求已经发出，
+      给它一个 X 只会让人以为能反悔，点下去什么也没发生 —— 假交互。 */
+  const removeReady = (index: number) => {
+    setItems((previous) => previous.filter((_, i) => i !== index));
   };
 
   const start = async () => {
@@ -183,14 +195,40 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
           type="button"
           onClick={() => input.current?.click()}
           disabled={busy}
+          /* 桌面文件拖进来是「选择文件」的另一种手势，走同一条 pick()：
+             格式 / 大小校验、重复文件、逐条结果全都共用，不在拖拽这条路上
+             另写一套 —— 两条路各判一次必然漂移。 */
+          onDragOver={(event) => {
+            if (!carriesFiles(event.dataTransfer)) return;
+            /* 不 preventDefault，浏览器把这次投放当「打开文件」，整页跳走 ——
+               弹窗里的标签、待上传列表全丢，且没有任何提示。
+               **busy 时也要拦**：那一态只是不收新文件，不能连页面一起赔进去。 */
+            event.preventDefault();
+            event.dataTransfer.dropEffect = busy ? 'none' : 'copy';
+            setDragOver(!busy);
+          }}
+          onDragLeave={(event) => {
+            // 移进子元素也会触发 leave：relatedTarget 还在框内就没真正离开
+            if (event.currentTarget.contains(event.relatedTarget as Node | null)) return;
+            setDragOver(false);
+          }}
+          onDrop={(event) => {
+            if (!carriesFiles(event.dataTransfer)) return;
+            event.preventDefault();
+            setDragOver(false);
+            if (busy) return;
+            pick(event.dataTransfer.files);
+          }}
           className={cn(
             'flex w-full flex-col items-center justify-center gap-1.5 rounded-card border border-dashed px-4 py-7 transition',
-            'border-line-strong bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-white',
+            dragOver
+              ? 'border-primary bg-primary-soft text-ink'
+              : 'border-line-strong bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-white',
             busy && 'cursor-not-allowed opacity-60',
           )}
         >
           <FileUp size={22} className="text-ink-mute" />
-          <span className="text-body font-medium">选择图片、视频、音频或文本</span>
+          <span className="text-body font-medium">拖到这里，或选择图片、视频、音频或文本</span>
           {/* 「可多选」删掉 —— `input multiple` 说的是同一件事，
               而**大小与格式上限**是猜不到的约束，要留。 */}
           <span className="text-body text-ink-mute">
@@ -227,6 +265,17 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
                   {item.status === 'uploading' && <Loader2 size={13} className="animate-spin text-primary" />}
                   {item.status === 'done' && <CheckCircle2 size={13} className="text-ok" />}
                   {item.status === 'failed' && <XCircle size={13} className="text-danger" />}
+                  {item.status === 'ready' && (
+                    <button
+                      type="button"
+                      aria-label={`移除 ${item.file.name}`}
+                      title="从待上传列表移除"
+                      onClick={() => removeReady(index)}
+                      className="rounded p-0.5 text-ink-mute transition hover:bg-panel-soft hover:text-danger"
+                    >
+                      <X size={13} />
+                    </button>
+                  )}
                 </div>
                 {item.status === 'uploading' && (
                   <div className="mt-1 h-1 overflow-hidden rounded-pill bg-line-soft">

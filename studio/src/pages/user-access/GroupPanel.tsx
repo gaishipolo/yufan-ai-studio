@@ -143,7 +143,7 @@ export function GroupPanel({
                           type="button"
                           aria-label={`编辑小组 ${group.name}`}
                           title="编辑小组"
-                          className="grid h-5 w-5 place-items-center rounded text-ink-mute hover:bg-white hover:text-primary"
+                          className="grid h-5 w-5 place-items-center rounded text-ink-mute hover:bg-panel hover:text-primary"
                           onClick={() => onEdit(group)}
                         >
                           <Pencil size={11} />
@@ -154,7 +154,7 @@ export function GroupPanel({
                           type="button"
                           aria-label={`删除小组 ${group.name}`}
                           title="删除小组（同时清成员与授权）"
-                          className="grid h-5 w-5 place-items-center rounded text-ink-mute hover:bg-white hover:text-danger"
+                          className="grid h-5 w-5 place-items-center rounded text-ink-mute hover:bg-panel hover:text-danger"
                           onClick={() => setConfirmId(group.id)}
                         >
                           <Trash2 size={11} />

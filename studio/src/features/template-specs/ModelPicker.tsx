@@ -152,7 +152,7 @@ export function ModelPicker({models, value, onChange}: ModelPickerProps) {
         title={value.map(labelOf).join('、') || undefined}
         onClick={() => setOpen(!open)}
         className={cn(
-          'flex h-8 w-full items-center gap-1.5 rounded-lg border border-line bg-white px-2.5 text-left text-xs',
+          'flex h-8 w-full items-center gap-1.5 rounded-lg border border-line bg-panel px-2.5 text-left text-xs',
           'transition-colors hover:border-line-strong focus:border-primary-line focus:outline-none focus:ring-2 focus:ring-primary/10',
           open && 'border-primary-line',
         )}
@@ -172,7 +172,7 @@ export function ModelPicker({models, value, onChange}: ModelPickerProps) {
           ref={listRef}
           data-placement={dropUp ? 'top' : 'bottom'}
           className={cn(
-            'absolute left-0 right-0 z-30 overflow-hidden rounded-lg border border-line bg-white shadow-pop',
+            'absolute left-0 right-0 z-30 overflow-hidden rounded-lg border border-line bg-panel shadow-pop',
             dropUp ? 'bottom-[calc(100%+4px)]' : 'top-[calc(100%+4px)]',
           )}
         >
@@ -192,7 +192,7 @@ export function ModelPicker({models, value, onChange}: ModelPickerProps) {
                     onDrop={row.picked ? onDrop(row.id) : undefined}
                     onDragEnd={row.picked ? onDragEnd : undefined}
                     className={cn(
-                      'flex items-center gap-2 rounded-[7px] px-2 py-1.5 transition-colors',
+                      'flex items-center gap-2 rounded-lg px-2 py-1.5 transition-colors',
                       row.picked ? 'bg-primary-soft' : 'hover:bg-panel-soft',
                       overId === row.id && dragId && dragId !== row.id && 'ring-1 ring-primary',
                     )}

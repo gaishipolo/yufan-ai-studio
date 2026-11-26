@@ -121,11 +121,11 @@ export function LibraryCard({
   return (
     <article
       className={cn(
-        'group relative flex flex-col overflow-hidden rounded-card border bg-panel shadow-card',
+        'group relative flex flex-col overflow-hidden rounded-card border bg-panel',
         'transition-[box-shadow,border-color,transform] duration-200 ease-smooth',
         selected
           ? 'border-primary bg-primary-soft/25 ring-2 ring-primary/30'
-          : 'border-line-soft hover:-translate-y-0.5 hover:border-line-strong hover:shadow-float',
+          : 'border-line-soft hover:border-line-strong',
         expired && 'opacity-55',
       )}
     >
@@ -144,7 +144,7 @@ export function LibraryCard({
               <pre className="line-clamp-5 whitespace-pre-wrap break-words font-sans text-xs leading-[18px] text-ink-soft">
                 {asset.textExcerpt?.trim() || '（空文本）'}
               </pre>
-              <span className="absolute right-1.5 top-1.5 rounded-[5px] border border-line-soft bg-panel px-1.5 py-px text-micro text-ink-mute">
+              <span className="absolute right-1.5 top-1.5 rounded-pill border border-line-soft bg-panel px-1.5 py-px text-micro text-ink-mute">
                 文本
               </span>
             </div>
@@ -196,7 +196,7 @@ export function LibraryCard({
             语义也对：空心 = 未选中，不再是「一块深灰方块」（那看起来像已勾）。 */}
         <label
           className={cn(
-            'absolute left-1.5 top-1.5 grid size-[20px] cursor-pointer place-items-center rounded-[6px] border transition',
+            'absolute left-1.5 top-1.5 grid size-[20px] cursor-pointer place-items-center rounded-md border transition',
             'focus-within:ring-2 focus-within:ring-primary/40',
             selected
               ? 'border-2 border-primary bg-primary text-white shadow-[0_0_0_1.5px_rgba(255,255,255,.9),0_1px_5px_rgba(9,20,26,.28)]'
@@ -247,7 +247,7 @@ export function LibraryCard({
             {tags.map((tag) => (
               <span
                 key={tag.id}
-                className="inline-flex max-w-full items-center gap-0.5 rounded-[5px] border border-line-soft bg-panel-soft px-1.5 py-px text-xs leading-[15px] text-ink-soft"
+                className="inline-flex max-w-full items-center gap-0.5 rounded-pill border border-line-soft bg-panel-soft px-1.5 py-px text-xs leading-[15px] text-ink-soft"
               >
                 <span className="max-w-[110px] truncate" title={tagLabel(tag)}>
                   {tagLabel(tag)}
@@ -273,7 +273,7 @@ export function LibraryCard({
                 onClick={() => onAddTag(asset)}
                 aria-label={`给 ${title} 添加标签`}
                 title="添加标签"
-                className="inline-flex size-[19px] shrink-0 items-center justify-center rounded-[5px] border border-dashed border-primary/50 bg-primary-soft/40 text-primary-deep transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-40"
+                className="inline-flex size-[19px] shrink-0 items-center justify-center rounded-pill border border-dashed border-primary/50 bg-primary-soft/40 text-primary-deep transition-colors hover:border-primary hover:bg-primary-soft hover:text-primary focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40 disabled:opacity-40"
               >
                 <Plus size={11} strokeWidth={2.5} />
               </button>

@@ -25,7 +25,9 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
 
     __tablename__ = "image_jobs"
 
-    name: Mapped[str] = mapped_column(String(120), nullable=False)
+    #: 任务名。列宽 200 与视频任务标题（`video_tasks.title`）一致：模板库把模板名
+    #: （上限 160）原样当任务名传，两边显示要一样长。
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
     size: Mapped[str] = mapped_column(String(32), default="1024x1024", nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)

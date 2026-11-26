@@ -325,7 +325,7 @@ export default function StudioPage() {
               rows={3}
               placeholder="例：超市抢购场景，手持镜头跟拍，人群涌动，暖色顶光，电影感浅景深，15 秒"
               className={cn(
-                'w-full resize-y rounded-lg border bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-[#a9b8bf] focus:border-primary-line focus:bg-white focus:shadow-ring',
+                'w-full resize-y rounded-lg border bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-ink-mute focus:border-primary-line focus:bg-panel focus:shadow-ring',
                 error ? 'border-danger' : 'border-line',
               )}
             />
@@ -412,9 +412,9 @@ export default function StudioPage() {
             {storyboard.map((shot, i) => (
               <div
                 key={shot.id}
-                className="flex items-center gap-2.5 rounded-[9px] border border-line-soft bg-[#fcfefe] p-[7px]"
+                className="flex items-center gap-2.5 rounded-lg border border-line-soft bg-panel p-[7px]"
               >
-                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-primary-soft font-mono text-micro font-bold tabular-nums text-[#2b6bd4]">
+                <span className="grid h-5 w-5 shrink-0 place-items-center rounded-md bg-primary-soft font-mono text-micro font-bold tabular-nums text-primary-deep">
                   {i + 1}
                 </span>
                 <CoverImage src={shot.coverUrl} seed={shot.id} className="h-[34px] w-11 shrink-0 rounded-md" />
@@ -445,7 +445,7 @@ export default function StudioPage() {
                   key={task.id}
                   type="button"
                   onClick={() => navigate('/tasks')}
-                  className="flex items-center gap-2.5 rounded-[9px] border border-line-soft bg-[#fcfefe] p-[7px] text-left transition-colors hover:border-line-strong"
+                  className="flex items-center gap-2.5 rounded-lg border border-line-soft bg-panel p-[7px] text-left transition-colors hover:border-line-strong"
                 >
                   <CoverImage src={task.coverUrl} seed={task.id} className="h-[34px] w-11 shrink-0 rounded-md" />
                   <div className="min-w-0 flex-1">

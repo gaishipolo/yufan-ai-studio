@@ -125,7 +125,7 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
                 playsInline
                 preload="metadata"
                 aria-label={`成片：${task.title}`}
-                className="max-h-[420px] w-full rounded-[10px] bg-black object-contain"
+                className="max-h-[420px] w-full rounded-xl bg-black object-contain"
               >
                 {/* 生成成片没有字幕轨，但 a11y 规则要求 video 里必须有 track；
                     与 `AssetPreview` 同一写法（空轨不改变播放行为）。 */}
@@ -137,7 +137,7 @@ export function TaskPreviewModal({ taskId, outputUrl, onClose }: TaskPreviewModa
               src={task.coverUrl}
               seed={task.id}
               alt={task.title}
-              className="mx-auto aspect-[4/4.8] w-full max-w-[240px] rounded-[10px] md:max-w-none"
+              className="mx-auto aspect-[4/4.8] w-full max-w-[240px] rounded-xl md:max-w-none"
             />
           )}
 

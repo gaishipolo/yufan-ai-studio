@@ -86,7 +86,11 @@ export function Segmented<T extends string = string>({
       role="radiogroup"
       aria-label={ariaLabel}
       className={cn(
-        'rounded-lg bg-panel-soft p-0.5 ring-1 ring-inset ring-line-soft',
+        /* 轨道也是 pill：分段控件与页签、按钮同属「能点的东西」，
+           形状统一成药丸，这一屏里就不会同时出现方槽和药丸两种语汇。
+           它仍是滑块（不是实心蓝页签）—— 实心蓝在这个语言里
+           表示「这里有个主按钮」，分段控件不该冒充主按钮。 */
+        'rounded-md bg-panel-soft p-0.5 ring-1 ring-inset ring-line',
         className,
       )}
     >
@@ -96,7 +100,7 @@ export function Segmented<T extends string = string>({
         {thumb ? (
           <span
             aria-hidden="true"
-            className="pointer-events-none absolute top-0 bottom-0 left-0 rounded-[6px] bg-primary-soft shadow-[0_1px_3px_rgba(16,42,55,.10)] ring-1 ring-inset ring-primary-line transition-transform duration-200 ease-smooth motion-reduce:transition-none"
+            className="pointer-events-none absolute top-0 bottom-0 left-0 rounded-sm bg-panel shadow-[0_1px_2px_rgba(23,21,15,.12)] ring-1 ring-inset ring-line-strong transition-transform duration-200 ease-smooth motion-reduce:transition-none"
             style={{transform: `translateX(${thumb.left}px)`, width: thumb.width}}
           />
         ) : null}
@@ -122,8 +126,8 @@ export function Segmented<T extends string = string>({
                 // `whitespace-nowrap` 不是装饰：按钮是 `flex-1`（basis 0），容器
                 // 按内容宽度收缩时，文字一旦能换行，min-content 就塌成一个字宽 ——
                 // 结果是「近 30 天」被拆成两行，滑块的实测位置也跟着错位。
-                'relative flex-1 whitespace-nowrap rounded-[6px] px-2 py-1 text-xs transition-colors duration-150',
-                active ? 'font-semibold text-primary-deep' : 'text-ink-mute hover:text-ink-soft',
+                'relative flex-1 whitespace-nowrap rounded-sm px-3 py-1 text-xs transition-colors duration-150',
+                active ? 'font-semibold text-ink' : 'text-ink-mute hover:text-ink-soft',
                 disabled && 'cursor-not-allowed opacity-45 hover:text-ink-mute',
               )}
             >

@@ -7,6 +7,7 @@ import {
   type MentionTextareaHandle,
 } from './MentionTextarea';
 import {RichPromptEditor} from './RichPromptEditor';
+import type {CaretPoint} from './CursorMenu';
 
 export interface PromptChip {
   token: string;
@@ -31,17 +32,26 @@ export interface PromptChip {
 export function PromptBox({
   value,
   chips,
+  slotNames,
   onChange,
   onInsert,
+  onSelectionChange,
   placeholder = '写提示词；打 @ 可以直接选槽位',
   ariaLabel = '提示词',
 }: {
   value: string;
   chips: PromptChip[];
+  /** 槽位 key → 展示名，给正文里的默认描述段加 hover 气泡。 */
+  slotNames?: Record<string, string>;
   /** 用户改动。返回 `false` 表示**被拒**（父组件校验引用），输入框会把界面回退。 */
   onChange: (text: string) => void | boolean;
   /** 程序写入引用后的回调（chip 按钮 / `@` 提及 / 粘贴共用）。 */
   onInsert: (text: string) => void | boolean;
+  /** 选区变化：父组件用它弹「设为槽位默认描述」的菜单。 */
+  onSelectionChange?: (
+    range: {start: number; end: number} | null,
+    point?: CaretPoint | null,
+  ) => void;
   /** 占位符：同一组件在两处用时，只有它该说清「这一格是干什么的」。 */
   placeholder?: string;
   ariaLabel?: string;
@@ -69,11 +79,13 @@ export function PromptBox({
         ref={boxRef}
         value={value}
         candidates={candidates}
+        slotNames={slotNames}
         aria-label={ariaLabel}
         placeholder={placeholder}
         className="rounded-xl px-3 py-2.5"
         onChange={onChange}
         onInsert={onInsert}
+        onSelectionChange={onSelectionChange}
       />
 
       {/* chip 行降到 z-0：候选面板浮在上面时，它不该把面板压出一道缺口。
@@ -94,7 +106,7 @@ export function PromptBox({
                 title={`插入 ${chip.token}（点一下插到光标处）`}
                 onClick={() => insertAtCaret(chip.token)}
                 className={cn(
-                  'inline-flex items-center gap-1.5 rounded-lg border px-2 py-1 text-meta transition-colors',
+                  'inline-flex items-center gap-1.5 rounded-pill border px-2 py-1 text-meta transition-colors',
                   'border-line-soft bg-panel-soft text-ink-soft',
                   'hover:border-primary-line hover:text-primary',
                 )}

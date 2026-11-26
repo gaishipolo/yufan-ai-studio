@@ -35,7 +35,7 @@ const TONE_META: Record<
   ToastTone,
   {className: string; Icon: typeof Info; label: string}
 > = {
-  info: {className: 'bg-[#1f2f38] text-white', Icon: Info, label: '提示'},
+  info: {className: 'bg-[#17150f] text-white', Icon: Info, label: '提示'},
   success: {className: 'bg-ok-deep text-white', Icon: CheckCircle2, label: '成功'},
   warning: {className: 'bg-warn-deep text-white', Icon: AlertTriangle, label: '警告'},
   error: {className: 'bg-danger text-white', Icon: XCircle, label: '错误'},
@@ -62,7 +62,7 @@ export function Toaster() {
             role={item.tone === 'error' ? 'alert' : 'status'}
             data-tone={item.tone}
             className={cn(
-              'animate-popIn pointer-events-auto flex w-full items-start gap-2 rounded-[9px] px-3.5 py-2 text-xs shadow-pop',
+              'animate-popIn pointer-events-auto flex w-full items-start gap-2 rounded-xl px-3.5 py-2 text-xs shadow-float',
               className,
             )}
           >
@@ -80,7 +80,7 @@ export function Toaster() {
                   dismiss(item.id);
                   item.action?.onClick();
                 }}
-                className="shrink-0 rounded-[5px] bg-white/15 px-1.5 py-0.5 text-[11px] font-medium whitespace-nowrap transition-colors hover:bg-white/25"
+                className="shrink-0 rounded-xs bg-white/15 px-2 py-0.5 text-[11px] font-medium whitespace-nowrap transition-colors hover:bg-white/25"
               >
                 {item.action.label}
               </button>
@@ -89,7 +89,7 @@ export function Toaster() {
               type="button"
               aria-label="关闭提示"
               onClick={() => dismiss(item.id)}
-              className="shrink-0 rounded-[4px] p-0.5 opacity-60 transition-opacity hover:opacity-100"
+              className="shrink-0 rounded-full p-0.5 opacity-60 transition-opacity hover:opacity-100"
             >
               <X size={12} />
             </button>

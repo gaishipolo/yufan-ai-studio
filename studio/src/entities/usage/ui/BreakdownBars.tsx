@@ -33,9 +33,9 @@ export function BreakdownBars({ items, metricLabel = '次', className }: Breakdo
           <span className="truncate text-body text-ink" title={item.label}>
             {item.label}
           </span>
-          <span className="h-2 overflow-hidden rounded-full bg-line-soft">
+          <span className="h-2 overflow-hidden rounded-xs bg-line-soft">
             <span
-              className="block h-full rounded-full bg-primary transition-[width,background-color] duration-300 ease-smooth group-hover:bg-primary-deep"
+              className="block h-full rounded-xs bg-primary transition-[width,background-color] duration-300 ease-smooth group-hover:bg-primary-deep"
               style={{ width: `${Math.max(item.share * 100, item.total > 0 ? 1.5 : 0)}%` }}
             />
           </span>

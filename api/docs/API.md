@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **146** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **148** 个接口 / **12** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -161,6 +161,8 @@ Authorization: Bearer <accessToken>
 
 | 权限码 | 名称 | 说明 |
 |---|---|---|
+| `model_driver:config:read` | 查看运行时配置 | 查看域名白名单与供应商接入状态；密钥只显示脱敏掩码与指纹，不显示明文 |
+| `model_driver:config:write` | 修改运行时配置 | 修改域名白名单与供应商密钥/地址，写回服务实际读取的 .env；下一次请求即生效。高危：白名单是 SSRF 防线，写错会让外部链接被当成可信来源 |
 | `model_driver:refresh` | 刷新模型驱动目录 | 重新扫描驱动目录，把新增的驱动文件热接上（进程级：只影响本实例，多实例各自收敛）。改已加载的文件不热替换，要重启才生效 |
 
 **页面**
@@ -169,7 +171,7 @@ Authorization: Bearer <accessToken>
 |---|---|---|
 | `page:image` | 生图 | 关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any |
 | `page:library` | 资产库 | 关联接口：library:case:read, library:create, library:delete, library:delete:any, library:draft:review, library:generation:ingest, library:read, library:share, library:share:approve, library:share:approve:group, library:share:approve:team, library:share:direct, library:tag:manage, library:update |
-| `page:ops` | 运维 | 关联接口：model_driver:refresh |
+| `page:ops` | 运维 | 关联接口：model_driver:config:read, model_driver:config:write, model_driver:refresh |
 | `page:shots` | 镜头库 | 关联接口：shot:read |
 | `page:storyboards` | 分镜模板库 | 关联接口：storyboard:read |
 | `page:studio` | 生成工作台 | 关联接口：catalog:read, image:create, task:create |
@@ -266,7 +268,7 @@ Authorization: Bearer <accessToken>
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 47 | 见下方 `4.9` |
-| 模型驱动 | 10 | 见下方 `4.10` |
+| 模型驱动 | 12 | 见下方 `4.10` |
 | 模板封装 | 20 | 见下方 `4.11` |
 | 用量看板 | 2 | 见下方 `4.12` |
 
@@ -1395,6 +1397,7 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | `string` | 是 | 画面描述 |
+| `name` | `string` | 否 | 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 |
 | `size` | `string` | 否 | 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` |
 | `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
 | `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
@@ -3106,10 +3109,12 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
 
-### 4.10 模型驱动（10 个）
+### 4.10 模型驱动（12 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
+| `GET` | `/api/v1/model-driver/config` | 运行时配置清单（密钥脱敏） | 🔒 |
+| `PUT` | `/api/v1/model-driver/config` | 修改运行时配置，下一次请求即生效 | 🔒 |
 | `GET` | `/api/v1/model-driver/drivers` | 已自动载入的模型驱动清单 | 🔒 |
 | `GET` | `/api/v1/model-driver/libtv/account` | LibTV 账号额度、免费权益与队列名额 | 🔒 |
 | `GET` | `/api/v1/model-driver/libtv/consumption` | 积分消耗明细（含上游 task_id，对账用） | 🔒 |
@@ -3120,6 +3125,46 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `GET` | `/api/v1/model-driver/tasks/{task_id}` | 查询统一生成任务 | 🔒 |
 | `POST` | `/api/v1/model-driver/tasks/{task_id}/cancel` | 取消生成任务 | 🔒 |
 | `POST` | `/api/v1/model-driver/tasks/{task_id}/retry` | 人工重试失败的生成任务 | 🔒 |
+
+#### `GET /api/v1/model-driver/config`
+
+**运行时配置清单（密钥脱敏）**
+
+列出运维页可编辑的配置项。
+
+密钥字段的 `value` 恒为空，只有 `configured` 与 8 位指纹；
+`source=environment` 的项由进程环境变量注入，改文件不生效，页面只读。
+
+**响应** `ApiResponse<ConfigListOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ConfigItemOut[]` | 否 |  |
+| `envFile` | `string` | 否 |  |
+| `groups` | `string[]` | 否 |  |
+
+#### `PUT /api/v1/model-driver/config`
+
+**修改运行时配置，下一次请求即生效**
+
+写回服务实际读取的 `.env`，并清掉配置缓存使其立即生效。
+
+`values` 里只提交要改的键；密钥空串表示「不改」（要清空请走改文件）。
+只接受声明清单里的键，白名单值做 host 校验，避免把 `.env` 写成 SSRF 后门。
+
+**请求体** `ConfigUpdateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `values` | `Record<string, string>` | 否 |  |
+
+**响应** `ApiResponse<ConfigUpdateOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `updated` | `string[]` | 否 |  |
+| `unchanged` | `string[]` | 否 |  |
+| `skipped` | `string[]` | 否 |  |
 
 #### `GET /api/v1/model-driver/drivers`
 
@@ -4012,6 +4057,47 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `tokens` | `string[]` | 否 |  |
 | `assetIds` | `string[]` | 否 |  |
 
+### `ConfigItemOut`
+
+一项可编辑配置。密钥的 `value` 恒为空串，只有指纹，不回显明文。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `label` | `string` | 是 |  |
+| `group` | `string` | 是 |  |
+| `secret` | `boolean` | 是 |  |
+| `value` | `string` | 否 |  |
+| `configured` | `boolean` | 否 |  |
+| `fingerprint` | `string` | 否 |  |
+| `masked` | `string` | 否 |  |
+| `source` | `string` | 否 |  |
+| `editable` | `boolean` | 否 |  |
+| `hint` | `string` | 否 |  |
+| `required` | `boolean` | 否 |  |
+
+### `ConfigListOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `items` | `ConfigItemOut[]` | 否 |  |
+| `envFile` | `string` | 否 |  |
+| `groups` | `string[]` | 否 |  |
+
+### `ConfigUpdateIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `values` | `Record<string, string>` | 否 |  |
+
+### `ConfigUpdateOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `updated` | `string[]` | 否 |  |
+| `unchanged` | `string[]` | 否 |  |
+| `skipped` | `string[]` | 否 |  |
+
 ### `CreateExportIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -4264,6 +4350,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | `string` | 是 | 画面描述 |
+| `name` | `string` | 否 | 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 |
 | `size` | `string` | 否 | 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` |
 | `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
 | `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |

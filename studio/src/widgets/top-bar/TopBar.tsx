@@ -9,12 +9,12 @@ import { UserMenu } from '@/widgets/user-menu/UserMenu';
 export function TopBar() {
   return (
     <header className="sticky top-0 z-30">
-      <div className="flex h-[54px] items-center justify-between border-b border-[rgba(214,228,232,.8)] bg-[rgba(255,255,255,.72)] px-[22px] backdrop-blur-[10px] 2xl:px-7">
+      <div className="flex h-[54px] items-center justify-between border-b border-line bg-[rgba(251,249,244,.85)] px-[22px] backdrop-blur-[10px] 2xl:px-7">
         <Link to={HOME_PATH} className="flex min-w-0 items-center gap-2.5">
           <BrandMark size={26} />
           <div className="flex shrink-0 flex-col leading-none whitespace-nowrap">
-            <b className="text-lead font-extrabold tracking-[3px] text-ink">{APP_BRAND}</b>
-            <span className="mt-[3px] text-[7px] tracking-[1.6px] text-ink-mute">{APP_BRAND_EN}</span>
+            <b className="font-serif text-lead font-bold tracking-[3px] text-ink">{APP_BRAND}</b>
+            <span className="mt-[3px] font-mono text-[7px] tracking-[1.6px] text-ink-mute">{APP_BRAND_EN}</span>
           </div>
           {/* 640 以下只留字标：产品名 + 版本号挤在同一行会把字标压成两行（390px 实测） */}
           <div className="hidden h-4 w-px shrink-0 bg-line-strong sm:block" />
@@ -37,7 +37,7 @@ export function TopBar() {
 
       {/* 胶片齿孔边 —— 全站只这一处。它不是花纹，是一句「这里是剪片的地方」：
           往下滚动时这条边钉在顶部，像片头那道始终在的片边标记。 */}
-      <div className="film-edge bg-[rgba(255,255,255,.72)] backdrop-blur-[10px]" aria-hidden />
+      <div className="film-edge backdrop-blur-[10px]" aria-hidden />
     </header>
   );
 }

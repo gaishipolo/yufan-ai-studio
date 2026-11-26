@@ -49,7 +49,7 @@ export default function StoryboardsPage() {
                   <div className="mt-2 flex items-center gap-1.5">
                     <Chip className="font-mono tabular-nums">{sb.shotCount} 镜头</Chip>
                     <Chip className="font-mono tabular-nums">{formatDuration(sb.durationSec)}</Chip>
-                    <Chip tone="primary" className="ml-auto font-mono tabular-nums">
+                    <Chip className="ml-auto font-mono tabular-nums">
                       {sb.aspectRatio}
                     </Chip>
                   </div>

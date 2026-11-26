@@ -52,8 +52,8 @@ export function CaseCard({
     <div
       className={cn(
         'flex flex-col gap-2 rounded-2xl border border-line-soft bg-panel p-3',
-        'shadow-[0_1px_2px_rgba(16,42,55,.05)] transition-all duration-200',
-        'hover:-translate-y-0.5 hover:border-line hover:shadow-card',
+        'transition-all duration-200',
+        'hover:border-line-strong',
       )}
     >
       <div className="flex items-start gap-2">
@@ -88,7 +88,7 @@ export function CaseCard({
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
-        {item.category && <Chip tone="primary">{item.category}</Chip>}
+        {item.category && <Chip>{item.category}</Chip>}
         <span className="truncate text-micro text-ink-mute">
           {trashed
             ? `删除于 ${formatTime(item.updatedAt)}`

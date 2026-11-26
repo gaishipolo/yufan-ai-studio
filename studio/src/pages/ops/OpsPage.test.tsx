@@ -5,9 +5,17 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { ApiError } from '@/shared/api/types';
 import OpsPage from './OpsPage';
 
-const { refreshMock } = vi.hoisted(() => ({ refreshMock: vi.fn() }));
+const { refreshMock, configMock, updateConfigMock } = vi.hoisted(() => ({
+  refreshMock: vi.fn(),
+  configMock: vi.fn(),
+  updateConfigMock: vi.fn(),
+}));
 vi.mock('@/entities/model/api/driver.api', () => ({
-  driverApi: { refresh: refreshMock },
+  driverApi: {
+    refresh: refreshMock,
+    config: configMock,
+    updateConfig: updateConfigMock,
+  },
 }));
 
 function renderPage() {
@@ -22,7 +30,11 @@ function renderPage() {
 }
 
 describe('运维页 · 刷新驱动目录', () => {
-  beforeEach(() => refreshMock.mockReset());
+  beforeEach(() => {
+    refreshMock.mockReset();
+    configMock.mockReset().mockResolvedValue({ items: [], groups: [], envFile: 'var/prod.env' });
+    updateConfigMock.mockReset();
+  });
 
   it('明说刷新是进程级的、改已加载文件要重启', () => {
     renderPage();

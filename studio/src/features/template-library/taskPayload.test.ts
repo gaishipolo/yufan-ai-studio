@@ -163,12 +163,14 @@ describe('toImagePayload', () => {
   it('尺寸与张数进顶层，其余声明的参数进 params', () => {
     const result = toImagePayload(
       compiled({model: 'agnes-image-2.5-flash', params: {size: '1024x1536', count: 2, quality: 'hd'}}),
+      '都在模仿我的版型',
       {},
       {paramSchema: {...AGNES_IMAGE_SCHEMA, quality: {type: 'enum', options: ['hd', 'sd']}}},
     );
     expect(result.ok).toBe(true);
     if (!result.ok) return;
     expect(result.payload).toEqual({
+      name: '都在模仿我的版型',
       prompt: '把 {{Mixed 1}} 换成 {{Mixed 2}}',
       model: 'agnes-image-2.5-flash',
       size: '1024x1536',
@@ -182,6 +184,7 @@ describe('toImagePayload', () => {
   it('模板没声明尺寸时不出来空字符串，交给服务端取模型默认', () => {
     const result = toImagePayload(
       compiled({model: 'agnes-image-2.5-flash', params: {count: 1}}),
+      '模板名',
       {},
       {paramSchema: AGNES_IMAGE_SCHEMA},
     );
@@ -192,7 +195,7 @@ describe('toImagePayload', () => {
   });
 
   it('张数不合法当场报错，不四舍五入成一个奇怪的数', () => {
-    const bad = toImagePayload(compiled({params: {count: -2}}));
+    const bad = toImagePayload(compiled({params: {count: -2}}), '模板名');
     expect(bad.ok).toBe(false);
     if (bad.ok) return;
     expect(bad.message).toContain('张数');
@@ -207,6 +210,11 @@ describe('toSubmitPayload', () => {
       'image',
     );
     expect(image.ok && image.kind).toBe('image');
+    /* 图片与视频的任务名对齐：都取模板名。生图以前没有 name 字段，
+       后端从提示词派生，卡片上是一长段话。 */
+    if (image.ok && image.kind === 'image') {
+      expect(image.payload.name).toBe('简单测试-图片');
+    }
 
     const video = toSubmitPayload(compiled(), '简单测试-视频', 'video');
     expect(video.ok && video.kind).toBe('video');

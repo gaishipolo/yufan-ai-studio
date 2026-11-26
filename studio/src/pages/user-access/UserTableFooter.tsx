@@ -85,7 +85,7 @@ export function UserTableFooter({
               'grid h-7 min-w-7 place-items-center rounded-lg border px-1.5 text-meta transition-colors',
               number === current
                 ? 'border-primary bg-primary text-white'
-                : 'border-line bg-white text-ink-soft hover:border-line-strong',
+                : 'border-line bg-panel text-ink-soft hover:border-line-strong',
             )}
             disabled={busy}
             onClick={() => go(number)}
@@ -107,7 +107,7 @@ export function UserTableFooter({
           max={safeTotal}
           aria-label="前往页码"
           value={jump}
-          className="h-7 w-12 rounded-lg border border-line bg-white px-1.5 text-center text-meta text-ink outline-none focus:border-primary-line"
+          className="h-7 w-12 rounded-lg border border-line bg-panel px-1.5 text-center text-meta text-ink outline-none focus:border-primary-line"
           onChange={(event) => setJump(event.target.value)}
           onKeyDown={(event) => {
             if (event.key !== 'Enter') return;
