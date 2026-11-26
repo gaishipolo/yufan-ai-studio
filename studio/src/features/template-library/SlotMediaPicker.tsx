@@ -73,6 +73,8 @@ export function SlotMediaPicker({
     ...viewQuery('all'),
     kind,
     ...(scope.length ? { tagIds: scope } : {}),
+    // 这里挑的是**成员**（选择器不藏封装成员）→ 计数按成员算。
+    includePackMembers: true,
   });
   /* 用户在这个槽位里又挑的标签（可空）：同维度是或、跨维度是且。 */
   const [picked, setPicked] = useState<string[]>([]);

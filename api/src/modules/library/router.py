@@ -864,6 +864,7 @@ async def list_tags(
     kind: LibraryAssetKind | None = None,
     purpose: Annotated[str | None, Query(max_length=16)] = None,
     tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
+    include_pack_members: Annotated[bool, Query(alias="includePackMembers")] = False,
 ) -> ApiResponse[list[LibraryTagStatOut]]:
     """计数按 `state` + `library` + `kind` + `purpose` 与列表同口径。
 
@@ -876,6 +877,11 @@ async def list_tags(
     `tagIds` 是**候选范围**（模板库用）：只统计符合这组标签的素材。
     模板作者圈了候选集之后，模板库要显示的是「这批素材身上实际有的二级标签」
     —— 按全库算会列出一堆这批素材一个都没挂的标签，用户点了只得到空列表。
+
+    `includePackMembers`：**封装成员算不算一条**。默认 false —— 成员进了包就只
+    在包里出现（资产库列表不单列），所以计数把它们**折叠进那个包**，数字与
+    点进去的条数一致。模板库按候选集统计时传 true：那里挑的是**成员**
+    （选择器不藏成员），折叠过去就看不到成员身上的标签了。
     """
     target = (purpose or "").strip().lower()
     if target and target != access.PURPOSE_CASE:
@@ -891,6 +897,10 @@ async def list_tags(
             kind=kind.value if kind else "",
             purpose=access.PURPOSE_CASE if case_view else "",
             tag_ids=list(tag_ids or []),
+            # 默认**折叠**封装成员（成员在列表里不单列，计数要跟着折）：
+            # 否则「正面图写 47、点进去只有 7」。模板库按候选集统计时传 true ——
+            # 那里挑的是**成员**（选择器不藏成员）。
+            include_pack_members=include_pack_members,
         )
     )
 

@@ -5000,7 +5000,7 @@
           "资产库"
         ],
         "summary": "标签列表（三级平铺，含当前入口的素材数，按添加时间排序）",
-        "description": "计数按 `state` + `library` + `kind` + `purpose` 与列表同口径。\n\n`state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径\n（悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。\n\n`purpose=case` 是案例池入口：只有持 `library:case:read` 的人能看案例池，\n且计数只算案例。不传时一律排除案例——与列表同一口径。\n\n`tagIds` 是**候选范围**（模板库用）：只统计符合这组标签的素材。\n模板作者圈了候选集之后，模板库要显示的是「这批素材身上实际有的二级标签」\n—— 按全库算会列出一堆这批素材一个都没挂的标签，用户点了只得到空列表。",
+        "description": "计数按 `state` + `library` + `kind` + `purpose` 与列表同口径。\n\n`state=draft|trash` 时忽略 `library`；`kind` 与列表的类别筛选同口径\n（悬浮栏按类别看库时，胶囊上的数字必须也是「这一类里有几条」）。\n\n`purpose=case` 是案例池入口：只有持 `library:case:read` 的人能看案例池，\n且计数只算案例。不传时一律排除案例——与列表同一口径。\n\n`tagIds` 是**候选范围**（模板库用）：只统计符合这组标签的素材。\n模板作者圈了候选集之后，模板库要显示的是「这批素材身上实际有的二级标签」\n—— 按全库算会列出一堆这批素材一个都没挂的标签，用户点了只得到空列表。\n\n`includePackMembers`：**封装成员算不算一条**。默认 false —— 成员进了包就只\n在包里出现（资产库列表不单列），所以计数把它们**折叠进那个包**，数字与\n点进去的条数一致。模板库按候选集统计时传 true：那里挑的是**成员**\n（选择器不藏成员），折叠过去就看不到成员身上的标签了。",
         "operationId": "list_tags_api_v1_library_tags_get",
         "security": [
           {
@@ -5076,6 +5076,16 @@
                 }
               ],
               "title": "Tagids"
+            }
+          },
+          {
+            "name": "includePackMembers",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "boolean",
+              "default": false,
+              "title": "Includepackmembers"
             }
           }
         ],

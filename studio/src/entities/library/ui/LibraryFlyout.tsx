@@ -179,7 +179,13 @@ export function LibraryFlyout({
   // **再按当前类别收窄**：抽屉顶部已经切成「图片 / 成片 / 音频 / 文本」，
   // 胶囊上的数字却还是全类的——写着 9、点进去只有 4 条，用户以为数据丢了。
   const tagScope = useMemo(
-    () => ({ state: 'active' as const, library: 'all' as const, kind }),
+    () => ({
+      state: 'active' as const,
+      library: 'all' as const,
+      kind,
+      // 这个抽屉是**挑素材**用的（选择器不藏封装成员）→ 计数按成员算。
+      includePackMembers: true,
+    }),
     [kind],
   );
   const tags = useLibraryTags(tagScope);

@@ -68,6 +68,8 @@ export function PackGroupPicker({
   const tags = useLibraryTags({
     ...viewQuery('all'),
     ...(scope.length ? {tagIds: scope} : {}),
+    // 候选集里挑的是**成员**（选择器不藏封装成员）→ 计数按成员算。
+    includePackMembers: true,
   });
   const [picked, setPicked] = useState<string[]>([]);
   /* 换模板 / 换容器 = 换候选范围：上次挑的标签可能已经在范围外。 */

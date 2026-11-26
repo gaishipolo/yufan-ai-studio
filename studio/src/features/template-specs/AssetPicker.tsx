@@ -117,6 +117,8 @@ export function AssetPicker({
   const tags = useLibraryTags({
     ...viewQuery('all'),
     ...(scope.length ? { tagIds: scope } : {}),
+    // 这里挑的是**成员**（选择器不藏封装成员）→ 计数按成员算。
+    includePackMembers: true,
   });
 
   /* 换了一个槽位 = 换了候选集，之前挑的标签可能已经在范围外：清掉重来。 */

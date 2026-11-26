@@ -28,6 +28,7 @@ from collections.abc import Mapping, Sequence
 
 from sqlalchemy import ColumnElement, and_, not_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 
 from core.context import CurrentUser
 from core.exceptions import NotFound
@@ -40,8 +41,42 @@ from modules.library.models import (
 )
 from modules.library.schema import LibraryTab
 
+
+def packed_member_clause() -> ColumnElement[bool]:
+    """「这条素材被某个**还在库里的**封装收录」。
+
+    成员不再单列（2026-11-19 用户拍板）：一条图进了包，就只在包里出现，
+    个人库里不再单列 —— 否则同一张图既要挑「包」又要挑「图」，包的意义减半。
+
+    落在 **SQL** 里而不是滤 `items`：`total` 与 `items` 必须同口径，
+    否则最后一页点进去是空的、侧栏角标与列表也对不上（与 `exclude_kinds` 同理）。
+
+    **要判包本身的状态**：包被移入回收站之后，它自己只在回收站里，而成员又被
+    这一条排除在个人库之外 —— 那几张图会「凭空消失」，用户得进回收站才找得到。
+    包不在库（回收站 / 已彻底删）时，成员就该回到个人库。
+
+    放这里而不是 `service.py`：标签计数（`tags.py`）要用**同一条**判据 ——
+    「标签栏写 N、点进去 N 条」这条口径两边一漂，数字就开始骗人
+    （2026-11-26 用户报：正面图写 47，点进去只有 7）。
+    """
+    pack = aliased(LibraryAsset)
+    return (
+        select(LibraryPackItem.id)
+        .join(pack, pack.id == LibraryPackItem.pack_id)
+        .where(
+            LibraryPackItem.asset_id == LibraryAsset.id,
+            # 只看 state：`deleted_at` 是「移入回收站的时间」，不是「彻底删除」——
+            # 拿它当「还在不在」用，会把回收站里的包也一起排掉。
+            pack.state == "active",
+        )
+        .exists()
+    )
+
+
 __all__ = [
     "PURPOSE_CASE",
+    "packed_member_clause",
+
     "active_visible_clause",
     "all_groups",
     "asset_group_ids",
@@ -55,6 +90,7 @@ __all__ = [
     "owner_clause",
     "owner_names",
     "pack_inherited_member_ids",
+    "packed_member_clause",
     "readable_rows",
     "tab_clause",
 ]

@@ -51,14 +51,20 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 
-from sqlalchemy import and_, delete, exists, select, update
+from sqlalchemy import and_, delete, exists, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
 from modules.library import access
-from modules.library.models import LibraryAsset, LibraryAssetTag, LibraryTag
+from modules.library.models import (
+    LibraryAsset,
+    LibraryAssetTag,
+    LibraryPackItem,
+    LibraryTag,
+)
 from modules.library.schema import (
     LibraryTab,
     LibraryTagOut,
@@ -75,6 +81,7 @@ __all__ = [
     "group_tag_ids_by_dimension",
     "remove_asset_tags",
     "set_asset_tags",
+    "pack_member_hit_clause",
     "tag_filter_clause",
     "tag_ids_by_asset",
 ]
@@ -199,6 +206,65 @@ def group_tag_ids_by_dimension(
     return list(groups.values())
 
 
+def _expanded_groups(
+    tag_rows: Sequence[LibraryTag], tag_ids: Sequence[str]
+) -> list[set[str]]:
+    """按一级维度分组，每组 = 该组选中标签的「自身 ∪ 全部下级」。
+
+    组内 OR、组间 AND 的口径都落在这里：组内用 `IN`（等价于「或」），
+    组间由调用方把各组 `AND` 起来。
+    """
+    wanted = [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id]
+    if not wanted:
+        return []
+    parent_of = {row.id: (row.parent_id or "") for row in tag_rows}
+    children = _children_of(tag_rows)
+    groups = group_tag_ids_by_dimension(wanted, parent_of)
+    expanded: list[set[str]] = []
+    for group in groups:
+        ids: set[str] = set()
+        for tag_id in group:
+            ids.update(_descendants(tag_id, children))
+        expanded.append(ids)
+    return expanded
+
+
+def _asset_hit_clause(expanded: set[str]) -> ColumnElement[bool]:
+    """这条**资产本身**带上了组内任一标签。"""
+    return exists(
+        select(1)
+        .select_from(LibraryAssetTag)
+        .where(
+            LibraryAssetTag.asset_id == LibraryAsset.id,
+            LibraryAssetTag.tag_id.in_(list(expanded)),
+        )
+        # 只关联 `LibraryAsset`，**不**关联 `LibraryAssetTag`：调用方的外层查询
+        # 可能也带 `LibraryAssetTag`（标签计数那张表就是「绑定行 JOIN 资产」），
+        # 自动关联会把外层的同名列拉进子句，于是子句查的是「这行绑定行的 tag_id
+        # 在集合里」而不是「外层那批资产里有没有挂这个标签」—— 条件恒假，计数全 0。
+        .correlate_except(LibraryAssetTag)
+    )
+
+
+def _member_hit_clause(expanded: set[str]) -> ColumnElement[bool]:
+    """这个**包**里有成员带上了组内任一标签。
+
+    「按成员标签找到那个包」用的就是它：成员在资产库列表里不单列（进了包就
+    只在包里出现），所以命中成员时该返回**它所属的包** —— 否则用户按「正面图」
+    筛出来的全是点不开的成员（2026-11-26 用户报：写 47、点进去只有 7）。
+    """
+    return exists(
+        select(1)
+        .select_from(LibraryPackItem, LibraryAssetTag)
+        .where(
+            LibraryPackItem.pack_id == LibraryAsset.id,
+            LibraryAssetTag.asset_id == LibraryPackItem.asset_id,
+            LibraryAssetTag.tag_id.in_(list(expanded)),
+        )
+        .correlate_except(LibraryAssetTag, LibraryPackItem)
+    )
+
+
 def tag_filter_clause(
     tag_rows: Sequence[LibraryTag], tag_ids: Sequence[str]
 ) -> ColumnElement[bool] | None:
@@ -222,38 +288,26 @@ def tag_filter_clause(
 
     返回 `None` 表示没有筛选条件（调用方不必拼 where）。
     """
-    wanted = [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id]
-    if not wanted:
-        return None
-    parent_of = {row.id: (row.parent_id or "") for row in tag_rows}
-    children = _children_of(tag_rows)
-    groups = group_tag_ids_by_dimension(wanted, parent_of)
+    groups = _expanded_groups(tag_rows, tag_ids)
     if not groups:
         return None
-    clauses: list[ColumnElement[bool]] = []
-    for group in groups:
-        # 组内每个选中的标签展开成「自身 + 全部下级」（选一级 = 它的全部取值）
-        expanded: set[str] = set()
-        for tag_id in group:
-            expanded.update(_descendants(tag_id, children))
-        clauses.append(
-            exists(
-                select(1)
-                .select_from(LibraryAssetTag)
-                .where(
-                    LibraryAssetTag.asset_id == LibraryAsset.id,
-                    LibraryAssetTag.tag_id.in_(list(expanded)),
-                )
-                # 只关联 `LibraryAsset`，**不**关联 `LibraryAssetTag`：
-                # 调用方的外层查询可能也带 `LibraryAssetTag`（标签计数那张表
-                # 就是「绑定行 JOIN 资产」），自动关联会把外层的同名列拉进子句，
-                # 于是子句查的是「这行绑定行的 tag_id 在集合里」而不是
-                # 「外层那批资产里有没有挂这个标签」—— 条件恒假，计数全 0。
-                .correlate_except(LibraryAssetTag)
-            )
-        )
     # 维度之间取交集：AND
-    return and_(*clauses)
+    return and_(*(_asset_hit_clause(ids) for ids in groups))
+
+
+def pack_member_hit_clause(
+    tag_rows: Sequence[LibraryTag], tag_ids: Sequence[str]
+) -> ColumnElement[bool] | None:
+    """「这个包里有没有成员命中选中的标签」—— 与资产本身同一套口径
+    （组内 OR、组间 AND）。
+
+    列表用它把「命中成员」翻译成「返回那个包」；计数侧则直接把成员折叠进包
+    （见 `TagService._asset_ids_by_tag`），两边得到同一批条目。
+    """
+    groups = _expanded_groups(tag_rows, tag_ids)
+    if not groups:
+        return None
+    return and_(*(_member_hit_clause(ids) for ids in groups))
 
 
 async def assignable_tag_ids(
@@ -414,6 +468,7 @@ class TagService:
         kind: str = "",
         purpose: str = "",
         tag_ids: Sequence[str] = (),
+        include_pack_members: bool = False,
     ) -> list[LibraryTagStatOut]:
         """标签栏的数据：全部标签 + 当前入口下各标签的素材数。
 
@@ -450,7 +505,7 @@ class TagService:
         children = _children_of(rows)
 
         per_tag = await self._asset_ids_by_tag(
-            actor, groups, state, library, kind, purpose, tag_ids
+            actor, groups, state, library, kind, purpose, tag_ids, include_pack_members
         )
         # 一个标签的数字 = 自身 + 全部下级，按资产 id 去重。这与「点一级展开到
         # 全部下级」的筛选口径完全一致；`count(distinct)` 做不到跨标签的并集去重，
@@ -486,8 +541,15 @@ class TagService:
         kind: str = "",
         purpose: str = "",
         tag_ids: Sequence[str] = (),
+        include_pack_members: bool = False,
     ) -> dict[str, set[str]]:
         """当前入口下「每个标签 → 可见资产 id 集合」，一次查询取回。
+
+        **成员折叠**：默认把「还在某个封装里的成员」换成**那个封装**（成员在
+        资产库列表里不单列，进了包就只在包里出现）—— 计数若还按成员算，
+        数字就会大于点进去的条数（用户报：正面图写 47，点进去只有 7）。
+        `include_pack_members=True` 时不折叠：模板库挑素材看到的是**成员**
+        （选择器不藏成员），那条路要按成员算。
 
         可见条件与 `LibraryService.list_assets` 一字不差；比旧的 `group by count`
         多取一列 asset_id，是为了给一级标签做「自身 ∪ 子级」的资产级去重。
@@ -498,11 +560,35 @@ class TagService:
         `tag_ids` 是候选范围：只统计符合这组标签的素材（口径与列表的
         `tag_filter_clause` 一致 —— 组内 OR、组间 AND）。留空 = 不按标签收窄。
         """
-        query = (
-            select(LibraryAssetTag.tag_id, LibraryAssetTag.asset_id)
-            .join(LibraryAsset, LibraryAsset.id == LibraryAssetTag.asset_id)
-            .where(LibraryAsset.state == state)
-        )
+        pack = aliased(LibraryAsset)
+        if include_pack_members:
+            # 成员自己算一条（模板库口径：选择器里看到的是成员）。
+            query = (
+                select(
+                    LibraryAssetTag.tag_id,
+                    LibraryAssetTag.asset_id.label("target_id"),
+                )
+                .join(LibraryAsset, LibraryAsset.id == LibraryAssetTag.asset_id)
+                .where(LibraryAsset.state == state)
+            )
+        else:
+            # 折叠：成员换成**还在库里**的封装。包在回收站时成员回到个人库
+            # （它自己单列），所以那时不折叠。
+            query = (
+                select(
+                    LibraryAssetTag.tag_id,
+                    func.coalesce(pack.id, LibraryAssetTag.asset_id).label("target_id"),
+                )
+                .join(LibraryAsset, LibraryAsset.id == LibraryAssetTag.asset_id)
+                .outerjoin(
+                    LibraryPackItem,
+                    LibraryPackItem.asset_id == LibraryAssetTag.asset_id,
+                )
+                .outerjoin(
+                    pack, and_(pack.id == LibraryPackItem.pack_id, pack.state == "active")
+                )
+                .where(LibraryAsset.state == state)
+            )
         if kind:
             query = query.where(LibraryAsset.kind == kind)
         # 用途与列表同口径：普通入口排除案例，案例池只算案例。
@@ -533,8 +619,8 @@ class TagService:
 
         result = await self.session.execute(query)
         grouped: dict[str, set[str]] = {}
-        for tag_id, asset_id in result.all():
-            grouped.setdefault(tag_id, set()).add(asset_id)
+        for tag_id, target_id in result.all():
+            grouped.setdefault(tag_id, set()).add(target_id)
         return grouped
 
     async def _parent_name(self, row: LibraryTag) -> str | None:

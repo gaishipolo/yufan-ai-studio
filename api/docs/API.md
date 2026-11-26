@@ -2907,6 +2907,11 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 模板作者圈了候选集之后，模板库要显示的是「这批素材身上实际有的二级标签」
 —— 按全库算会列出一堆这批素材一个都没挂的标签，用户点了只得到空列表。
 
+`includePackMembers`：**封装成员算不算一条**。默认 false —— 成员进了包就只
+在包里出现（资产库列表不单列），所以计数把它们**折叠进那个包**，数字与
+点进去的条数一致。模板库按候选集统计时传 true：那里挑的是**成员**
+（选择器不藏成员），折叠过去就看不到成员身上的标签了。
+
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `library` | query | `LibraryTab` | 否 |  |
@@ -2914,6 +2919,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `kind` | query | `LibraryAssetKind | null` | 否 |  |
 | `purpose` | query | `string | null` | 否 |  |
 | `tagIds` | query | `string[] | null` | 否 |  |
+| `includePackMembers` | query | `boolean` | 否 |  |
 
 **响应** `ApiResponse<LibraryTagStatOut[]>`（前端取 `res.data`）
 

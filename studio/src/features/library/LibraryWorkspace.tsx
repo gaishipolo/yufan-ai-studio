@@ -125,7 +125,12 @@ export function LibraryWorkspace() {
     [subject?.id, canDeleteAny],
   );
 
-  const tagScope = useMemo(() => viewQuery(view), [view]);
+  // 资产库页面是**列表口径**：封装成员不单列，所以标签计数把它们折叠进那个
+  // 封装 —— 「标签栏写 N、点进去 N 条」。模板库那几处传 true（挑的是成员）。
+  const tagScope = useMemo(
+    () => ({ ...viewQuery(view), includePackMembers: false }),
+    [view],
+  );
   const tags = useLibraryTags(tagScope);
   /*
    * 发给后端的是**收敛后**的标签：跨链多选是并集，但同一条链上只按最具体的那

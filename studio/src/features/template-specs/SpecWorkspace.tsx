@@ -355,7 +355,8 @@ export function SpecWorkspace() {
      是「圈定候选范围」，不是「打在素材上」，所以不必限叶子 —— 圈一个分组正是
      它的用途。数量按全库算，跟槽位类型无关：这里的用途是「挑范围」，不是
      「看有多少条」。 */
-  const tags = useLibraryTags(viewQuery('all'));
+  // 圈候选集时看到的是**成员**（选择器不藏封装成员）→ 计数按成员算。
+  const tags = useLibraryTags({ ...viewQuery('all'), includePackMembers: true });
   const tagOptions = useMemo(() => scopeTagOptions(tags.data ?? []), [tags.data]);
 
   const clear = () => {

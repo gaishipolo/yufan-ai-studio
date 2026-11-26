@@ -33,7 +33,6 @@ from typing import Any
 from sqlalchemy import delete, func, or_, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
 from core.audit import record as audit
@@ -96,6 +95,7 @@ from modules.library.schema import (
 from modules.library.tags import (
     add_asset_tags,
     all_tags,
+    pack_member_hit_clause,
     set_asset_tags,
     tag_filter_clause,
     tag_ids_by_asset,
@@ -110,33 +110,6 @@ logger = logging.getLogger(__name__)
 #: 反过来旧库的 `prune-blobs` 也扫不到这里。
 BLOB_PREFIX = "library/blobs"
 PREVIEW_PREFIX = "library/previews"
-
-def _packed_member_clause() -> ColumnElement[bool]:
-    """「这条素材被某个**还在库里的**封装收录」。
-
-    成员不再单列（2026-11-19 用户拍板）：一条图进了包，就只在包里出现，
-    个人库里不再单列 —— 否则同一张图既要挑「包」又要挑「图」，包的意义减半。
-
-    落在 **SQL** 里而不是滤 `items`：`total` 与 `items` 必须同口径，
-    否则最后一页点进去是空的、侧栏角标与列表也对不上（与 `exclude_kinds` 同理）。
-
-    **要判包本身的状态**：包被移入回收站之后，它自己只在回收站里，而成员又被
-    这一条排除在个人库之外 —— 那几张图会「凭空消失」，用户得进回收站才找得到。
-    包不在库（回收站 / 已彻底删）时，成员就该回到个人库。
-    """
-    pack = aliased(LibraryAsset)
-    return (
-        select(LibraryPackItem.id)
-        .join(pack, pack.id == LibraryPackItem.pack_id)
-        .where(
-            LibraryPackItem.asset_id == LibraryAsset.id,
-            # 只看 state：`deleted_at` 是「移入回收站的时间」，不是「彻底删除」——
-            # 拿它当「还在不在」用，会把回收站里的包也一起排掉。
-            pack.state == "active",
-        )
-        .exists()
-    )
-
 
 _STATES = {"draft", "active", "trash"}
 
@@ -341,7 +314,7 @@ class LibraryService:
             query = query.where(LibraryAsset.purpose.not_in(list(exclude_purposes)))
         if state == "active" and exclude_packed_members:
             # 成员不单列：进了包的素材只在包里出现。
-            query = query.where(~_packed_member_clause())
+            query = query.where(~access.packed_member_clause())
         if keyword:
             query = query.where(LibraryAsset.name.ilike(f"%{keyword}%"))
         if tag_ids:
@@ -349,9 +322,18 @@ class LibraryService:
             # 选中一级 = 它的全部取值；选二级 = 该取值本身。
             # 跨维度取交集：选「画面类型/正面图」+「产品/6036」= 既是 6036
             # 又是正面图，不是两者的并集。
-            clause = tag_filter_clause(await all_tags(self.session), tag_ids)
+            tag_rows = await all_tags(self.session)
+            clause = tag_filter_clause(tag_rows, tag_ids)
+            member_clause = pack_member_hit_clause(tag_rows, tag_ids)
             if clause is not None:
-                query = query.where(clause)
+                # 命中**成员**时返回它所属的**包**：成员在列表里不单列（进了包就
+                # 只在包里出现），所以按「正面图」筛出来的应该是「包含正面图的
+                # 封装」，而不是一张都点不开的成员（用户报：写 47、点进去只有 7）。
+                query = query.where(
+                    or_(clause, member_clause)
+                    if member_clause is not None
+                    else clause
+                )
 
         total = await self.session.scalar(select(func.count()).select_from(query.subquery()))
         order = self._order(sort)
@@ -1396,7 +1378,7 @@ class LibraryService:
                     # 素材，点进去却一条也找不到（列表默认排除案例）。
                     LibraryAsset.purpose != access.PURPOSE_CASE,
                     # 角标与列表同口径：进了包的成员不单列，也不单独计数。
-                    ~_packed_member_clause(),
+                    ~access.packed_member_clause(),
                 )
             )
             return int(await self.session.scalar(query) or 0)

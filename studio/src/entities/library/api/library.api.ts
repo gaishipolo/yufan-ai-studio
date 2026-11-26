@@ -87,6 +87,12 @@ export function toRequestParams(params: LibraryListParams): Record<string, unkno
 export type LibraryTagScope = ReturnType<typeof viewQuery> & {
   kind?: LibraryAssetKind;
   tagIds?: string[];
+  /**
+   * 封装成员算不算一条。默认 false：成员进了包就只在包里出现（资产库列表
+   * 不单列），所以计数把它们**折叠进那个包**，数字与点进去的条数一致。
+   * 模板库按候选集统计时传 true —— 那里挑的是**成员**（选择器不藏成员）。
+   */
+  includePackMembers?: boolean;
 };
 
 export const libraryApi = {
