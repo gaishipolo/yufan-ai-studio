@@ -28,6 +28,14 @@ export interface MentionCandidate {
   all?: boolean;
   /** 槽位类型：画图标用（图标比「成片/图片」这类文字省地方）。 */
   kind?: SlotType;
+  /**
+   * 这个槽位**必定有素材**吗（因而它的编号必定存在）？
+   *
+   * 槽位文案（选中时 / 未选时文案）里只能引用这样的槽位：可选槽位
+   * 可能没人填，那时没有编号可指。与后端
+   * `core/template_spec/rules.py::is_always_filled` 同一口径。
+   */
+  alwaysMaterial?: boolean;
 }
 
 /** 外部能对本组件做的事。 */

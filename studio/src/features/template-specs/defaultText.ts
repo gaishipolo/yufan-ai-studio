@@ -52,7 +52,13 @@
  */
 
 import type {SpecSlotIn} from '@/shared/api/schema';
-import {slotRefToken, toMixedTokens, toSlotTokens} from './specDraft';
+import {
+  referencedKeys,
+  slotRefToken,
+  slotTextRefError,
+  toMixedTokens,
+  toSlotTokens,
+} from './specDraft';
 
 /** 锚点开始标记：`⟦e:key⟧`。 */
 const OPEN_RE = /⟦e:([a-z][a-z0-9_]{0,39})⟧/g;
@@ -239,9 +245,31 @@ export function assignDefaultText(
   return applyDefaultText(plain, slotKey, {start, end}, plain.slice(start, end));
 }
 
-/** 默认描述里出现槽位引用了吗（后端禁止：`emptyText` 不许含引用）。 */
-export function defaultTextHasRef(text: string): boolean {
-  return /\{\{\s*(?:slot:|Mixed\s+\d)/.test(text);
+/**
+ * 这段默认描述里的引用是否合法。
+ *
+ * **返回 `null` = 没问题**，否则是给作者看的理由。
+ *
+ * 判据（与后端 `core/template_spec/rules.py::_validate_slot_texts` 同一套）：
+ * 默认描述里可以引用**必定有素材**的槽位（必填 / 已固定）—— 那种槽位每次
+ * 编译都有素材、都有编号，引用它成立。引用**可选**槽位仍不行：它可能没人填，
+ * 那时没有编号可指。
+ *
+ * 引用**自己**也不行：默认描述用的正是「使用者没给这一格挑素材」的时候，
+ * 那一格自己那时没有素材。
+ *
+ * 老规则是「见引用就拒」，把「提一下必填插槽的素材」这种写法一起误伤了 ——
+ * 那正是模板封装者反馈的场景。
+ */
+export function defaultTextRefError(
+  text: string,
+  slots: SpecSlotIn[],
+  selfKey?: string,
+): string | null {
+  if (selfKey && referencedKeys(text, slots).includes(selfKey)) {
+    return '不能引用它自己（使用者没给这一格挑素材时，它没有编号可指）';
+  }
+  return slotTextRefError(text, slots, {allowSelf: false, selfKey});
 }
 
 /** 摘掉某槽位的锚点（连它包住的内容一起 —— 那一段就是默认描述本身）。 */

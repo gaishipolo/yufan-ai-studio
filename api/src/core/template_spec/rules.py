@@ -84,6 +84,35 @@ def visual_slot_keys(spec: TemplateSpec) -> list[str]:
     return [slot.key for slot in ordered_slots(spec) if slot.ref_mode == "mixed"]
 
 
+def normalize_text_refs(text: str, spec: TemplateSpec, *, where: str) -> str:
+    """把**一段文字**里的作者写法（`{{Mixed N}}`）换成内部写法（`{{slot:key}}`）。
+
+    与 `normalize_refs` 同一套映射（按图片/成片槽位的顺序数），
+    区别只是作用对象：**整份规格** vs **一段文字**。
+
+    什么时候需要单独换算：使用者改写「未选时文案」时，那段字还没进规格，
+    校验它却得先知道它引用的是哪个槽位。
+
+    越界的编号当场报错：作者写 `{{Mixed 9}}` 而只有 3 个图片/成片槽位，
+    这条引用永远解析不出来 —— 留着等到编译期才炸，错误会出现在别人点生成的时候。
+    """
+    keys = visual_slot_keys(spec)
+    if not text or "Mixed" not in text:
+        return text
+
+    def repl(match: re.Match[str]) -> str:
+        index = int(match.group(1))
+        if not 1 <= index <= len(keys):
+            marker = "{{Mixed " + str(index) + "}}"
+            raise BadRequest(
+                f"{where}里的 {marker} 找不到对应槽位："
+                f"图片/成片槽位只有 {len(keys)} 个"
+            )
+        return f"{{{{slot:{keys[index - 1]}{match.group(2) or ''}}}}}"
+
+    return _MIXED_REF.sub(repl, text)
+
+
 def normalize_refs(spec: TemplateSpec) -> TemplateSpec:
     """把作者写的 `{{Mixed N}}` 换算成内部的 `{{slot:key}}`（幂等）。
 
@@ -95,22 +124,8 @@ def normalize_refs(spec: TemplateSpec) -> TemplateSpec:
     等编译期才发现的话，错误会出现在**别人点生成**的时候 —— 那时他既不知道
     这份模板是谁写的，也看不出该怎么改。
     """
-    keys = visual_slot_keys(spec)
-
     def fix(text: str, where: str) -> str:
-        if not text or "Mixed" not in text:
-            return text
-
-        def repl(match: re.Match[str]) -> str:
-            index = int(match.group(1))
-            if not 1 <= index <= len(keys):
-                raise BadRequest(
-                    f"{where}里的 {{{{Mixed {index}}}}} 找不到对应槽位："
-                    f"图片/成片槽位只有 {len(keys)} 个"
-                )
-            return f"{{{{slot:{keys[index - 1]}{match.group(2) or ''}}}}}"
-
-        return _MIXED_REF.sub(repl, text)
+        return normalize_text_refs(text, spec, where=where)
 
     def name_of(slot: InputSlot) -> str:
         return slot.label.strip() or slot.key
@@ -275,21 +290,60 @@ def inline_slot_ref(text: str, key: str, value: str) -> str:
     return _SLOT_REF.sub(repl, text)
 
 
+def is_always_filled(slot: InputSlot) -> bool:
+    """这个槽位的素材**必定在**吗（因而它的编号必定存在）？
+
+    两条都要：
+
+    - **素材一定在**：必填（`min_count >= 1`）或已固定（`binding == "fixed"`）。
+      可选槽位可能没人填 —— 那时它没有编号可指。
+    - **参与编号**：只算图片 / 成片（`ref_mode == "mixed"`）。文本与音频是
+      附加输入：文本另有一套 `{{Text N}}` 编号空间，音频根本没有编号。
+
+    与前端 `specDraft.ts::isAlwaysFilled` 同一口径。
+    """
+    return slot.ref_mode == "mixed" and (
+        slot.min_count >= 1 or slot.binding == "fixed"
+    )
+
+
+def always_filled_slot_keys(spec: TemplateSpec) -> frozenset[str]:
+    """可以在槽位文案里被引用的槽位 key（见 `is_always_filled`）。"""
+    return frozenset(slot.key for slot in spec.slots if is_always_filled(slot))
+
+
+def strip_valid_refs(text: str) -> str:
+    """去掉文字里**合法**的槽位引用，剩下的才是「看不懂的花括号」。
+
+    给「这段文字里有没有塞了不该有的占位符」用：合法的引用摘掉之后，
+    还剩下 `{{...}}` 就说明作者写了个认不出来的东西 —— 它会原样进提示词。
+    """
+    return _SLOT_REF.sub("", text)
+
+
 def _validate_slot_texts(spec: TemplateSpec) -> None:
     """校验「选中时文案」与「未选时文案」。
 
     两条约束各管一件事：
 
-    1. **`filled_text` 只能引用自己**。它是「这一段在有素材时怎么说」，
-       里面出现别的槽位会让编译期的展开顺序变得有依赖（这个槽位的文案里
-       要先算另一个槽位的编号）—— 而编号是**按槽位顺序**算的，跨槽位引用
-       在「另一个槽位排在前面」和「排在后面」两种情况下的编号不一样，
-       同一段文案编译出两种结果。这种依赖没人能推理得清，直接禁掉。
-       自引用（`{{slot:key}}`）是允许的，而且是**推荐的写法** ——
-       「人物参考 {{slot:hero}}」里的那个编号就靠它派生成。
+    1. **`filled_text` 可以引用自己，也可以引用「必定有素材」的槽位**
+       （必填 / 已固定，见 `is_always_filled`）。自引用（`{{slot:key}}`）
+       是**推荐的写法** —— 「人物参考 {{slot:hero}}」里的那个编号就靠它派生成。
 
-    2. **`empty_text` 不许含任何槽位引用**。没填素材时根本没有编号可指，
-       写了就是错的。留到编译期才发现的话，作者已经填完素材了。
+       引用**别的**槽位时，展开结果取决于那个槽位排在前面还是后面：编号按
+       槽位顺序算，同一段文案在不同填充下会编译出不同结果。所以只放开
+       **必定有素材**的那一类 —— 那种槽位的编号永远存在，展开结果稳定；
+       可选槽位可能没人填，那时就真的没有编号可指。
+
+    2. **`empty_text` 同样可以引用「必定有素材」的槽位**，但**不能引用自己**。
+
+       原先这里一律禁止，理由是「没填素材时没有编号可指」—— 但那句话只对
+       **这一格自己**成立：文字里提的**别的**槽位若是必填 / 已固定，它的
+       编号一直存在，引用它完全成立。拿「必填插槽的编号」说事，是把两件事
+       混成一件，于是「这段话里提一下必填槽位的素材」这种写法被一起禁掉了。
+
+       引用自己仍然禁止：这段话用的正是「使用者没给这一格挑素材」的时候，
+       这一格自己那时没有素材、没有编号。
 
     还有一条**不是**校验、而是**形状对齐**：可选槽位（`min_count == 0`）
     在提示词里被引用时，如果既没有 `empty_text` 也没有「整组引用」的写法，
@@ -312,6 +366,7 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
     与界面上说的「必填 = 直接插编号」不符。两头都比报错更坏。
     界面在切成必填时也会主动清掉并提示（见 `SpecWorkspace.patchSlot`）。
     """
+    always_filled = always_filled_slot_keys(spec)
     for slot in spec.slots:
         label = slot.label.strip() or slot.key
         if slot.min_count >= 1 and (slot.filled_text.strip() or slot.empty_text.strip()):
@@ -323,10 +378,11 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
             )
         if slot.filled_text:
             for ref in sorted(slot_refs(slot.filled_text)):
-                if ref != slot.key:
+                if ref != slot.key and ref not in always_filled:
                     raise BadRequest(
-                        f"槽位「{label}」的选中时文案引用了别的槽位「{ref}」："
-                        "它只能引用自己（编号按槽位顺序算，跨槽位引用算不准）"
+                        f"槽位「{label}」的选中时文案引用了「{ref}」："
+                        "它只能引用自己，或引用必定有素材的槽位（必填 / 已固定）—— "
+                        "可选槽位可能没人填，那时没有编号可指"
                     )
             if has_bad_slot_ref(slot.filled_text):
                 raise BadRequest(
@@ -334,11 +390,22 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
                     "（检查括号与槽位 key）"
                 )
         if slot.empty_text:
-            refs = slot_refs(slot.empty_text)
+            # 未选时文案**不能引用自己**：它用的正是「这一格没素材」的时候。
+            refs = [
+                ref
+                for ref in sorted(slot_refs(slot.empty_text))
+                if ref != slot.key and ref not in always_filled
+            ]
             if refs:
                 raise BadRequest(
-                    f"槽位「{label}」的未选时文案不能引用槽位（{'、'.join(refs)}）："
-                    "没有素材就没有编号可指"
+                    f"槽位「{label}」的未选时文案引用了「{'、'.join(refs)}」："
+                    "只能引用必定有素材的槽位（必填 / 已固定）—— "
+                    "可选槽位可能没人填，那时没有编号可指"
+                )
+            if slot.key in slot_refs(slot.empty_text):
+                raise BadRequest(
+                    f"槽位「{label}」的未选时文案不能引用它自己："
+                    "这段话用的正是「使用者没给这一格挑素材」的时候"
                 )
             if has_bad_slot_ref(slot.empty_text):
                 raise BadRequest(

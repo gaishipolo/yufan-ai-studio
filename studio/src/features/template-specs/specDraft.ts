@@ -134,6 +134,22 @@ export function isOptionalSlot(slot: SpecSlotIn): boolean {
 }
 
 /**
+ * 这个槽位**必定有素材**吗（因而它的编号必定存在）？
+ *
+ * 判据两条，都必要：
+ * - **素材一定在**：必填（`minCount >= 1`）或已固定（`binding === 'fixed'`）。
+ *   可选槽位可能没人填 —— 那时它没有编号可指。
+ * - **参与编号**：只算图片 / 成片（`refMode === 'mixed'`）。文本与音频是
+ *   附加输入，不占 Mixed 编号。
+ *
+ * 与后端 `core/template_spec/rules.py::is_always_filled` 同一口径。
+ */
+export function isAlwaysFilled(slot: SpecSlotIn): boolean {
+  if ((slot.refMode ?? 'mixed') !== 'mixed') return false;
+  return (slot.minCount ?? 1) >= 1 || (slot.binding ?? 'user') === 'fixed';
+}
+
+/**
  * 这个槽位切成**必填**后，两段文案要清掉吗？
  *
  * **必填 = 素材一定在 = 直接插编号** —— 两段文案（「填了怎么说 / 没填怎么说」）
@@ -586,6 +602,16 @@ export interface RefChip {
    * 那个场景下作者正在编辑这个槽位本身，状态就写在旁边的控件上，不必再标一遍。
    */
   fixed?: boolean;
+  /** 这个槽位的 key：判断「这条引用能不能被槽位文案引用」时要按 key 找槽位。 */
+  slotKey?: string;
+  /**
+   * 这个槽位**必定有素材**吗（因而它的编号必定存在）？
+   *
+   * 槽位文案（选中时 / 未选时文案）里只能引用这样的槽位：可选槽位
+   * 可能没人填，那时没有编号可指。与后端
+   * `core/template_spec/rules.py::is_always_filled` 同一口径。
+   */
+  alwaysMaterial?: boolean;
 }
 
 /**
@@ -688,7 +714,17 @@ export function referenceChips(spec: TemplateSpecIn): RefChip[] {
         `${SLOT_TYPE_LABELS[slotTypeOf(slot.type)]} ${mixed || ordinal}`;
       const fixed = (slot.binding ?? 'user') === 'fixed';
       const token = slotRefToken(slots, slot);
-      const chips: RefChip[] = [{token, label: name, all: false, kind: slotTypeOf(slot.type), fixed}];
+      const chips: RefChip[] = [
+        {
+          token,
+          label: name,
+          all: false,
+          kind: slotTypeOf(slot.type),
+          fixed,
+          slotKey: slot.key,
+          alwaysMaterial: isAlwaysFilled(slot),
+        },
+      ];
       // 多值槽位额外给一个「全部」引用。
       const max = slot.maxCount ?? 1;
       if (max > 1) {
@@ -698,6 +734,8 @@ export function referenceChips(spec: TemplateSpecIn): RefChip[] {
           all: true,
           kind: slotTypeOf(slot.type),
           fixed,
+          slotKey: slot.key,
+          alwaysMaterial: isAlwaysFilled(slot),
         });
       }
       return chips;
@@ -745,6 +783,41 @@ export function stripSlotRefs(
 export function referencedKeys(text: string, slots: SpecSlotIn[] = []): string[] {
   const hits = toSlotTokens(text, slots).matchAll(slotRefPattern());
   return [...new Set([...hits].map(match => match[1]))];
+}
+
+/**
+ * 一段**槽位文案**里的引用是否都指向「必定有素材」的槽位。
+ *
+ * 返回 `null` = 没问题；否则是给作者看的理由。
+ *
+ * 槽位文案（选中时 / 未选时文案）里引用别的槽位时，只能引用**必定有素材**
+ * 的那些：可选槽位可能没人填，那时没有编号可指 —— 这正是老规则把
+ * 「默认描述不能带素材引用」一刀切禁掉的原因，但它连必填插槽一起误伤了。
+ *
+ * `allowSelf`：引用自己是否允许。「选中时文案」允许（那一格有素材，
+ * 编号存在）；「未选时文案」不允许（那一格恰恰没有素材）。
+ */
+export function slotTextRefError(
+  text: string,
+  slots: SpecSlotIn[],
+  options: {allowSelf?: boolean; selfKey?: string} = {},
+): string | null {
+  const byKey = new Map(slots.map(slot => [slot.key, slot]));
+  for (const key of referencedKeys(text, slots)) {
+    if (options.allowSelf && key === options.selfKey) continue;
+    const slot = byKey.get(key);
+    if (!slot) {
+      return `引用了不存在的槽位「${key}」`;
+    }
+    if (!isAlwaysFilled(slot)) {
+      const name = slot.label?.trim() || key;
+      return (
+        `「${name}」可能没有素材、没有编号可指；` +
+        '只能引用必填或已固定的槽位'
+      );
+    }
+  }
+  return null;
 }
 
 /**
@@ -836,6 +909,36 @@ export function selfRefChips(slot: SpecSlotIn, mixedIndex = 0): RefChip[] {
     }
   }
   return chips;
+}
+
+/**
+ * 「选中时文案」里能引用的候选。
+ *
+ * 自己（单张 / 全部 / 第 N 张）+ **必定有素材**的其它槽位。
+ *
+ * 可选槽位不给：它可能没人填，那时没有编号可指 —— 与后端
+ * core/template_spec/rules.py::_validate_slot_texts 同一套规则。
+ */
+export function filledTextChips(slot: SpecSlotIn, slots: SpecSlotIn[]): RefChip[] {
+  const own = selfRefChips(slot, mixedIndexOf(slots, slot.key));
+  const others = slots
+    .filter(item => item.key !== slot.key && isAlwaysFilled(item))
+    .sort((a, b) => (a.position ?? 0) - (b.position ?? 0))
+    .map(item => {
+      const name =
+        item.label?.trim() ||
+        `${SLOT_TYPE_LABELS[slotTypeOf(item.type)]} ${mixedIndexOf(slots, item.key)}`;
+      return {
+        token: slotRefToken(slots, item),
+        label: name,
+        all: false,
+        kind: slotTypeOf(item.type),
+        fixed: (item.binding ?? 'user') === 'fixed',
+        slotKey: item.key,
+        alwaysMaterial: true,
+      };
+    });
+  return [...own, ...others];
 }
 
 /**

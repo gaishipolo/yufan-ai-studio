@@ -33,15 +33,23 @@ from core.template_spec.models import (
     TemplateSpec,
 )
 from core.template_spec.rules import (
+    always_filled_slot_keys,
     inline_slot_ref,
+    is_always_filled,
     normalize_refs,
+    normalize_text_refs,
     slot_ref_modes,
     slot_refs,
+    strip_valid_refs,
     validate_spec,
 )
 
 __all__ = [
     "EXECUTION_PROMPT_LIMIT",
+    "always_filled_slot_keys",
+    "is_always_filled",
+    "normalize_text_refs",
+    "strip_valid_refs",
     "MAX_ALLOWED_MODELS",
     "MAX_PROMPT",
     "MAX_SLOTS",

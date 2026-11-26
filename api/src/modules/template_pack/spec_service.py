@@ -45,10 +45,14 @@ from core.template_spec import (
     InputSlot,
     SpecGroup,
     TemplateSpec,
+    always_filled_slot_keys,
     compile_spec,
     inline_slot_ref,
     normalize_refs,
+    normalize_text_refs,
     slot_ref_modes,
+    slot_refs,
+    strip_valid_refs,
     validate_spec,
 )
 from db.base import utcnow
@@ -999,11 +1003,33 @@ def _apply_slot_text_overrides(
                 f"「{name}」改写的提示词 {len(text)} 字，"
                 f"超过上限 {MAX_SLOT_TEXT_OVERRIDE} 字"
             )
+        # 改写里可以引用**必定有素材**的槽位（必填 / 已固定）：
+        # 那段话提到的别格素材一定在，编号一定成立。规则与作者侧同一套
+        # （core/template_spec/rules.py::_validate_slot_texts）。
+        #
+        # 先把作者写法（{{Mixed N}}）归一成内部写法再判 —— 改写框里
+        # 预填的就是作者写法，不归一就认不出它引用了谁。
         if "{{" in text:
-            raise BadRequest(
-                f"「{name}」改写的提示词里不能再写槽位引用（{{{{…}}}}）："
-                "这一段是纯文字，编号由提示词骨架决定"
+            normalized = normalize_text_refs(
+                text, spec, where=f"「{name}」改写的提示词"
             )
+            forbidden = sorted(
+                set(slot_refs(normalized))
+                - always_filled_slot_keys(spec)
+                - {key}
+            )
+            if forbidden:
+                raise BadRequest(
+                    f"「{name}」改写的提示词里引用了「{'、'.join(forbidden)}」："
+                    "只能引用必定有素材的槽位（必填 / 已固定）—— "
+                    "可选槽位可能没人填，那时没有编号可指"
+                )
+            leftover = strip_valid_refs(normalized)
+            if "{{" in leftover or "}}" in leftover:
+                raise BadRequest(
+                    f"「{name}」改写的提示词里有认不出来的占位符："
+                    "这一段是纯文字，编号由提示词骨架决定"
+                )
         replaced[key] = replace(slot, empty_text=text)
     if not replaced:
         return spec

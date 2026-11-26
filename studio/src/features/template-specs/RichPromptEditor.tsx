@@ -327,16 +327,31 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
     /* 菜单锚在**打字的那一刻**的光标处，之后不跟着每个字符跑。
        setMention 的同一个时刻读一次，键盘选中下一项时光标没动、菜单也不抖。 */
     const [caretPoint, setCaretPoint] = useState<CaretPoint | null>(null);
+    /* 光标是否落在**默认描述段**内：段内只列可被引用的槽位（必填 / 已固定），
+       段外是全部槽位。算出来而不是存一份过滤结果 —— 候选列表变了，
+       存下来的那份会过期。 */
+    const [inAnchor, setInAnchor] = useState(false);
+    const usableCandidates = useMemo(
+      () => (inAnchor ? candidates.filter(candidate => candidate.alwaysMaterial) : candidates),
+      [candidates, inAnchor],
+    );
     const updateMention = (next: MentionQuery | null) => {
-      /* 默认描述段里不许引用（emptyText 不许含引用）。光标在段内时不弹 @ 候选。
-         直接看 DOM 里光标是否落在高亮段内 —— 用文本偏移算会被锚点标记和
+      /* 默认描述段里可以引用**必定有素材**的槽位（必填 / 已固定）——
+         那种槽位每次编译都有编号，引用成立。所以段内不弹空候选，而是
+         只列可被引用的那些（`alwaysMaterial`）。
+
+         判断光标是否落在高亮段内，直接看 DOM —— 用文本偏移算会被锚点标记和
          零宽缓冲区的换算绕进去，误伤正文其它位置的 @（用户报过「@ 全失效」）。 */
       let allowed = next;
       if (allowed) {
         const selection = window.getSelection();
         const node = selection?.anchorNode;
         const el = node instanceof HTMLElement ? node : node?.parentElement;
-        if (el?.closest('[data-anchor]')) allowed = null;
+        const anchor = Boolean(el?.closest('[data-anchor]'));
+        setInAnchor(anchor);
+        if (anchor && !candidates.some(candidate => candidate.alwaysMaterial)) {
+          allowed = null;
+        }
       }
       setCaretPoint(allowed ? caretPointOf(rootRef.current) : null);
       setMention(allowed);
@@ -367,8 +382,8 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
     const lastPushAt = useRef(0);
 
     const matches = useMemo(
-      () => (mention ? filterMentionChips(candidates, mention.query) : []),
-      [mention, candidates],
+      () => (mention ? filterMentionChips(usableCandidates, mention.query) : []),
+      [mention, usableCandidates],
     );
     const open = mention !== null && matches.length > 0;
 

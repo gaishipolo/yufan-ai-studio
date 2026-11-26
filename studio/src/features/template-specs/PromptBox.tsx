@@ -17,6 +17,14 @@ export interface PromptChip {
   kind?: SlotType;
   /** 作者定死的素材（`binding === 'fixed'`）：chip 上标「已固定」而不是「用户填写」 */
   fixed?: boolean;
+  /**
+   * 这个槽位**必定有素材**吗（因而它的编号必定存在）？
+   *
+   * 槽位文案（选中时 / 未选时文案）里只能引用这样的槽位：可选槽位
+   * 可能没人填，那时没有编号可指。与后端
+   * `core/template_spec/rules.py::is_always_filled` 同一口径。
+   */
+  alwaysMaterial?: boolean;
 }
 
 /**

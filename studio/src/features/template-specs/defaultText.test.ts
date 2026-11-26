@@ -3,7 +3,7 @@ import {
   anchorsToRefs,
   applyDefaultText,
   assignDefaultText,
-  defaultTextHasRef,
+  defaultTextRefError,
   hydrateAnchors,
   parseAnchors,
   readDefaultText,
@@ -141,10 +141,29 @@ describe('默认描述的摘除与同步', () => {
     expect(stripAnchors(next)).toBe(stripAnchors(authored));
   });
 
-  it('框到带引用的文字能被识别（后端禁止 emptyText 含引用）', () => {
-    expect(defaultTextHasRef('参考 {{Mixed 1}} 的场景')).toBe(true);
-    expect(defaultTextHasRef('参考 {{ slot:image_1 }} 的场景')).toBe(true);
-    expect(defaultTextHasRef('一望无际的雪原')).toBe(false);
+  it('默认描述里可以引用必定有素材的槽位（必填 / 已固定）', () => {
+    // 模板封装者反馈的场景：默认描述那段话里提到别的必填插槽的素材。
+    const required = slot('detail', {minCount: 1});
+    expect(
+      defaultTextRefError('参考 {{Mixed 1}} 的场景', [required, slot('hero')]),
+    ).toBeNull();
+  });
+
+  it('默认描述里不能引用可选槽位：它可能没人填，没有编号可指', () => {
+    const other = slot('detail', {minCount: 0});
+    expect(
+      defaultTextRefError('参考 {{Mixed 1}} 的场景', [other, slot('hero')]),
+    ).toMatch(/可能没有素材/);
+  });
+
+  it('默认描述里不能引用它自己', () => {
+    expect(
+      defaultTextRefError('参考 {{Mixed 1}} 的场景', [slot('hero')], 'hero'),
+    ).toMatch(/不能引用它自己/);
+  });
+
+  it('纯文字没有引用 → 没问题', () => {
+    expect(defaultTextRefError('一望无际的雪原', [slot('hero')])).toBeNull();
   });
 
   it('unwrapAnchor 只摘标记、保留作者写的那段字', () => {

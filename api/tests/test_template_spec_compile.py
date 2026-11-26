@@ -435,30 +435,72 @@ def test_filled_text_may_reference_one_of_several() -> None:
     assert out.prompt == "以 {{Mixed 3}} 为主"
 
 
-def test_filled_text_cannot_reference_another_slot() -> None:
-    """「选中时文案」只能引用自己。
+def test_filled_text_cannot_reference_an_optional_slot() -> None:
+    """「选中时文案」不能引用**可选**槽位：它可能没人填，那时没有编号可指。
 
-    跨槽位引用会让编号依赖别的槽位的填充量，而编号是按槽位顺序算的 ——
-    同一段文案在不同填充下编译出不同结果，没人能推理得清。
+    引用**必定有素材**的槽位（必填 / 已固定）是允许的 —— 那种槽位每次编译
+    都有编号，展开结果稳定（见 test_filled_text_can_reference_a_required_slot）。
     """
     spec = _spec(
         _source(),
-        _optional("hero", 1, filled_text="参考 {{slot:source}}"),
-        _user("detail", 2),
+        _optional("hero", 1, filled_text="参考 {{slot:detail}}"),
+        _optional("detail", 2),
         editable="{{slot:hero}}",
     )
-    with pytest.raises(BadRequest, match="只能引用自己"):
+    with pytest.raises(BadRequest, match="只能引用自己，或引用必定有素材的槽位"):
         compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,), detail=(DETAIL_1,)))
 
 
-def test_empty_text_cannot_reference_any_slot() -> None:
-    """「未选时文案」不许含槽位引用：没素材就没有编号可指。"""
+def test_filled_text_can_reference_a_required_slot() -> None:
+    """「选中时文案」可以引用必填槽位：它的编号每次编译都在。"""
     spec = _spec(
         _source(),
-        _optional("hero", 1, empty_text="参考 {{slot:source}}"),
+        _user("detail", 1),
+        _optional("hero", 2, filled_text="参考 {{slot:detail}}"),
         editable="{{slot:hero}}",
     )
-    with pytest.raises(BadRequest, match="不能引用槽位"):
+    out = compile_spec(spec, _fills(source=(VIDEO,), detail=(DETAIL_1,), hero=(HERO,)))
+    # detail 是必填 → 拿到 Mixed 2；hero 自己拿 Mixed 3
+    assert out.prompt == "参考 {{Mixed 2}}"
+
+
+def test_empty_text_can_reference_a_required_slot() -> None:
+    """「未选时文案」可以引用必填槽位。
+
+    这是模板封装者反馈的场景：默认描述那段话里提到别的必填插槽的素材，
+    那些素材一定在、编号一定存在 —— 老规则把这种情况一起禁掉了。
+    """
+    spec = _spec(
+        _source(),
+        _user("detail", 1),
+        _optional("hero", 2, empty_text="参考 {{slot:detail}}"),
+        editable="{{slot:hero}}",
+    )
+    out = compile_spec(spec, _fills(source=(VIDEO,), detail=(DETAIL_1,)))
+    # hero 没填 → 用未选时文案；里面的 detail 引用展开成它的编号
+    assert out.prompt == "参考 {{Mixed 2}}"
+
+
+def test_empty_text_cannot_reference_an_optional_slot() -> None:
+    """「未选时文案」不能引用可选槽位：它可能没人填，那时没有编号可指。"""
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, empty_text="参考 {{slot:detail}}"),
+        _optional("detail", 2),
+        editable="{{slot:hero}}",
+    )
+    with pytest.raises(BadRequest, match="只能引用必定有素材的槽位"):
+        compile_spec(spec, _fills(source=(VIDEO,)))
+
+
+def test_empty_text_cannot_reference_itself() -> None:
+    """「未选时文案」不能引用自己：它用的正是「这一格没素材」的时候。"""
+    spec = _spec(
+        _source(),
+        _optional("hero", 1, empty_text="参考 {{slot:hero}}"),
+        editable="{{slot:hero}}",
+    )
+    with pytest.raises(BadRequest, match="不能引用它自己"):
         compile_spec(spec, _fills(source=(VIDEO,)))
 
 

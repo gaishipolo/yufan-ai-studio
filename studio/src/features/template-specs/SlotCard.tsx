@@ -9,8 +9,7 @@ import {
   SLOT_TYPE_LABELS,
   hasSingleSlotRef,
   isOptionalSlot,
-  mixedIndexOf,
-  selfRefChips,
+  filledTextChips,
   setSlotOptional,
   slotRefToken,
   slotTypeOf,
@@ -349,7 +348,7 @@ export function SlotCard({
                 id="slot-filled-text"
                 aria-label="选中时文案"
                 value={slot.filledText ?? ''}
-                candidates={selfRefChips(slot, mixedIndexOf(slots, slot.key))}
+                candidates={filledTextChips(slot, slots)}
                 rows={2}
                 placeholder={filledPlaceholder}
                 panelHint="选择要插入的编号"

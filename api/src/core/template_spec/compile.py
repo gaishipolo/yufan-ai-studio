@@ -207,7 +207,7 @@ def _expander(
                 # 作者写了「未选时文案」就用它接管这一块。
                 if owned:
                     return "、".join(owned)
-                return slot.empty_text.strip()
+                return _expand_slot_text(slot.empty_text, slot, where, by_key, tokens)
             if modifier.startswith("."):
                 # **第 N 张**：没有「第 N 张」这回事，兜底文案也不适用
                 # （兜底是整段话，不是某个编号）。所以只有一句实话：不存在。
@@ -229,9 +229,11 @@ def _expander(
             # **直接插编号**，只有可选槽位才有「填了 / 没填」两种说法。
             if owned:
                 if slot.filled_text.strip():
-                    return _expand_filled(slot, owned, where)
+                    return _expand_slot_text(
+                        slot.filled_text, slot, where, by_key, tokens
+                    )
                 return owned[0]
-            return _fallback_or_raise(slot, where)
+            return _fallback_or_raise(slot, where, by_key, tokens)
 
         result = _SLOT_REF.sub(repl, text)
         if _LEFTOVER.search(result):
@@ -241,16 +243,24 @@ def _expander(
     return expand
 
 
-def _fallback_or_raise(slot: InputSlot, where: str) -> str:
+def _fallback_or_raise(
+    slot: InputSlot,
+    where: str,
+    by_key: Mapping[str, InputSlot],
+    tokens: Mapping[str, tuple[str, ...]],
+) -> str:
     """没填素材时的兜底：作者写了「未选时文案」就用它，没写就报错。
 
     **报错而不是静默留空**：留空的后果是提示词里少了一整段，模型照跑、
     结果不对，而日志里什么线索都没有 —— 用户只会觉得"这模板效果不好"。
     报错时要说清**要做什么**，不然作者不知道该去哪儿改。
+
+    兜底文案里**可以有引用**（见 `_expand_slot_text`）：它替的是这一格，
+    但里面提到的**别的**必填 / 已固定槽位，编号照样成立。
     """
     fallback = slot.empty_text.strip()
     if fallback:
-        return fallback
+        return _expand_slot_text(fallback, slot, where, by_key, tokens)
     raise BadRequest(
         f"{where}引用了未填素材的槽位「{_label(slot)}」"
         + (
@@ -262,36 +272,60 @@ def _fallback_or_raise(slot: InputSlot, where: str) -> str:
     )
 
 
-def _expand_filled(
-    slot: InputSlot, owned: tuple[str, ...], where: str
+def _expand_slot_text(
+    text: str,
+    owner: InputSlot,
+    where: str,
+    by_key: Mapping[str, InputSlot],
+    tokens: Mapping[str, tuple[str, ...]],
 ) -> str:
-    """展开「选中时文案」里的自引用。
+    """展开一段**槽位文案**（选中时 / 未选时文案）里的引用。
 
-    段落里可以写 `{{slot:key}}`（第一张）、`{{slot:key*}}`（整组）、
-    `{{slot:key.N}}`（第 N 张）—— 三种写法在这里各自展开成对应编号。
-    段落里**只能引用自己**（结构校验已拦），所以编号的来源没有歧义。
+    文案里的引用指**那个槽位的编号**（它排在第几号），不是把那个槽位的
+    文案整段抄进来 —— 那是「段落插入点」的语义，在文案里嵌段落会递归，
+    也没人能推理得清。
+
+    **只允许引用必定有素材的槽位**（必填 / 已固定，见
+    `rules.is_always_filled`）：那种槽位每次编译都有素材、都有编号。
+    引用可选槽位是没意义的 —— 它可能没人填，那时没有编号可指。
+    结构校验（`rules._validate_slot_texts`）已经按这条拦过，
+    这里再判一次是**兜底**：编译期报错比出提示词里一句悬空的编号强。
+
+    引用自己（`{{slot:自己的key}}`）在**选中时文案**里成立：
+    那一格有素材，编号存在（这也是「人物参考 {{slot:hero}}」的写法）。
+    在**未选时文案**里不成立 —— 那一格恰恰没有素材，规则层已经拒了。
     """
-    label = _label(slot)
-
     def repl(match: re.Match[str]) -> str:
         key, modifier = match.group(1), match.group(2) or ""
-        if key != slot.key:  # pragma: no cover - 结构校验已拦
-            raise BadRequest(f"{where}的「{label}」文案引用了别的槽位：{key}")
+        target = by_key.get(key)
+        if target is None:
+            raise BadRequest(f"{where}引用了不存在的槽位：{key}")
+        if target.ref_mode == "attachment" and target.type != "text":
+            raise BadRequest(
+                f"{where}不能引用「{_label(target)}」：它是附加输入，不参与编号"
+            )
+        owned = tokens.get(key, ())
+        if not owned:
+            # 目标槽位这次没有素材 → 没有编号可指。
+            raise BadRequest(
+                f"{where}引用了「{_label(target)}」，但它这次没有素材："
+                "没有编号可指"
+            )
         if modifier == "*":
             return "、".join(owned)
         if modifier.startswith("."):
             index = int(modifier[1:])
             if index < 1 or index > len(owned):
                 raise BadRequest(
-                    f"{where}的「{label}」文案引用了第 {index} 张，"
-                    f"但这次只填了 {len(owned)} 张"
+                    f"{where}引用的「{_label(target)}」第 {index} 张不存在"
+                    f"（这次填了 {len(owned)} 张）"
                 )
             return owned[index - 1]
         return owned[0]
 
-    result = _SLOT_REF.sub(repl, slot.filled_text)
+    result = _SLOT_REF.sub(repl, text)
     if _LEFTOVER.search(result):
-        raise BadRequest(f"{where}的「{label}」选中时文案里有无法解析的槽位引用")
+        raise BadRequest(f"{where}里有无法解析的槽位引用（检查括号与槽位 key）")
     return result
 
 

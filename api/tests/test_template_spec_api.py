@@ -1302,10 +1302,11 @@ def test_compile_override_without_assets_for_the_same_slot_is_rejected(
 def test_compile_override_rejects_empty_and_placeholder_text(
     client: TestClient,
 ) -> None:
-    """空文案与含 `{{` 的文案都被拒，且报错点明是哪一格。
+    """空文案被拒，含**不合法**引用的文案也被拒，且报错点明是哪一格。
 
     空的话编译期会报「请在封装里写未选时文案」—— 与实际情形（用户刚清空了
-    输入框）对不上；含占位符的话会在编译期炸成一句看不懂的残留引用错误。
+    输入框）对不上；引用可选槽位的话会在编译期炸成一句看不懂的残留引用错误
+    （引用必填 / 固定槽位是合法的，见下面那条用例）。
     """
     headers = _headers(client)
     video, first, _ = _media(client, headers)
@@ -1321,13 +1322,38 @@ def test_compile_override_rejects_empty_and_placeholder_text(
     assert empty.status_code == 400, empty.text
     assert "不能为空" in empty.json()["message"]
 
-    placeholder = client.post(
+    # 引用**固定**槽位是合法的：它的素材一定在、编号一定存在。
+    fixed_ref = client.post(
         f"{API}/{draft['key']}/compile",
         json={"slotTextOverrides": {"hero": "参考 {{slot:source}}"}},
         headers=headers,
     )
+    assert fixed_ref.status_code == 200, fixed_ref.text
+    assert "参考 {{Mixed 1}}" in fixed_ref.json()["data"]["prompt"]
+
+    # 引用**可选**槽位仍不行：它可能没人填，那时没有编号可指。
+    optional_draft = _optional_draft(video, first, emptyText="红裙女性")
+    optional_draft["slots"].append(
+        {
+            "key": "scene",
+            "type": "image",
+            "binding": "user",
+            "tagIds": [_TAG],
+            "minCount": 0,
+            "maxCount": 1,
+            "position": 2,
+            "label": "场景",
+        }
+    )
+    _save(client, headers, optional_draft)
+    client.post(f"{API}/{optional_draft['key']}/publish", headers=headers)
+    placeholder = client.post(
+        f"{API}/{optional_draft['key']}/compile",
+        json={"slotTextOverrides": {"hero": "参考 {{slot:scene}}"}},
+        headers=headers,
+    )
     assert placeholder.status_code == 400, placeholder.text
-    assert "槽位引用" in placeholder.json()["message"]
+    assert "必定有素材" in placeholder.json()["message"]
 
     unknown = client.post(
         f"{API}/{draft['key']}/compile",

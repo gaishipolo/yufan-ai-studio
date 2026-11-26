@@ -96,7 +96,7 @@ import {
 import {
   anchorsToRefs,
   assignDefaultText,
-  defaultTextHasRef,
+  defaultTextRefError,
   hydrateAnchors,
   parseAnchors,
   readDefaultText,
@@ -973,12 +973,21 @@ export function SpecWorkspace() {
       setHint(error);
       return false;
     }
-    /* 后端规则：empty_text 不许含槽位引用。正文里已框选的默认描述段是
-       emptyText 的真相来源，所以段内同样不许插入引用 —— 否则指派时能拦、
-       在段内打 @ 却溜过去，到发布才吃 400（两处规则不一致，用户很困惑）。 */
-    if (parseAnchors(text).some((span) => defaultTextHasRef(text.slice(span.start, span.end)))) {
-      setHint('默认描述里不能带素材引用（没填素材时没有编号可指）；请在框选段之外引用');
-      return false;
+    /* 后端规则：默认描述里可以引用**必定有素材**的槽位（必填 / 已固定）——
+       那种槽位每次编译都有编号，引用成立；引用可选槽位仍不行（可能没素材、
+       没编号可指）。正文里已框选的默认描述段是 emptyText 的真相来源，
+       所以段内用同一套判据 —— 否则指派时能拦、在段内打 @ 却溜过去，
+       到发布才吃 400（两处规则不一致，用户很困惑）。 */
+    for (const span of parseAnchors(text)) {
+      const error = defaultTextRefError(
+        text.slice(span.start, span.end),
+        draft.slots ?? [],
+        span.slotKey,
+      );
+      if (error) {
+        setHint(`默认描述里${error}；请在框选段之外引用`);
+        return false;
+      }
     }
     setHint('');
     /* 存进去的永远是**作者写法**：手打或粘进来的 `{{slot:image_1}}`（内部 key）
@@ -1039,12 +1048,14 @@ export function SpecWorkspace() {
     /* 偏移换算放在纯函数里（含「重新框选同一段」的情况）：
        组件里按整段长度平移曾把正文切碎，见 defaultText.assignDefaultText。 */
     const next = assignDefaultText(authored, slotKey, range);
-    /* 后端规则：`emptyText` 不许含任何槽位引用（没素材就没有编号可指）。
+    /* 后端规则：默认描述里可以引用**必定有素材**的槽位（必填 / 已固定），
+       引用可选槽位仍不行（可能没素材、没编号可指）。
        作者框到一段带胶囊的文字时，在这里就拦住并说清为什么 —— 否则要等到
        发布才吃一个 400，而那时界面早就看不出是哪一段惹的祸。 */
     const picked = readDefaultText(next, slotKey);
-    if (defaultTextHasRef(picked)) {
-      setHint('默认描述里不能带素材引用（没填素材时没有编号可指）；请重新框一段纯文字');
+    const pickedError = defaultTextRefError(picked, draft.slots ?? [], slotKey);
+    if (pickedError) {
+      setHint(`默认描述里${pickedError}；请重新框一段纯文字`);
       return;
     }
     const slots = syncDefaultTexts(next, draft.slots ?? [], authored);
