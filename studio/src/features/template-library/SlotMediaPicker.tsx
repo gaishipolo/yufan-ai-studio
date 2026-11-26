@@ -15,6 +15,7 @@ import { AssetHoverPreview } from '@/entities/library/ui/AssetHoverPreview';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
 import { pickWithin } from './slotPick';
 import { SlotTextField } from './SlotTextField';
+import type { RefChip } from '@/features/template-specs/specDraft';
 
 /* 首屏取 24 张，「显示全部」按**服务端单页上限**翻页取全。
  *
@@ -35,6 +36,7 @@ export function SlotMediaPicker({
   text = '',
   onModeChange,
   onTextChange,
+  chips,
 }: {
   slot: SpecSlotOut;
   selected: string[];
@@ -49,6 +51,8 @@ export function SlotMediaPicker({
   text?: string;
   onModeChange?: (mode: 'pick' | 'text') => void;
   onTextChange?: (text: string) => void;
+  /** 胶囊上的槽位名用：把整个模板的槽位传下来（引用可能指向别的槽位）。 */
+  chips?: RefChip[];
 }) {
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
@@ -203,10 +207,13 @@ export function SlotMediaPicker({
 
       {editingText ? (
         <SlotTextField
+          key={slot.key}
           className="mt-2"
           value={text}
           onChange={value => onTextChange?.(value)}
           placeholder="写这一格没素材时提示词怎么说"
+          chips={chips}
+          ariaLabel={`${slot.label || slot.key} 的改提示词`}
         />
       ) : (
         <>

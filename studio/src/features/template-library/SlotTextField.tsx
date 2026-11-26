@@ -1,5 +1,7 @@
+import { useRef, useState } from 'react';
 import { cn } from '@/shared/lib/cn';
 import { RichPromptEditor } from '@/features/template-specs/RichPromptEditor';
+import type { RefChip } from '@/features/template-specs/specDraft';
 
 /**
  * 后端 `MAX_SLOT_TEXT_OVERRIDE` 的同口径（`spec_service.py`）。
@@ -10,6 +12,14 @@ import { RichPromptEditor } from '@/features/template-specs/RichPromptEditor';
  */
 export const MAX_SLOT_TEXT = 2000;
 
+/** 文字里的引用 token（作者写法 `{{Mixed N}}` 与内部写法 `{{slot:key}}`）。 */
+const TOKEN_RE =
+  /\{\{\s*(?:Mixed\s+\d+|slot:[a-z][a-z0-9_]{0,39})(?:[*.]\d*)?\s*\}\}/g;
+
+function tokensOf(text: string): string[] {
+  return [...text.matchAll(TOKEN_RE)].map(match => match[0].replace(/\s+/g, ''));
+}
+
 /**
  * 「改提示词」的输入框：这一格不挑素材，直接写提示词里那段话怎么说。
  *
@@ -18,10 +28,14 @@ export const MAX_SLOT_TEXT = 2000;
  *
  * **用 `RichPromptEditor`（contenteditable）而不是 `textarea`**：作者写的那段话
  * 里可能有对别的槽位的引用（`{{Mixed 1}}`），textarea 只能显示成裸文本 ——
- * 使用者看到的是一串看不懂的花括号。换成编辑器后，引用照样画成胶囊。
+ * 使用者看到的是一串看不懂的花括号。换成编辑器后，引用照样画成胶囊，
+ * 胶囊上写的是**那个槽位的名字**（`chips` 传进来）。
  *
- * **不弹 @ 候选面板**（`candidates` 传空）：使用者改的是一段话，
- * 不是往提示词里插引用 —— 给他插引用的入口只会引出「引用了可选槽位」那类问题。
+ * **使用者不能自己插引用**：作者写好的引用保持原样，但使用者新敲的
+ * `{{Mixed n}}` 会被当成引用提交给后端 —— 那串编号对应哪个槽位使用者根本不知道，
+ * 编号还随槽位顺序变（作者拖一下就指错）。所以新敲的引用一律拒掉。
+ *
+ * **不弹 @ 候选面板**：使用者改的是一段话，不是往提示词里插引用。
  *
  * 字数回读常驻：2000 字是**看得见才猜得到**的约束（不是重复说明），
  * 而它也确实会挡住提交。
@@ -33,6 +47,7 @@ export function SlotTextField({
   rows = 3,
   className,
   ariaLabel = '改提示词',
+  chips = [],
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -41,14 +56,35 @@ export function SlotTextField({
   className?: string;
   /** 无障碍名：同一个槽位只有一个这样的框，但页面上可能有多个槽位。 */
   ariaLabel?: string;
+  /** 胶囊上显示的槽位名：把整个模板的槽位传下来（引用可能指向别的槽位）。 */
+  chips?: RefChip[];
 }) {
+  const [hint, setHint] = useState('');
+  /* 允许保留的引用 = **作者最初写的那份**里的那些。
+     不能拿「当前 value」算：父组件一接受上一步文本，新 token 就进了 value，
+     下一轮它就成了「本来就有的」→ 拦不住。
+     换槽位时靠 key 重挂载重新捕获（见 SlotMediaPicker / PackGroupPicker）。 */
+  const allowedTokens = useRef(new Set(tokensOf(value)));
+  const handleChange = (text: string) => {
+    /* 允许保留的引用 = **当前这份**里已有的。作者写好的那些照旧，
+       使用者新敲的一个都不许加。 */
+    const added = tokensOf(text).filter(token => !allowedTokens.current.has(token));
+    if (added.length) {
+      setHint('这里不能插引用 —— 作者写好的引用会保持原样');
+      return false; // 编辑器把 DOM 对齐回 value
+    }
+    setHint('');
+    onChange(text.slice(0, MAX_SLOT_TEXT));
+    return true;
+  };
   return (
     <div className={cn('flex flex-col gap-1', className)}>
       <RichPromptEditor
         value={value}
-        candidates={[]}
-        onChange={next => onChange(next.slice(0, MAX_SLOT_TEXT))}
-        onInsert={next => onChange(next.slice(0, MAX_SLOT_TEXT))}
+        candidates={chips}
+        allowMention={false}
+        onChange={handleChange}
+        onInsert={handleChange}
         aria-label={ariaLabel}
         placeholder={placeholder}
         className={cn(
@@ -59,6 +95,7 @@ export function SlotTextField({
           rows >= 3 ? 'min-h-[5.5rem]' : 'min-h-[4rem]',
         )}
       />
+      {hint && <p className="text-micro text-warn-deep">{hint}</p>}
       <span className="self-end text-micro tabular-nums text-ink-mute">
         {value.length} 字
       </span>

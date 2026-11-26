@@ -395,7 +395,7 @@ describe('模板库 · 容器里的可选槽位改成提示词', () => {
         name: '改提示词',
       }),
     );
-    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    const box = await screen.findByRole('textbox', {name: /改提示词/});
     expect(box).toHaveTextContent('产品只出现正面');
 
     await pickPack(user);

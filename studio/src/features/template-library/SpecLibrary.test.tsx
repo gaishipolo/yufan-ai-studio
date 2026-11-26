@@ -443,7 +443,7 @@ describe('模板库：可选槽位改成提示词', () => {
 
     const segment = screen.getByRole('radiogroup', {name: '人物参考 的填法'});
     expect(within(segment).getByRole('radio', {name: '选素材'})).toBeInTheDocument();
-    expect(within(segment).getByRole('radio', {name: '改提示词'})).toBeInTheDocument();
+    expect(within(segment).getByRole('radio', {name: /改提示词/})).toBeInTheDocument();
   });
 
   it('切到「改提示词」：输入框预填作者的未选时文案，素材网格让位', async () => {
@@ -454,9 +454,9 @@ describe('模板库：可选槽位改成提示词', () => {
     /* 切之前网格在（那张人物图能点到）。 */
     expect(await screen.findByTitle('人物图.png')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+    await user.click(screen.getByRole('radio', {name: /改提示词/}));
 
-    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    const box = await screen.findByRole('textbox', {name: /改提示词/});
     expect(box).toHaveTextContent('主角是穿红裙的年轻女性');
     // 网格让位给输入框：这一刻没有「挑哪张」这回事
     expect(screen.queryByTitle('人物图.png')).not.toBeInTheDocument();
@@ -470,9 +470,9 @@ describe('模板库：可选槽位改成提示词', () => {
     await toCustom(user);
     /* 先挑一张，再改成文案 —— 切回去时那张要还在（素材留在 state，只是不提交）。 */
     await user.click(await screen.findByTitle('人物图.png'));
-    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+    await user.click(screen.getByRole('radio', {name: /改提示词/}));
 
-    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    const box = await screen.findByRole('textbox', {name: /改提示词/});
     await user.click(box);
       await user.keyboard('{Control>}a{/Control}');
       await user.keyboard('{Backspace}');
@@ -493,9 +493,9 @@ describe('模板库：可选槽位改成提示词', () => {
     const user = userEvent.setup();
     renderSpec();
     await toCustom(user);
-    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+    await user.click(screen.getByRole('radio', {name: /改提示词/}));
 
-    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    const box = await screen.findByRole('textbox', {name: /改提示词/});
     await user.click(box);
       await user.keyboard('{Control>}a{/Control}');
       await user.keyboard('{Backspace}');
@@ -515,9 +515,9 @@ describe('模板库：可选槽位改成提示词', () => {
     const user = userEvent.setup();
     renderSpec();
     await toCustom(user);
-    await user.click(screen.getByRole('radio', {name: '改提示词'}));
+    await user.click(screen.getByRole('radio', {name: /改提示词/}));
 
-    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    const box = await screen.findByRole('textbox', {name: /改提示词/});
     await user.click(box);
       await user.keyboard('{Control>}a{/Control}');
       await user.keyboard('{Backspace}');
@@ -535,8 +535,8 @@ describe('模板库：可选槽位改成提示词', () => {
     await user.click(await screen.findByTitle('人物图.png'));
     expect(screen.getByText(/已选 1\/1/)).toBeInTheDocument();
 
-    await user.click(screen.getByRole('radio', {name: '改提示词'}));
-    await screen.findByRole('textbox', {name: '改提示词'});
+    await user.click(screen.getByRole('radio', {name: /改提示词/}));
+    await screen.findByRole('textbox', {name: /改提示词/});
     await user.click(screen.getByRole('radio', {name: '选素材'}));
 
     expect(screen.getByText(/已选 1\/1/)).toBeInTheDocument();

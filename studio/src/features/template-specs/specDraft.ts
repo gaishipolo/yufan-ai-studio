@@ -698,7 +698,11 @@ export function slotRefToken(
  * `audio` 没有编号空间，引用必然 400 —— 这里直接不显示。
  */
 export function referenceChips(spec: TemplateSpecIn): RefChip[] {
-  const slots = spec.slots ?? [];
+  return referenceChipsOf(spec.slots ?? []);
+}
+
+/** 只要槽位表就能算的版本（模板库那边手里只有槽位，没有整份 spec）。 */
+export function referenceChipsOf(slots: SpecSlotIn[]): RefChip[] {
   let ordinal = 0;
   return slots
     .filter(slot => (slot.refMode ?? 'mixed') === 'mixed' || slot.type === 'text')

@@ -334,11 +334,18 @@ export interface RichPromptEditorProps {
   id?: string;
   'aria-label'?: string;
   panelHint?: string;
+  /**
+   * 是否允许 @ 引用（弹候选面板）。
+   *
+   * 使用者改写「未选时文案」时**不需要**：他改的是一段话，不是往提示词里插引用。
+   * `candidates` 仍会传进来 —— 它只是借来显示胶囊上的**槽位名**。
+   */
+  allowMention?: boolean;
 }
 
 export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEditorProps>(
   function RichPromptEditor(
-    { value, candidates, slotNames, onChange, onInsert, onSelectionChange, placeholder, className, id, 'aria-label': ariaLabel, panelHint },
+    { value, candidates, slotNames, onChange, onInsert, onSelectionChange, placeholder, className, id, 'aria-label': ariaLabel, panelHint, allowMention = true },
     ref,
   ) {
     const rootRef = useRef<HTMLDivElement>(null);
@@ -355,6 +362,14 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       [candidates, inAnchor],
     );
     const updateMention = (next: MentionQuery | null) => {
+      /* 使用者侧（改写兜底文案）：不弹 @ 面板。`candidates` 只是借来显示
+         胶囊上的槽位名 —— 给使用者一个插引用的入口，只会引出「引用了可选槽位」
+         那类问题（预检要求补兜底文案、编号也随位置变）。 */
+      if (!allowMention) {
+        setMention(null);
+        setCaretPoint(null);
+        return;
+      }
       /* 默认描述段里可以引用**必定有素材**的槽位（必填 / 已固定）——
          那种槽位每次编译都有编号，引用成立。所以段内不弹空候选，而是
          只列可被引用的那些（`alwaysMaterial`）。

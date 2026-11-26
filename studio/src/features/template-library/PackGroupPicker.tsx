@@ -13,6 +13,7 @@ import { cn } from '@/shared/lib/cn';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import { PackHoverPreview } from '@/entities/library/ui/PackHoverPreview';
 import { SlotTextField } from './SlotTextField';
+import type { RefChip } from '@/features/template-specs/specDraft';
 
 /**
  * 封装容器在**模板库**这边的形态。
@@ -35,6 +36,7 @@ export function PackGroupPicker({
   onText,
   onPickPack,
   onClear,
+  chips,
 }: {
   /** 容器名（作者起的 / 没起名时按段序的默认名）。 */
   label: string;
@@ -50,6 +52,8 @@ export function PackGroupPicker({
   onMode: (key: string, mode: 'pick' | 'text') => void;
   onText: (key: string, value: string) => void;
   onPickPack: (packId: string) => void;
+  /** 胶囊上的槽位名用：把整个模板的槽位传下来（引用可能指向别的槽位）。 */
+  chips?: RefChip[];
   /** 清掉某一格（chip 上的 ×）。 */
   onClear: (slotKey: string) => void;
 }) {
@@ -224,10 +228,13 @@ export function PackGroupPicker({
               </div>
               {textMode && (
                 <SlotTextField
+                  key={member.key}
                   rows={2}
                   value={textOf(member.key)}
                   onChange={value => onText(member.key, value)}
                   placeholder="写这一格没素材时提示词怎么说"
+                  chips={chips}
+                  ariaLabel={`${member.label || member.key} 的改提示词`}
                 />
               )}
             </li>

@@ -19,12 +19,14 @@ import {
 } from '@/entities/model/lib/paramForm';
 import { useCreateTask } from '@/entities/task/api/task.queries';
 import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
-import type { SpecSlotOut, TemplateSpecOut } from '@/shared/api/schema';
+import type { SpecSlotOut, TemplateSpecOut, SpecSlotIn,
+} from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import {
   effectiveModelIds,
   hasSingleSlotRef,
   slotTypeOf,
+  referenceChipsOf,
 } from '@/features/template-specs/specDraft';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { groupLabels } from '@/entities/template-spec/model/slotGroups';
@@ -296,6 +298,12 @@ export function SpecLibrary() {
      **提示词要一起传进去**：均衡档下有些可选槽位不能被让给模型
      （提示词里按「第 N 张」引用了它，省掉就会 400）。见 `slotIndexRefs`。 */
   const fillSlots = visibleSlots(slots, effectiveRandomness, activePrompt);
+  /* 胶囊上显示的槽位名：用**全部**槽位算 —— 均衡档会隐掉可选槽位，
+     但作者写的那段话里可能正引用着它。 */
+  const refChips = useMemo(
+    () => referenceChipsOf(slots as unknown as SpecSlotIn[]),
+    [slots],
+  );
 
   /* 容器名：**按完整槽位算**，不按 `fillSlots`。
      随机 / 均衡档会隐掉一部分可选槽位，若按 `fillSlots` 的段序编号，
@@ -980,6 +988,7 @@ export function SpecLibrary() {
                             onText={(key, value) =>
                               setSlotTexts(current => ({...current, [key]: value}))
                             }
+                            chips={refChips}
                             onPickPack={packId => setPendingPack({packId, group})}
                             onClear={key => setSlotValues(key, [])}
                           />
@@ -1002,6 +1011,7 @@ export function SpecLibrary() {
                             onModeChange={mode =>
                               setSlotModes(current => ({...current, [slot.key]: mode}))
                             }
+                            chips={refChips}
                             onTextChange={value =>
                               setSlotTexts(current => ({...current, [slot.key]: value}))
                             }
