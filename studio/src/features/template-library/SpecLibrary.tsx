@@ -281,7 +281,13 @@ export function SpecLibrary() {
   /* 档位用**派生值**而不是在 effect 里改 state：换模板后 state 可能还停在
      `random`，而新模板没配那一段。派生让「选中的档」与「实际生效的档」永远
      一致；用 effect 同步会有一个渲染窗口，那期间提交会带上错的标记。 */
-  const effectiveRandomness: RandomnessMode = resolveRandomness(randomness, version);
+  /* 自定义档的意义是「每张素材都由使用者亲自挑」—— 没有可选槽位时它和均衡档
+     等价（可选的那张本来就不出现），这一档就该像随机档那样**置灰**：
+     显示但点不动 + 说清原因，别让用户以为是自己挑错了。 */
+  const customAvailable = slots.some(slot => (slot.minCount ?? 1) === 0);
+  const resolvedRandomness = resolveRandomness(randomness, version);
+  const effectiveRandomness: RandomnessMode =
+    resolvedRandomness === 'custom' && !customAvailable ? 'balanced' : resolvedRandomness;
   /* 这一档真正发出去的那段提示词：均衡/自定义用主的，随机用随机档那段。
      下面「哪些槽位必须显示」的判据（提示词里 `{{slot:x.N}}` 把可选槽位钉住）
      要按**实际用的那段**算 —— 拿主提示词去判随机档，会把随机档钉住的槽位
@@ -902,9 +908,14 @@ export function SpecLibrary() {
                         ? '整段换成作者写的随机档提示词，场景描述不固定'
                         : '该模板未配置随机档提示词',
                       balanced: '可选的那张不传素材，用固定文案',
-                      custom: '每张素材都由你亲自挑',
+                      custom: customAvailable
+                        ? '每张素材都由你亲自挑'
+                        : '该模板没有可选槽位',
                     }}
-                    disabledValues={randomAvailable ? [] : ['random']}
+                    disabledValues={[
+                      ...(randomAvailable ? [] : ['random']),
+                      ...(customAvailable ? [] : ['custom']),
+                    ] as RandomnessMode[]}
                     className="flex-1"
                   />
                 </div>
@@ -920,6 +931,11 @@ export function SpecLibrary() {
               {!randomAvailable && (
                 <p className="mt-1 text-micro text-ink-mute">
                   该模板未配置随机档提示词，随机档不可用
+                </p>
+              )}
+              {!customAvailable && (
+                <p className="mt-1 text-micro text-ink-mute">
+                  该模板没有可选槽位，自定义档不可用
                 </p>
               )}
               {/* 作者声明了「允许选用的模型」才出现这个下拉：使用模板的人从

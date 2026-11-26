@@ -310,6 +310,28 @@ describe('模板库 · 全是必填槽位时', () => {
     expect(screen.getByRole('radiogroup', {name: '随机性'})).toBeInTheDocument();
   });
 
+  it('模板没有可选槽位时，自定义档置灰并写出原因', async () => {
+    /* 自定义档 = 「每张素材都由使用者亲自挑」。没有可选槽位时它和均衡档
+       等价（可选的那张本来就不出现）—— 这一档该像随机档那样置灰，
+       而不是让用户以为是自己挑错了。 */
+    specState.current = {
+      ...SPEC,
+      latest: {
+        ...SPEC.latest!,
+        slots: SPEC.latest!.slots.map(slot => ({...slot, minCount: 1})),
+      },
+    };
+    renderLibrary();
+    await waitFor(() => expect(screen.getByText('商品图')).toBeInTheDocument());
+
+    const custom = within(screen.getByRole('radiogroup', {name: '随机性'})).getByRole(
+      'radio',
+      {name: '自定义'},
+    );
+    expect(custom).toBeDisabled();
+    expect(screen.getByText(/没有可选槽位/)).toBeInTheDocument();
+  });
+
   it('模板没配随机档提示词时，随机档置灰并写出原因', async () => {
     specState.current = {
       ...SPEC,
