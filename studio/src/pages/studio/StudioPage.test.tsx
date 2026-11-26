@@ -640,3 +640,34 @@ describe('StudioPage · 表单由模型声明驱动', () => {
     ).toBeInTheDocument();
   });
 });
+
+describe('StudioPage · 视频参数也按模型 schema 走（2026-11-26）', () => {
+  it('模型声明了新参数 → 页面出现对应控件，提交时带上它', async () => {
+    /* 视频页以前只认时长/画幅两个键：模型声明了新参数，界面里没有入口，
+       提交也不会带 —— 新供应商接进来的第一个坎。这里钉住「声明了就有」。 */
+    modelsMock.mockReturnValue([
+      videoModel({
+        paramSchema: {
+          durationSec: { type: 'int', min: 4, max: 12, step: 1, default: 5 },
+          aspectRatio: { type: 'enum', options: ['9:16', '16:9'], default: '16:9' },
+          quality: { type: 'enum', options: ['sd', 'hd'], default: 'sd' },
+        },
+      }),
+    ]);
+    render(<StudioPage />);
+
+    const quality = await screen.findByLabelText('质量');
+    expect(quality).toBeInTheDocument();
+
+    fireEvent.change(prompt(), { target: { value: '照着参数跑' } });
+    fireEvent.change(quality, { target: { value: 'hd' } });
+    fireEvent.click(screen.getByRole('button', { name: '生成视频任务' }));
+
+    const payload = mutateMock.mock.calls[0][0];
+    // 其余声明的参数走自由 params 通道（不是顶层字段）
+    expect(payload.params).toMatchObject({ quality: 'hd' });
+    // 顶层那两个仍然各归各位（接口形状，不是「参数」）
+    expect(payload.durationSec).toBe(5);
+    expect(payload.aspectRatio).toBe('16:9');
+  });
+});

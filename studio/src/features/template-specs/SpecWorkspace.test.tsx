@@ -1504,7 +1504,16 @@ describe('模板封装 · 图片插槽预设', () => {
     await user.clear(textArea);
     await user.type(textArea, '参考');
     await user.click(within(dialog).getAllByRole('button', {name: '插引用（这次选中的图）'})[0]);
-    await user.type(textArea, '中的场景');
+    /* 先等 React 把插入提交到 DOM（value 变了），再补后面的普通文字。 */
+    await waitFor(() => expect(textArea).toHaveValue('参考{{slot:key}}'), { timeout: 5000 });
+    /* 「中的场景」**一次性**写入，不逐字敲。
+       逐字输入在慢机上会与 React 的受控更新竞态：每次提交把 DOM 的 value 回退到
+       旧 state、光标拨回原处 → 字符倒序（CI 上稳定复现，得到「场景中的」；
+       本地 Windows 三次都过）。那是测试环境的时序问题，不是这条用例要验的行为 ——
+       它要验的是「占位符插在光标处 + 被规范化成 {{Mixed N}}」，两条断言都还在。 */
+    fireEvent.change(textArea, {
+      target: { value: `${(textArea as HTMLTextAreaElement).value}中的场景` },
+    });
     await user.click(within(dialog).getByRole('button', {name: '完成'}));
 
     await user.click(screen.getAllByRole('button', {name: /加槽位/})[0]);

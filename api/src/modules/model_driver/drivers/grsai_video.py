@@ -59,6 +59,7 @@ from modules.model_driver.drivers.grsai import (
     grsai_reference_media,
     grsai_root,
 )
+from modules.model_driver.kit.status import progress_from_status
 from modules.model_driver.kit.submission_guard import guarded_submit
 from modules.model_driver.spec import DriverMeta
 
@@ -94,6 +95,15 @@ _MAX_REFERENCES = _MAX_IMAGE_REFERENCES + _MAX_AUDIO_REFERENCES
 _MIN_DURATION_SEC = 3
 _MAX_DURATION_SEC = 30
 
+
+#: 上游状态词 → 平台状态。**只声明词表**，判定在 `kit/status.py`（唯一实现）。
+_STATUS_MAP: Mapping[str, GenerationState] = {
+    "running": GenerationState.RUNNING,
+    "succeeded": GenerationState.SUCCEEDED,
+    # 内容违规与生成失败不是一回事，**文案也不同** → 由驱动按状态词给文案。
+    "violation": GenerationState.FAILED,
+    "failed": GenerationState.FAILED,
+}
 
 MODELS: tuple[ModelSpec, ...] = (
     ModelSpec(
@@ -267,48 +277,20 @@ class GrsaiVideoDriver:
         error = str(body.get("error") or "").strip()
         progress = _int(body.get("progress"))
 
-        if status == "running":
-            return GenerationProgress(
-                external_id=task_id, state=GenerationState.RUNNING, progress=progress
-            )
-        if status == "succeeded":
-            url = grsai_first_url(body)
-            if not url:
-                return GenerationProgress(
-                    external_id=task_id,
-                    state=GenerationState.FAILED,
-                    progress=100,
-                    error="Grsai 报告已完成但没给出产物地址，请到控制台核对",
-                    retryable=False,
-                )
-            return GenerationProgress(
-                external_id=task_id,
-                state=GenerationState.SUCCEEDED,
-                progress=100,
-                output_url=url,
-            )
-        if status == "violation":
-            return GenerationProgress(
-                external_id=task_id,
-                state=GenerationState.FAILED,
-                progress=100,
-                error=f"Grsai 判定内容违规{_suffix(error)}",
-                retryable=False,
-            )
-        if status == "failed":
-            return GenerationProgress(
-                external_id=task_id,
-                state=GenerationState.FAILED,
-                progress=100,
-                error=f"Grsai 生成失败{_suffix(error)}",
-                retryable=False,
-            )
-        return GenerationProgress(
+        return progress_from_status(
             external_id=task_id,
-            state=GenerationState.FAILED,
+            raw_status=status,
+            status_map=_STATUS_MAP,
             progress=progress,
-            error=f"Grsai 返回了无法识别的任务状态（{status or '空'}）",
-            retryable=False,
+            output_url=grsai_first_url(body),
+            status_errors={
+                "violation": f"Grsai 判定内容违规{_suffix(error)}",
+                "failed": f"Grsai 生成失败{_suffix(error)}",
+            },
+            missing_output_error="Grsai 报告已完成但没给出产物地址，请到控制台核对",
+            unknown_state=GenerationState.FAILED,
+            unknown_error=f"Grsai 返回了无法识别的任务状态（{status or '空'}）",
+            failed_progress=100,
         )
 
     # ------------------------------------------------------------------ 取消

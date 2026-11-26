@@ -58,7 +58,7 @@
 from __future__ import annotations
 
 import base64
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any
 from urllib.parse import urlsplit
 
@@ -87,6 +87,7 @@ from infra.media_channel import MediaChannel
 from infra.media_probe import image_size
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
+from modules.model_driver.kit.status import progress_from_status
 from modules.model_driver.kit.submission_guard import guarded_submit
 from modules.model_driver.spec import DriverMeta
 
@@ -212,6 +213,27 @@ class AgnesVideoSettings(DriverSettings):
 # 配置热生效（D3）：mtime 指纹缓存 —— 改 `.env` 下次请求即生效，
 # 且不再每次 submit 都整读一遍 `.env`（原实现每次新建实例）。
 get_agnes_video_settings = vendor_settings(AgnesVideoSettings, env_prefix="AGNES")
+
+
+#: 上游状态词 → 平台状态。**只声明词表**，判定在 `kit/status.py`（唯一实现）。
+#: 词表来源是实测：`completed` / `queued` / `running`，另收 `success` / `processing`
+#: 这类同义写法（上游偶尔换词）。
+_STATUS_MAP: Mapping[str, GenerationState] = {
+    "completed": GenerationState.SUCCEEDED,
+    "succeeded": GenerationState.SUCCEEDED,
+    "success": GenerationState.SUCCEEDED,
+    "failed": GenerationState.FAILED,
+    "error": GenerationState.FAILED,
+    "cancelled": GenerationState.FAILED,
+    "canceled": GenerationState.FAILED,
+    "queued": GenerationState.QUEUED,
+    "pending": GenerationState.QUEUED,
+    "waiting": GenerationState.QUEUED,
+    "running": GenerationState.RUNNING,
+    "processing": GenerationState.RUNNING,
+    "in_progress": GenerationState.RUNNING,
+    "generating": GenerationState.RUNNING,
+}
 
 
 class AgnesVideoDriver:
@@ -379,43 +401,19 @@ class AgnesVideoDriver:
         status = str(body.get("status") or "").strip().lower()
         progress = _progress(body)
 
-        if status in {"completed", "succeeded", "success"}:
-            url = str(body.get("url") or "").strip()
-            if not url:
-                return GenerationProgress(
-                    external_id=task_id,
-                    state=GenerationState.FAILED,
-                    progress=100,
-                    error="Agnes 任务已完成但没有返回视频地址，请到控制台核对",
-                    retryable=False,
-                )
-            return GenerationProgress(
-                external_id=task_id,
-                state=GenerationState.SUCCEEDED,
-                progress=100,
-                output_url=url,
-            )
-        if status in {"failed", "error", "cancelled", "canceled"}:
-            return GenerationProgress(
-                external_id=task_id,
-                state=GenerationState.FAILED,
-                progress=progress,
-                error=_task_error(body) or "Agnes 视频生成失败（上游未给出原因）",
-                retryable=False,
-            )
-        if status in {"queued", "pending", "waiting"}:
-            return GenerationProgress(
-                external_id=task_id, state=GenerationState.QUEUED, progress=progress
-            )
-        if status in {"running", "processing", "in_progress", "generating"}:
-            return GenerationProgress(
-                external_id=task_id, state=GenerationState.RUNNING, progress=progress
-            )
         # 没见过的状态：按进行中处理（墙钟超时兜底），但要留痕，
         # 否则上游加了新状态我们只能看到「一直转圈」而查不到原因。
-        logger.warning("Agnes 返回未知视频状态 status=%r task=%s", status, task_id)
-        return GenerationProgress(
-            external_id=task_id, state=GenerationState.RUNNING, progress=progress
+        if status not in _STATUS_MAP:
+            logger.warning("Agnes 返回未知视频状态 status=%r task=%s", status, task_id)
+        return progress_from_status(
+            external_id=task_id,
+            raw_status=status,
+            status_map=_STATUS_MAP,
+            progress=progress,
+            output_url=str(body.get("url") or "").strip(),
+            error=_task_error(body) or "Agnes 视频生成失败（上游未给出原因）",
+            missing_output_error="Agnes 任务已完成但没有返回视频地址，请到控制台核对",
+            unknown_state=GenerationState.RUNNING,
         )
 
     async def cancel(self, external_id: str) -> None:

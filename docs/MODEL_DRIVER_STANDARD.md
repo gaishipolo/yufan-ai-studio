@@ -284,9 +284,20 @@ async def submit(self, request: GenerationRequest) -> GenerationProgress:
 - `label` / `description` 可选：前端优先用 `label`，没有才查内置中文词典
   （`size`→尺寸、`count`→数量、`quality`→质量…），再没有就用键名原文。
 
-> 视频侧表单目前仍只按 `durationSec` / `aspectRatio` 两个键取
-> （`CreateTaskModal`、`StudioPage`），新增视频参数要单独接线；生图页已经完全
-> 通用（`entities/model/lib/paramForm.ts`）。
+> **视频侧也已经是通用的**（2026-11-26 核对）：视频工作台按 `paramSchema` 渲染
+> 控件（`StudioPage` → `entities/model/lib/paramForm.ts` + `ParamFields`），其余参数
+> 走 `CreateTaskIn.params` 自由通道，由服务端按模型 schema 校验
+> （`modules/task/params.py::resolve_extra_params`，与生图**同一份**代码）。
+> 声明了新参数，界面就有入口；提交时不声明的键会被拒（400 + `availableParams`），
+> 不是悄悄换成默认值。
+>
+> 唯一还要单独留意的是**接口形状**：这几个键在 `CreateTaskIn` 上有**顶层字段**
+> （`TOP_LEVEL_KEYS`：`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`），
+> 不能同时塞进 `params` —— 两份真相的后果是「顶层改了、params 里没改」，
+> 而重试读的是 params 那份。新参数避开这几个名字即可。
+>
+> 时长 / 画幅另有上游语义（替换链、时长档位、画幅比例），改它们的取值范围要
+> 同时看驱动的受理校验，不是只改 schema。
 
 ## 4. 最小可运行示例
 

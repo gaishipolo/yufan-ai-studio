@@ -65,6 +65,7 @@ import json
 import re
 import time
 import uuid
+from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -100,6 +101,7 @@ from infra.storage.base import StorageError
 from modules.model_driver.generic_inputs import materialize
 from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
+from modules.model_driver.kit.status import resolve_state
 from modules.model_driver.kit.submission_guard import (
     STATUS_SUBMITTED,
     STATUS_UNKNOWN,
@@ -116,6 +118,17 @@ META = DriverMeta(
     version="1.0.0",
     author="",
 )
+
+#: 上游任务状态 → 平台状态。**只声明词表**，判定在 `kit/status.py`（唯一实现）。
+#: 百炼回的是大写（`SUCCEEDED` / `PENDING`），查表前统一小写。
+_STATUS_MAP: Mapping[str, GenerationState] = {
+    "succeeded": GenerationState.SUCCEEDED,
+    "failed": GenerationState.FAILED,
+    "canceled": GenerationState.FAILED,
+    "unknown": GenerationState.FAILED,
+    "pending": GenerationState.QUEUED,
+    "running": GenerationState.RUNNING,
+}
 
 MODEL_ID = "bailian-wan3-replacement"
 PRIME_MODEL_ID = "bailian-wan3-prime-replacement"
@@ -626,7 +639,8 @@ class BailianProvider:
             result = await self._json(client, "GET", f"/tasks/{task_id}", headers=self._headers())
         output = result.get("output", {})
         status = output.get("task_status")
-        if status == "SUCCEEDED":
+        state = resolve_state(status, _STATUS_MAP)
+        if state is GenerationState.SUCCEEDED:
             destination = folder / EXECUTOR_OUTPUT_RELATIVE
             if not await asyncio.to_thread(destination.is_file):
                 await self._download(output.get("video_url"), destination)
@@ -638,17 +652,17 @@ class BailianProvider:
                 100,
                 output_url=executor_output_url(run_id),
             )
-        if status in {"FAILED", "CANCELED", "UNKNOWN"}:
+        if state is GenerationState.FAILED:
             return GenerationProgress(
                 external_id,
                 GenerationState.FAILED,
                 error="百炼任务失败或已失效，请核对上游任务档案",
             )
-        if status not in {"PENDING", "RUNNING"}:
+        if state is None:
+            # 认不出来的状态**抛错**，不是当成「还在跑」：百炼的状态词是枚举，
+            # 出现表外的值说明上游改了协议 —— 继续轮询只会一直转圈。
             raise UpstreamError("百炼返回未知任务状态，请稍后继续查询")
-        return GenerationProgress(
-            external_id, GenerationState.QUEUED if status == "PENDING" else GenerationState.RUNNING
-        )
+        return GenerationProgress(external_id, state)
 
     async def _download(self, url: str | None, destination: Path) -> None:
         if not url or urlsplit(url).scheme != "https":
