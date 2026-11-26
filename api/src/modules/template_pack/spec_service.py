@@ -53,6 +53,7 @@ from core.template_spec import (
     slot_ref_modes,
     slot_refs,
     strip_valid_refs,
+    validate_required_slot_refs,
     validate_spec,
 )
 from db.base import utcnow
@@ -616,6 +617,10 @@ async def validate_draft(
     if executable:
         _check_executable(spec)
     await _check_model(spec)
+    # 「必填且使用者自己挑」的槽位必须真的被提示词引用：
+    # 素材会无条件传给供应商，提示词里不点名它就是白传。
+    # 放在模型检查**之后**：模型接不下这些素材时，先说模型的事。
+    validate_required_slot_refs(spec)
     await _check_fixed_refs(session, actor, spec)
     await _check_demo_ref(session, actor, spec)
     return SpecValidateOut(valid=True, fingerprint=fingerprint_of(payload))
@@ -685,6 +690,10 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     spec = to_core(payload)
     validate_spec(spec)
     await _check_model(spec)
+    # 「必填且使用者自己挑」的槽位必须真的被提示词引用：
+    # 素材会无条件传给供应商，提示词里不点名它就是白传。
+    # 放在模型检查**之后**：模型接不下这些素材时，先说模型的事。
+    validate_required_slot_refs(spec)
     # 发布 = 对外公开的那一刻：图/视频固定素材与展示案例必须**所有复用者都读得到**。
     # 固定文本例外：正文会抄进提示词，模板里不再引用素材（见 `_inline_fixed_text`）。
     # 草稿阶段不这么判（见 `_check_fixed_refs` 的两级判据说明）。
