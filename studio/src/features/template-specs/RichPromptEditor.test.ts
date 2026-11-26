@@ -13,8 +13,8 @@ describe('正文里该画成胶囊的 token 数量', () => {
     expect(expectedCapsuleCount('主图 {{Mixed 1}}，场景 {{Mixed 2}}')).toBe(2);
   });
 
-  it('默认描述段里的 token 不算（那段是纯文字，不是胶囊）', () => {
-    expect(expectedCapsuleCount('⟦e:image_1⟧见 {{Mixed 1}} 的构图⟦/e⟧')).toBe(0);
-    expect(expectedCapsuleCount('前缀 {{Mixed 1}} ⟦e:image_1⟧见 {{Mixed 2}}⟦/e⟧ 后缀 {{Mixed 3}}')).toBe(2);
+  it('默认描述段里的引用也算（那段里的引用同样画成胶囊）', () => {
+    expect(expectedCapsuleCount('⟦e:image_1⟧见 {{Mixed 1}} 的构图⟦/e⟧')).toBe(1);
+    expect(expectedCapsuleCount('前缀 {{Mixed 1}} ⟦e:image_1⟧见 {{Mixed 2}}⟦/e⟧ 后缀 {{Mixed 3}}')).toBe(3);
   });
 });

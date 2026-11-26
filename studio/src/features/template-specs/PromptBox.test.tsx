@@ -158,6 +158,26 @@ describe('正文里的默认描述段（锚点）', () => {
 
 });
 
+  /* 默认描述段里的引用**也画成胶囊**：它确实是引用，画成裸的 {{Mixed 1}}
+     既难看、又让人以为那不是引用。胶囊自带底色与边框，段自带下划线。 */
+  it('默认描述段里的引用画成胶囊', () => {
+    render(
+      <PromptBox
+        value={'⟦e:image_1⟧参考 {{Mixed 1}} 的构图⟦/e⟧'}
+        chips={[{ token: '{{Mixed 1}}', label: '正面图', all: false }]}
+        onChange={() => {}}
+        onInsert={() => {}}
+      />,
+    );
+    const box = screen.getByRole('textbox', { name: '提示词' });
+    const anchorSpan = box.querySelector('[data-anchor]');
+    expect(anchorSpan).not.toBeNull();
+    const pill = anchorSpan!.querySelector('[data-token]');
+    expect(pill).not.toBeNull();
+    expect(pill).toHaveTextContent('正面图');
+    expect(anchorSpan!.textContent).toContain('参考');
+  });
+
 describe('空态', () => {
   it('没有槽位时 chip 行给一句提示', () => {
     render(<PromptBox value="" chips={[]} onChange={() => {}} onInsert={() => {}} />);

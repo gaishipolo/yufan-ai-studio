@@ -28,22 +28,14 @@ const TOKEN_RE =
   /\{\{\s*(?:slot:[a-z][a-z0-9_]{0,39}|Mixed\s+\d+)(?:\*|\.\d+)?\s*\}\}/g;
 
 /**
- * 一整段「默认描述」锚点：⟦e:key⟧…⟦/e⟧。
- *
- * **段内的 token 是纯文字、不是胶囊**（作者写进默认描述里的引用，编译期才当引用看），
- * 所以重绘判据必须把整段挖掉再数剩下的 token —— 见 paint effect 里的 expected。
- */
-const ANCHOR_SEGMENT_RE = /⟦e:[a-z][a-z0-9_]{0,39}⟧[\s\S]*?⟦\/e⟧/g;
-
-/**
  * 正文里应该画成**胶囊**的 token 有几个。
  *
- * **锚点段（默认描述）里的 token 不算** —— 那一段里的引用是纯文字，不是胶囊。
- * 算进去的话两边永远不等 → 每次都重绘 → 鼠标拖选进行到一半时 DOM 被重建 →
- * 选区塌缩 → 框选菜单不出现 → 「取消「XX」的默认描述」永远点不到。
+ * 锚点段（默认描述）里的引用**也画成胶囊**，所以这里要一并算上 ——
+ * 两边口径一致才不会每次都重绘（重绘会把正在进行的鼠标拖选打断，
+ * 选区塌缩 → 框选菜单不出现 → 「取消默认描述」点不到）。
  */
 export function expectedCapsuleCount(value: string): number {
-  return (value.replace(ANCHOR_SEGMENT_RE, '').match(TOKEN_RE) ?? []).length;
+  return (value.match(TOKEN_RE) ?? []).length;
 }
 
 /** 去掉空白后的 token：正文里的写法可能带空格，候选里的是规范形式。 */
@@ -488,7 +480,24 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
              文本节点放光标，会把字打进高亮里（默认描述凭空多出几个字）。
              缓冲区给光标一个段外落点，序列化时零宽字符被剥掉。 */
           root.appendChild(caretBuffer());
-          root.appendChild(highlight(segment.text, segment.anchorKey));
+          const span = highlight(segment.anchorKey);
+          /* 段内的引用**也画成胶囊**：它确实是引用（2026-11-26 起，未选时文案
+             可以引用必定有素材的槽位），画成裸的 `{{Mixed 1}}` 既难看，
+             又让人以为那不是引用。胶囊自带底色与边框（一眼看出是引用），
+             段自带下划线（一眼看出是默认描述）—— 两个特征叠在一起。 */
+          let inner = 0;
+          for (const match of segment.text.matchAll(TOKEN_RE)) {
+            const at = match.index ?? 0;
+            if (at > inner) {
+              span.appendChild(document.createTextNode(segment.text.slice(inner, at)));
+            }
+            span.appendChild(capsule(match[0], chipOf(match[0]), true));
+            inner = at + match[0].length;
+          }
+          if (inner < segment.text.length) {
+            span.appendChild(document.createTextNode(segment.text.slice(inner)));
+          }
+          root.appendChild(span);
           root.appendChild(caretBuffer());
           continue;
         }
@@ -521,18 +530,17 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
      * （软底 + 下划线、无边框、可直接编辑）。两者曾都用 primary 色 + 圆角边框，
      * 作者反馈「看着像一类东西」—— 但它们语义相反：一个是占位、一个是描述。
      */
-    const highlight = (text: string, slotKey: string) => {
+    const highlight = (slotKey: string) => {
       const span = document.createElement('span');
       span.dataset.anchor = slotKey;
       span.className = cn(
         'bg-quote/8 px-0.5 font-medium text-quote',
         'underline decoration-quote/60 decoration-2 underline-offset-[3px]',
       );
-      span.textContent = text;
       return span;
     };
 
-    const capsule = (token: string, candidate?: MentionCandidate) => {
+    const capsule = (token: string, candidate?: MentionCandidate, inAnchor = false) => {
       const span = document.createElement('span');
       /* 光标不能进胶囊：`contenteditable=false` 让浏览器把它当一个整体，
          退格一次删掉整枚，而不是从名字中间逐字删。 */
@@ -543,6 +551,11 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
         candidate?.all
           ? 'border-quote/30 bg-quote/10 text-quote'
           : 'border-primary-line bg-primary-soft text-primary-deep',
+        /* 在默认描述段里：胶囊自己的底色与边框（一眼看出是引用）
+           + 继承段的下划线（一眼看出是默认描述）—— 两个特征同时在。 */
+        inAnchor
+          ? 'underline decoration-quote/60 decoration-2 underline-offset-[3px]'
+          : '',
       );
       span.textContent = candidate?.label ?? token;
       return span;
