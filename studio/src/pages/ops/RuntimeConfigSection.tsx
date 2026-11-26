@@ -22,15 +22,24 @@ function ConfigRow({ item, value, onChange }: {
   const id = `config-${item.key.toLowerCase().replace(/_/g, '-')}`;
   const editable = item.editable !== false;
   const fromEnv = item.source === 'environment';
+  /* 必填但当前没配：白名单这类项留空 = 校验只剩兜底规则，
+     后端也会拒绝写空值，页面得先让人看见这件事。 */
+  const missing = Boolean(item.required) && !item.secret && !item.configured;
 
   return (
-    <FormField label={item.label} htmlFor={id} required={item.required}>
+    <FormField
+      label={item.label}
+      htmlFor={id}
+      required={item.required}
+      error={missing ? '必填项当前未配置' : undefined}
+    >
       <TextInput
         id={id}
         value={value}
         onChange={(event) => onChange(item.key, event.target.value)}
         disabled={!editable}
         autoComplete="off"
+        aria-invalid={missing || undefined}
         placeholder={item.secret ? (item.masked || '未配置') : undefined}
         title={
           fromEnv

@@ -127,6 +127,70 @@ def test_whitelist_change_takes_effect_without_restart(env_file: Path) -> None:
     assert after == "file2.example.com"
 
 
+def test_required_whitelist_cannot_be_written_empty(env_file: Path) -> None:
+    """白名单写成空 = 把 SSRF 防线从「白名单」降级成黑名单兜底，必须挡住。
+
+    写进去时没有报错，页面上一项还标着「必填」，只有下次重启的启动自检才会提 ——
+    写这一步就是最后一道能拦的地方。
+    """
+    for key in ("IMAGE_ASSET_ALLOWED_HOSTS", "LIBRARY_INGEST_ALLOWED_HOSTS"):
+        with pytest.raises(ValueError, match="不能写成空值"):
+            rc.apply_updates({key: ""})
+
+    text = env_file.read_text(encoding="utf-8")
+    assert "IMAGE_ASSET_ALLOWED_HOSTS=old.example.com" in text, "校验失败不能改文件"
+    assert "LIBRARY_INGEST_ALLOWED_HOSTS=" not in text, "空值不能落盘"
+
+
+def test_required_whitelist_rejects_separator_only(env_file: Path) -> None:
+    """只有分隔符、没有域名：host 校验归一成空串，同样等于清空白名单。"""
+    with pytest.raises(ValueError, match="不能写成空值"):
+        rc.apply_updates({"IMAGE_ASSET_ALLOWED_HOSTS": " , "})
+
+    assert "IMAGE_ASSET_ALLOWED_HOSTS=old.example.com" in env_file.read_text("utf-8")
+
+
+def test_non_required_field_can_still_be_cleared(env_file: Path) -> None:
+    """必填只管必填项：供应商地址这类非必填项仍然允许清空。"""
+    rc.apply_updates({"GRSAI_BASE_URL": ""})
+
+    assert "GRSAI_BASE_URL=\n" in env_file.read_text(encoding="utf-8")
+
+
+def test_base_url_cannot_point_to_internal_address(env_file: Path) -> None:
+    """网关地址是**带着 API Key 出网**的地址：指向内网 = 把密钥发过去。
+
+    `169.254.169.254` 是云厂商的元数据地址，`10.x` / `192.168.x` 是内网段，
+    `localhost` 是本机 —— 三类都该在写入这一步被挡下，而不是等请求发出去。
+    """
+    for url in (
+        "http://169.254.169.254/latest/meta-data/",
+        "http://127.0.0.1:8080",
+        "http://10.1.2.3",
+        "http://192.168.0.10",
+        "http://localhost:8000",
+        "http://metadata.google.internal/",
+    ):
+        with pytest.raises(ValueError, match="不能指向内网"):
+            rc.apply_updates({"GRSAI_BASE_URL": url})
+
+    assert "GRSAI_BASE_URL=https://grsaiapi.com" in env_file.read_text(encoding="utf-8")
+
+
+def test_public_base_url_is_accepted(env_file: Path) -> None:
+    """正常公网地址照常写：这条规则只拦内网，不拦「换个节点」。"""
+    rc.apply_updates({"GRSAI_BASE_URL": "https://grsai.dakka.com.cn"})
+
+    assert "GRSAI_BASE_URL=https://grsai.dakka.com.cn" in env_file.read_text("utf-8")
+
+
+def test_browser_url_may_stay_on_loopback(env_file: Path) -> None:
+    """浏览器调试地址默认就是本机端口（127.0.0.1:9226），不能被网关那条规则误伤。"""
+    rc.apply_updates({"LIBTV_BROWSER_URL": "http://127.0.0.1:9226"})
+
+    assert "LIBTV_BROWSER_URL=http://127.0.0.1:9226" in env_file.read_text("utf-8")
+
+
 def test_discovered_fields_cover_vendor_connections(env_file: Path) -> None:
     """新增供应商只要声明 api_key / base_url，就自动进运维页。"""
     keys = {field.key for field in rc.FIELDS}

@@ -52,6 +52,7 @@ from pathlib import Path
 
 from core.config import ENV_FILE
 from infra.env_settings import clear_cache
+from infra.http import validate_public_url
 
 _ENV_PATH = Path(ENV_FILE)
 
@@ -80,6 +81,30 @@ def _validate_url(value: str) -> str:
     value = value.strip()
     if value and not _URL_RE.match(value):
         raise ValueError("地址必须是 http:// 或 https:// 开头的完整 URL")
+    return value
+
+
+def _validate_base_url(value: str) -> str:
+    """供应商网关地址：协议对**还不够**，host 也不能指向内网。
+
+    这个地址会被**带着 API Key** 去请求上游。写成 `http://169.254.169.254/` 时，
+    密钥就发给了云厂商的元数据接口；写成 `http://10.0.0.5/` 时，密钥发给了内网
+    某台机器 —— 「配置写错」就此变成「密钥外泄」。
+
+    口径与出网校验一致（`infra.http.validate_public_url`）：字面量地址按公网判定，
+    内网域名按黑名单判定。**不解析 DNS** —— 域名解析到内网这里查不出来，那条要
+    靠上游域名与网络策略兜。
+
+    浏览器调试地址（`browser_url`）不受这条约束：本地 Chrome 的调试端口本来
+    就是 `127.0.0.1`，挡住它等于把功能删了。
+    """
+    value = _validate_url(value)
+    if not value:
+        return value
+    try:
+        validate_public_url(value)
+    except ValueError as exc:
+        raise ValueError(f"地址不能指向内网或本机（{exc}）") from exc
     return value
 
 
@@ -132,7 +157,11 @@ _SECRET_FIELD_PARTS = ("api_key", "secret", "token", "password")
 # 字段名 → 展示文案。按字段名匹配，不含任何供应商名（公共代码不认识供应商）。
 _FIELD_LABELS: tuple[tuple[str, str, str], ...] = (
     ("api_key", "密钥", "填写新值覆盖；留空表示不改。明文不会显示，也不会写进审计"),
-    ("base_url", "网关地址", "供应商 API 地址，必须是完整 http(s) URL"),
+    (
+        "base_url",
+        "网关地址",
+        "供应商 API 地址，必须是完整的公网 http(s) URL（不能指向内网或本机）",
+    ),
     ("browser_urls", "队列账号池", "逗号分隔的浏览器调试地址；换账号不必重启"),
     ("browser_url", "队列账号", "浏览器调试地址；换账号不必重启"),
 )
@@ -182,7 +211,13 @@ def _discover_vendor_fields() -> tuple[ConfigField, ...]:
                 label=label,
                 group="供应商接入",
                 secret=any(part in lower for part in _SECRET_FIELD_PARTS),
-                validate=_validate_url if "url" in lower else _validate_any,
+                # 网关地址要查 host（带密钥出网），浏览器调试地址只查协议
+                # （本地 CDP 端口就是 127.0.0.1）。
+                validate=(
+                    _validate_base_url
+                    if kind == "base_url"
+                    else (_validate_url if "url" in lower else _validate_any)
+                ),
                 hint=hint,
             )
     return tuple(found[key] for key in sorted(found))
@@ -326,7 +361,18 @@ def _validate_value(field: ConfigField, value: str) -> str:
         raise ValueError(f"{field.label} 超过 {_MAX_VALUE_LEN} 字符")
     if any(ch in value for ch in ("\n", "\r", "\x00")):
         raise ValueError(f"{field.label} 不能包含换行或空字符")
-    return field.validate(value)
+    normalized = field.validate(value)
+    # 必填项不接受空值。
+    #
+    # 白名单写成空 = 把它从「白名单」降级成黑名单兜底：host 校验还在，但只挡
+    # 非公网 IP 字面量与明显的内网域名，不解析 DNS —— 防线看着还在，实际没了。
+    # 页面上一项还标着「必填」，只有重启时的启动自检才会报，运维的人看不出问题。
+    #
+    # 密钥的空串另有含义（留空 = 不改），在 `apply_updates` 里提前 return 了，
+    # 走不到这里；这里管的是「写一个空的白名单」。
+    if field.required and not normalized.strip():
+        raise ValueError(f"{field.label} 是必填项，不能写成空值")
+    return normalized
 
 
 def apply_updates(values: dict[str, str]) -> ConfigUpdate:

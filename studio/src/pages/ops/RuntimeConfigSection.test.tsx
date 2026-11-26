@@ -45,6 +45,17 @@ const whitelist = {
   source: 'env_file',
   editable: true,
 };
+const missingRequired = {
+  key: 'LIBRARY_INGEST_ALLOWED_HOSTS',
+  label: '素材入库来源白名单',
+  group: '白名单',
+  secret: false,
+  value: '',
+  configured: false,
+  source: 'env_file',
+  editable: true,
+  required: true,
+};
 const fromEnv = {
   key: 'AGNES_API_KEY',
   label: 'AGNES 密钥',
@@ -59,7 +70,7 @@ const fromEnv = {
 describe('运维页 · 运行时配置', () => {
   beforeEach(() => {
     configMock.mockReset().mockResolvedValue({
-      items: [whitelist, secret, fromEnv],
+      items: [whitelist, secret, fromEnv, missingRequired],
       groups: ['白名单', '供应商接入'],
       envFile: 'var/prod-8081.env',
     });
@@ -100,6 +111,13 @@ describe('运维页 · 运行时配置', () => {
     expect(updateMock.mock.calls[0][0]).toEqual({
       values: { IMAGE_ASSET_ALLOWED_HOSTS: 'new.example.com' },
     });
+  });
+
+  it('必填但没配的项标出来，不让人以为已经填好了', async () => {
+    renderSection();
+    const input = await screen.findByRole('textbox', { name: '素材入库来源白名单' });
+    expect(screen.getByText('必填项当前未配置')).toBeInTheDocument();
+    expect(input).toHaveAttribute('aria-invalid', 'true');
   });
 
   it('没有任何改动时保存按钮禁用', async () => {
