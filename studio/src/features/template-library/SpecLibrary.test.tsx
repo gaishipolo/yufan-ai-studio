@@ -456,8 +456,8 @@ describe('模板库：可选槽位改成提示词', () => {
 
     await user.click(screen.getByRole('radio', {name: '改提示词'}));
 
-    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
-    expect(box).toHaveValue('主角是穿红裙的年轻女性');
+    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    expect(box).toHaveTextContent('主角是穿红裙的年轻女性');
     // 网格让位给输入框：这一刻没有「挑哪张」这回事
     expect(screen.queryByTitle('人物图.png')).not.toBeInTheDocument();
     // 「已选 0/1」也不再摆（那不是这一刻的计数）
@@ -472,8 +472,10 @@ describe('模板库：可选槽位改成提示词', () => {
     await user.click(await screen.findByTitle('人物图.png'));
     await user.click(screen.getByRole('radio', {name: '改提示词'}));
 
-    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
-    await user.clear(box);
+    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    await user.click(box);
+      await user.keyboard('{Control>}a{/Control}');
+      await user.keyboard('{Backspace}');
     await user.type(box, '不要人物，只留原片');
 
     await user.click(screen.getByRole('button', {name: /生成视频/}));
@@ -493,8 +495,10 @@ describe('模板库：可选槽位改成提示词', () => {
     await toCustom(user);
     await user.click(screen.getByRole('radio', {name: '改提示词'}));
 
-    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
-    await user.clear(box);
+    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    await user.click(box);
+      await user.keyboard('{Control>}a{/Control}');
+      await user.keyboard('{Backspace}');
     await user.type(box, '不要人物，只留原片');
 
     await user.click(screen.getByRole('button', {name: /生成视频/}));
@@ -513,8 +517,10 @@ describe('模板库：可选槽位改成提示词', () => {
     await toCustom(user);
     await user.click(screen.getByRole('radio', {name: '改提示词'}));
 
-    const box = await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
-    await user.clear(box);
+    const box = await screen.findByRole('textbox', {name: '改提示词'});
+    await user.click(box);
+      await user.keyboard('{Control>}a{/Control}');
+      await user.keyboard('{Backspace}');
 
     const button = screen.getByRole('button', {name: /还缺 1 项/});
     expect(button).toBeDisabled();
@@ -530,7 +536,7 @@ describe('模板库：可选槽位改成提示词', () => {
     expect(screen.getByText(/已选 1\/1/)).toBeInTheDocument();
 
     await user.click(screen.getByRole('radio', {name: '改提示词'}));
-    await screen.findByPlaceholderText('写这一格没素材时提示词怎么说');
+    await screen.findByRole('textbox', {name: '改提示词'});
     await user.click(screen.getByRole('radio', {name: '选素材'}));
 
     expect(screen.getByText(/已选 1\/1/)).toBeInTheDocument();
