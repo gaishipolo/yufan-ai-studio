@@ -176,9 +176,11 @@ function pointOffset(root: HTMLElement, container: Node, offset: number): number
     if (anchor && !hit) acc += '⟦/e⟧'.length;
     return hit;
   };
-  for (const child of Array.from(root.childNodes)) {
-    if (visit(child)) break;
-  }
+  /* 从 root **自己**开始走：选区边界可能就落在 root 上 —— 用户框选到正文
+     末尾时，浏览器把终点表示成「root 的第 N 个子节点之后」，容器是 root。
+     只遍历子节点的话永远匹配不到 container → 返回 null → 选区被当成空的 →
+     框选菜单不弹（作者框最后一段就没反应）。 */
+  visit(root);
   return found >= 0 ? found : null;
 }
 

@@ -448,6 +448,45 @@ describe('模板封装 · 编辑器里的提示词', () => {
     expect(sent.prompt).not.toContain('⟦');
     expect(sent.prompt).not.toContain('一望无际的雪原');
   });
+  /**
+   * 框选到正文**最后一段**时，浏览器把选区终点表示成「编辑器根元素的第 N 个
+   * 子节点之后」—— 容器就是根元素本身，不是某个文本节点。
+   *
+   * 曾经只遍历根的子节点去找容器，永远匹配不到 → 选区被当成空的 →
+   * 框选菜单不弹。作者框最后一段就完全没反应，且看不出原因。
+   */
+  it('框选到正文末尾（选区边界落在编辑器根元素上）→ 菜单照常出现', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'm',
+          prompt: '将一只猫放入场景这个场景：一望无际的雪原',
+          slots: [
+            {
+              key: 'image_1', type: 'image', binding: 'user', refMode: 'mixed',
+              minCount: 0, maxCount: 1, label: '场景', position: 0,
+            },
+          ],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+
+    const box = screen.getByRole('textbox', { name: '提示词' });
+    const range = document.createRange();
+    range.setStart(box.firstChild!, 0);
+    range.setEnd(box, box.childNodes.length);
+    const selection = window.getSelection()!;
+    selection.removeAllRanges();
+    selection.addRange(range);
+    document.dispatchEvent(new Event('selectionchange'));
+
+    const menu = await screen.findByRole('menu');
+    expect(menu).toHaveTextContent('设为默认描述');
+  });
 
   /** 端到端钉住刚修的「重新框选同一段」：组件里曾因函数同名自递归 +
       偏移整段平移，把正文切碎。纯函数测试抓不到接线错误。 */
