@@ -1022,11 +1022,18 @@ def _apply_slot_text_overrides(
             normalized = normalize_text_refs(
                 text, spec, where=f"「{name}」改写的提示词"
             )
-            forbidden = sorted(
-                set(slot_refs(normalized))
-                - always_filled_slot_keys(spec)
-                - {key}
-            )
+            refs = set(slot_refs(normalized))
+            # 改写的是「未选时文案」—— 用的正是这一格没素材的时候，
+            # 所以它不能引用自己（那一格此时没有编号可指）。规范 §12 不变量 25
+            # 要求三处同口径：作者侧 `_validate_slot_texts` 已拦自引用，
+            # 这里也要就地拦，不能靠更深的 validate_spec 兜底（那样错误
+            # 文案说的是「未选时文案」，定位不到是这次改写造成的）。
+            if key in refs:
+                raise BadRequest(
+                    f"「{name}」改写的提示词里引用了它自己："
+                    "这段话用的正是这一格没挑素材的时候，那时没有编号可指"
+                )
+            forbidden = sorted(refs - always_filled_slot_keys(spec))
             if forbidden:
                 raise BadRequest(
                     f"「{name}」改写的提示词里引用了「{'、'.join(forbidden)}」："

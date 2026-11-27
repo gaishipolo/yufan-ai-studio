@@ -272,6 +272,37 @@ export function defaultTextRefError(
   return slotTextRefError(text, slots, {allowSelf: false, selfKey});
 }
 
+/**
+ * 提示词里**不是**框选默认描述段的那部分（= 后端眼里的「正文」）。
+ *
+ * 后端 core/template_spec/rules.py::_ANCHOR_SEGMENT_RE 判「必填槽位是否被
+ * 正文引用」时，剥掉的就是这些段 —— 两边要算同一份，所以标记形状只在这里
+ * 定义一次（parseAnchors 的锚点形状）。
+ *
+ * 段**连内容一起**去掉：提交时那段内容会挪进槽位的「未选时文案」，
+ * 落在那一格里的引用是条件性的，不算正文引用。
+ */
+export function bodyText(prompt: string): string {
+  const spans = parseAnchors(prompt);
+  if (!spans.length) return prompt;
+  let out = '';
+  let cursor = 0;
+  for (const span of spans) {
+    const openAt = prompt.lastIndexOf(
+      '⟦e:' + span.slotKey + '⟧',
+      span.start,
+    );
+    const closeAt = span.end + CLOSE.length;
+    if (openAt < 0) {
+      cursor = span.end;
+      continue;
+    }
+    out += prompt.slice(cursor, openAt);
+    cursor = closeAt;
+  }
+  return out + prompt.slice(cursor);
+}
+
 /** 摘掉某槽位的锚点（连它包住的内容一起 —— 那一段就是默认描述本身）。 */
 export function removeAnchor(prompt: string, slotKey: string): string {
   const span = parseAnchors(prompt).find(item => item.slotKey === slotKey);

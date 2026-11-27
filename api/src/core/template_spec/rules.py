@@ -325,25 +325,35 @@ def strip_valid_refs(text: str) -> str:
 #: 一整段「默认描述」锚点：⟦e:key⟧…⟦/e⟧。
 #: 段里的内容是**会变**的 —— 使用者给那个槽位选了素材，它就换成「选中时文案」；
 #: 没选，才用「未选时文案」。所以段里的引用是**条件性**的。
+#:
+#: 正常提交路径里锚点已经被前端换成槽位引用了（defaultText.anchorsToRefs），
+#: 后端收到的正文没有锚点。这里剥掉它只是**兜底**：万一收到带锚点的正文，
+#: 别把段里的引用当成正文引用（那正是「必填槽位只写在框选段里」的那种漏网）。
 _ANCHOR_SEGMENT_RE = re.compile(r"⟦e:[a-z][a-z0-9_]{0,39}⟧.*?⟦/e⟧", re.S)
 
 
 def validate_required_slot_refs(spec: TemplateSpec) -> None:
-    """「必定有素材」的槽位必须真的被提示词引用 —— 否则素材白传给供应商。
+    """「必定有素材」的槽位必须真的被提示词**正文**引用 —— 否则素材白传给供应商。
 
     只管**必填且使用者自己挑**的槽位（ref_mode=mixed、min_count>=1、binding=user）。
     已固定的槽位不管：素材由作者钉死，使用者不参与挑，点不点名是作者的选择
-    （替换用的「原片」就常常不点名）。
-    而提示词里不点名它，模型就不知道那张图是什么：图白传、钱白花。
+    （替换用的「原片」就常常不点名）。而提示词里不点名它，模型就不知道那张图是什么。
 
-    引用必须落在**任何填充下都会出现**的上下文里：
+    **引用必须落在正文里**（框选的默认文本之外）：
 
-    - 正文里、**不在任何默认描述段内** → 永远在；
-    - 某个可选槽位的「未选时文案」**和**「选中时文案」里都有 → 两种分支都在。
+    - 正文里出现过 → 永远在（那才是提示词的骨架）；
+    - 只落在某个槽位的「未选时文案 / 选中时文案」里 → **不算数**。
 
-    只落在其中一段里（最常见：作者把必填槽位的引用**框进了**某个可选槽位的
-    默认描述段）→ 使用者一给那个槽位选了素材，这段就被另一段顶掉，
-    必填槽位在提示词里彻底消失 —— 图传了，提示词半个字没提它。
+    文案段里的引用为什么不算数（2026-11-27 收紧的一条）：
+
+    - **未选时文案**：使用者给这一格挑了素材 → 它被「选中时文案」顶掉；
+      使用者（自定义档）或模型（随机档）改写这一格 → 它被换掉，引用随时可以不见。
+      而同一格只能二选一 —— 挑了素材就不会用改写后的文案，改了文案就不会用素材。
+    - **选中时文案**：均衡 / 随机档压根不传可选素材，那一段根本不会被用到。
+
+    所以「两段文案里都写了」也不行：只要其中一段能被丢掉，就等于没写。
+    之前这里放过「未选时文案 ∩ 选中时文案」一条兜底 —— 那正是漏网的那种形态
+    （两段都在 → 预检放行 → 使用者改写其中一段，引用当场消失）。
     """
     # 作者写的是 {{Mixed N}}，这里要的是 key 形态的引用 —— 先归一。
     spec = normalize_refs(spec)
@@ -360,36 +370,30 @@ def validate_required_slot_refs(spec: TemplateSpec) -> None:
     def label_of(slot: InputSlot) -> str:
         return slot.label.strip() or slot.key
 
-    # 正文里去掉「默认描述段」：那部分会被两段文案之一顶掉，引用是条件性的。
+    # 正文：把「默认描述段」整段去掉 —— 那部分会变成槽位的「未选时文案」，
+    # 落在那一格里的引用是**条件性**的，不算正文引用。
     body = _ANCHOR_SEGMENT_RE.sub(" ", spec.prompt)
-    stable: set[str] = set(slot_refs(body))
-    conditional: dict[str, list[str]] = {}
+    body_refs = set(slot_refs(body))
+    # 各槽位的文案里出现过哪些引用（报错时要说清「它现在写在哪」）。
+    in_texts: dict[str, list[str]] = {}
     for slot in spec.slots:
-        empty_refs = set(slot_refs(slot.empty_text))
-        filled_refs = set(slot_refs(slot.filled_text))
-        both = empty_refs & filled_refs
-        stable |= both
-        for key in empty_refs | filled_refs:
-            if key not in both:
-                conditional.setdefault(key, []).append(label_of(slot))
-
-    everywhere: set[str] = set(slot_refs(spec.prompt))
-    for slot in spec.slots:
-        everywhere |= set(slot_refs(slot.empty_text)) | set(slot_refs(slot.filled_text))
+        for ref in set(slot_refs(slot.empty_text)) | set(slot_refs(slot.filled_text)):
+            in_texts.setdefault(ref, []).append(label_of(slot))
 
     for slot in required:
-        if slot.key in stable:
+        if slot.key in body_refs:
             continue
-        if slot.key not in everywhere:
+        where = sorted(set(in_texts.get(slot.key, [])))
+        if where:
             raise BadRequest(
-                f"槽位「{label_of(slot)}」是必填的（素材一定在），但提示词里没有引用它 —— "
-                "这张图会原样传给供应商，模型却不知道它是什么。请在提示词里引用它。"
+                f"槽位「{label_of(slot)}」是必填的，但提示词正文里没有引用它 —— "
+                f"它只出现在「{'、'.join(where)}」的文案里"
+                "（那段话会被另一段顶掉，也会被改写丢弃），这张图就没人引用了。"
+                "请把它引用在正文里（不被框选的那部分）。"
             )
-        where = "、".join(sorted(set(conditional.get(slot.key, []))))
         raise BadRequest(
-            f"槽位「{label_of(slot)}」是必填的，但提示词里对它的引用只出现在「{where}」的"
-            "文案里 —— 使用者给那个槽位选了素材后，那一段会被另一段顶掉，"
-            "这张图就没人引用了。请把它引用在正文里（不被框选的那部分）。"
+            f"槽位「{label_of(slot)}」是必填的（素材一定在），但提示词里没有引用它 —— "
+            "这张图会原样传给供应商，模型却不知道它是什么。请在提示词正文里引用它。"
         )
 
 

@@ -673,12 +673,6 @@ export function toMixedTokens(text: string, slots: SpecSlotIn[] = []): string {
 }
 
 /**
- * 槽位在正文里的引用写法：视觉槽位 `{{Mixed N}}`，文本槽位 `{{slot:key}}`。
- *
- * `modifier` 是三种写法共用的后缀（`""` / `"*"` / `".2"`），拼进来省得调用方
- * 各自切字符串。
- */
-/**
  * 删掉某个槽位在正文里的引用，并保持正文的**作者写法**（`{{Mixed N}}`）。
  *
  * `stripSlotRefs` 为了「按 key 匹配」，会先把文本换成内部写法（`{{slot:key}}`）
@@ -695,6 +689,12 @@ export function stripSlotRefsAuthored(
   return {text: toMixedTokens(result.text, slots), count: result.count};
 }
 
+/**
+ * 槽位在正文里的引用写法：视觉槽位 `{{Mixed N}}`，文本槽位 `{{slot:key}}`。
+ *
+ * `modifier` 是三种写法共用的后缀（`""` / `"*"` / `".2"`），拼进来省得调用方
+ * 各自切字符串。
+ */
 export function slotRefToken(
   slots: SpecSlotIn[] | undefined,
   slot: SpecSlotIn,

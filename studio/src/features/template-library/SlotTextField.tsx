@@ -12,9 +12,15 @@ import type { RefChip } from '@/features/template-specs/specDraft';
  */
 export const MAX_SLOT_TEXT = 2000;
 
-/** 文字里的引用 token（作者写法 `{{Mixed N}}` 与内部写法 `{{slot:key}}`）。 */
+/**
+ * 文字里的引用 token（作者写法 `{{Mixed N}}` 与内部写法 `{{slot:key}}`）。
+ *
+ * 后缀与后端 `rules._SLOT_REF` / `_MIXED_REF` 严格同形状：要么 `*` 单独，
+ * 要么 `.` 加数字。写成 `[*.]\d*` 会把 `{{Mixed 1.}}` 这类畸形当合法 token
+ * 保留下来，下一跳又被后端拒 —— 口径漂移在这里没有任何好处。
+ */
 const TOKEN_RE =
-  /\{\{\s*(?:Mixed\s+\d+|slot:[a-z][a-z0-9_]{0,39})(?:[*.]\d*)?\s*\}\}/g;
+  /\{\{\s*(?:Mixed\s+\d+|slot:[a-z][a-z0-9_]{0,39})(?:\*|\.\d+)?\s*\}\}/g;
 
 function tokensOf(text: string): string[] {
   return [...text.matchAll(TOKEN_RE)].map(match => match[0].replace(/\s+/g, ''));

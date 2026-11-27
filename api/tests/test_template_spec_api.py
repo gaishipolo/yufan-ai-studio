@@ -731,7 +731,14 @@ def test_draft_can_be_long_but_publish_checks_execution_limit(client: TestClient
     draft = _draft(video, first, second)
     # 正文里也要引用那个必填的图片槽位：素材会无条件传出去，提示词里不点名它
     # 就是白传（预检/保存会拦）。
-    draft["prompt"] = ("固定画面 " + " ".join("{{slot:%s}}" % s["key"] for s in draft["slots"] if s.get("minCount", 1) >= 1 and s.get("binding") == "user") + " " + "长" * (EXECUTION_PROMPT_LIMIT + 50))
+    refs = " ".join(
+        f'{{{{slot:{slot["key"]}}}}}'
+        for slot in draft["slots"]
+        if slot.get("minCount", 1) >= 1 and slot.get("binding") == "user"
+    )
+    draft["prompt"] = (
+        "固定画面 " + refs + " " + "长" * (EXECUTION_PROMPT_LIMIT + 50)
+    )
     # 保存草稿不挡：作者可能只是先存着，或者这段是给别的执行端点准备的。
     assert client.post(API, json=draft, headers=headers).status_code == 200
 

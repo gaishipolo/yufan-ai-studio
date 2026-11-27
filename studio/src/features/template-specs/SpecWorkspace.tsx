@@ -106,6 +106,7 @@ import {
   syncDefaultTexts,
   unwrapAnchor,
 } from './defaultText';
+import {requiredSlotRefError} from './requiredRefs';
 import {DefaultTextMenu} from './DefaultTextMenu';
 import { ImageSlotPresetModal } from './ImageSlotPresetModal';
 import type { CaretPoint } from './CursorMenu';
@@ -991,7 +992,12 @@ export function SpecWorkspace() {
         return false;
       }
     }
-    setHint('');
+    /* 「必填槽位必须在正文里被引用」：框选的默认描述里写了**不算数** ——
+       那段话会被另一段顶掉、也会被改写丢弃，正文里必须再提一次。
+       **只提示、不拦写入**：作者可能正在把引用挪到正文，半路上的草稿本来
+       就不合法，拦写入会让人改不动。判据见 requiredRefs.ts（与后端
+       rules.py::validate_required_slot_refs 同一口径）。 */
+    setHint(requiredSlotRefError(text, draft.slots ?? []) ?? '');
     /* 存进去的永远是**作者写法**：手打或粘进来的 `{{slot:image_1}}`（内部 key）
        当场换成 `{{Mixed 1}}`。这样正文里只有一种写法，胶囊也能对上标签。 */
     const authored = toMixedTokens(text, draft.slots ?? []);
@@ -1062,6 +1068,9 @@ export function SpecWorkspace() {
     }
     const slots = syncDefaultTexts(next, draft.slots ?? [], authored);
     setDraft({...draft, prompt: next, slots});
+    /* 刚框走一段 → 正文里可能少了一份必填槽位的引用。提示一句（不拦）。 */
+    const requiredError = requiredSlotRefError(next, draft.slots ?? []);
+    if (requiredError) setHint(requiredError);
     setDefaultTextRange(null);
     const slot = slots.find(item => item.key === slotKey);
     const name = slot?.label?.trim() || '该槽位';
@@ -1079,6 +1088,9 @@ export function SpecWorkspace() {
     if (next === authored) return;
     const slots = syncDefaultTexts(next, draft.slots ?? [], authored);
     setDraft({...draft, prompt: next, slots});
+    /* 刚框走一段 → 正文里可能少了一份必填槽位的引用。提示一句（不拦）。 */
+    const requiredError = requiredSlotRefError(next, draft.slots ?? []);
+    if (requiredError) setHint(requiredError);
     setDefaultTextRange(null);
     toast('已取消默认描述，这段文字仍是普通正文', 'success');
   };
