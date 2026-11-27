@@ -1003,14 +1003,14 @@ export function SpecWorkspace() {
        文案），而它必须就是作者框选出来的那一段。多出来的一处是粘贴进来的
        「普通引用」：库里两处长得一模一样，打开草稿时分辨不出哪一处才是
        框选段 → 作者原话被顶掉。
-       判据见 defaultText.ts::optionalSlotRefError（与后端
-       rules.py::validate_optional_slot_refs 同一口径）。 */
+
+       **只提示、不拦写入**：老模板打开时，正文里那处引用（就是它的插入点）
+       天然落在框选段外 —— 而作者要做的恰恰是把它删掉。拦写入会让人连字都
+       改不动。真正的闸在保存时（后端 rules.py::validate_optional_slot_refs：
+       正文里恰好一处 + 标记来自框选段）。
+       判据见 defaultText.ts::optionalSlotRefError。 */
     const optionalError = optionalSlotRefError(text, draft.slots ?? []);
-    if (optionalError) {
-      setHint(optionalError);
-      return false;
-    }
-    setHint(requiredSlotRefError(text, draft.slots ?? []) ?? '');
+    setHint(optionalError ?? requiredSlotRefError(text, draft.slots ?? []) ?? '');
     /* 存进去的永远是**作者写法**：手打或粘进来的 `{{slot:image_1}}`（内部 key）
        当场换成 `{{Mixed 1}}`。这样正文里只有一种写法，胶囊也能对上标签。 */
     const authored = toMixedTokens(text, draft.slots ?? []);

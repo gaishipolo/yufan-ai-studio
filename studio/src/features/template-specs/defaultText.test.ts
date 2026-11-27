@@ -267,6 +267,14 @@ describe('可选槽位只能被框选（2026-11-27）', () => {
     expect(optionalSlotRefError('场景 {{Mixed 1*}}', slots)).toBeNull();
   });
 
+  it('文本槽位与已固定槽位不是插入点，不管这条规则', () => {
+    // 与后端同一句判据：mixed + 非 fixed + 可选。
+    const textSlot = optional('text_1', {label: '说明', refMode: 'attachment'});
+    const fixedSlot = optional('image_9', {label: '钉死的', binding: 'fixed'});
+    expect(optionalSlotRefError('说明 {{slot:text_1}}', [textSlot])).toBeNull();
+    expect(optionalSlotRefError('钉死 {{slot:image_9}}', [fixedSlot])).toBeNull();
+  });
+
   it('必填槽位的引用不受影响', () => {
     const slots = [slot('image_1', {minCount: 1, label: '正面图'})];
     expect(optionalSlotRefError('主图 {{Mixed 1}}', slots)).toBeNull();

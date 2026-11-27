@@ -13,6 +13,8 @@
 """
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from core.exceptions import BadRequest
@@ -55,7 +57,7 @@ def test_可选槽位被单个引用两处_被拦() -> None:
     """两处插入点 → 库里分不出哪一处才是那段默认描述。"""
     with pytest.raises(BadRequest) as exc:
         validate_optional_slot_refs(spec_of("", optional_refs=2))
-    assert "只能被框选一处" in str(exc.value)
+    assert "只能被引用一处" in str(exc.value)
 
 
 def test_单个引用一处且有标记_通过() -> None:
@@ -71,6 +73,22 @@ def test_未选时文案没有标记_被拦() -> None:
     assert "没有对应的正文段落" in str(exc.value)
     # 消息里带上原来那句，作者可以照抄回正文。
     assert "一个模特" in str(exc.value)
+
+
+def test_随机档提示词里多处引用也拦() -> None:
+    """两段提示词各算各的 —— 随机档里同一句兜底文案也不该出现多次。"""
+    spec = spec_of("", optional_refs=1)
+    spec = replace(spec, random_prompt="场景 {{slot:scene}} {{slot:scene}}")
+    with pytest.raises(BadRequest) as exc:
+        validate_optional_slot_refs(spec)
+    assert "随机档提示词" in str(exc.value)
+
+
+def test_随机档提示词里一处引用放行() -> None:
+    """随机档是另一段话，它的那一处引用与主提示词里的互不相干。"""
+    spec = spec_of("", optional_refs=1)
+    spec = replace(spec, random_prompt="场景 {{slot:scene}}")
+    validate_optional_slot_refs(spec)
 
 
 def test_整组引用不受这条规则约束() -> None:

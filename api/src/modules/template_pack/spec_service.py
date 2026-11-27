@@ -1201,6 +1201,9 @@ def _slot_core(row: TemplateSpecSlot) -> InputSlot:
         tag_ids=tuple(_slot_tag_ids(row)),
         filled_text=row.filled_text or "",
         empty_text=row.empty_text or "",
+        # 漏了它读出来恒为 False（2026-11-27 补）。今天编译链不消费这个字段，
+        # 但「读出来恒为 false」是埋雷：将来谁在编译路径上判它就会踩坑。
+        empty_text_from_anchor=row.empty_text_from_anchor,
         position=row.position,
     )
 

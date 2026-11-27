@@ -375,6 +375,44 @@ describe('模板封装 · 编辑器里的提示词', () => {
     expect(sent.prompt).not.toMatch(/\{\{slot:(?!image_1)/);
   });
 
+  /* 可选槽位：正文里那处引用只能落在框选段里 —— 但**只提示、不拦写入**。
+   *
+   * 老模板打开时，正文里那处引用（就是它的插入点）天然落在段外；而作者要做的
+   * 恰恰是把它删掉。拦写入会让人连字都改不动 —— 这次改动要「强制改正」的
+   * 正是那批模板，不能在门口就把人卡住。真正的闸在保存时（后端：正文里
+   * 恰好一处 + 标记来自框选段）。 */
+  it('粘贴指向可选槽位的引用 → 写进去并提示（不拦写入）', async () => {
+    const user = userEvent.setup();
+    renderWorkspace([
+      specOf({
+        status: 'draft',
+        draft: {
+          key: 'spec-1',
+          name: '商品图模板',
+          model: 'libtv-wan3-replacement',
+          prompt: '主图 {{Mixed 1}}',
+          slots: [
+            {key: 'image_1', type: 'image', position: 0, label: '主图', minCount: 1, maxCount: 1},
+            {key: 'image_2', type: 'image', position: 1, label: '角色', minCount: 0, maxCount: 1},
+          ],
+        },
+      }),
+    ]);
+    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
+    const box = screen.getByRole('textbox', { name: '提示词' });
+
+    await user.click(box);
+    await user.paste(' {{Mixed 2}}');
+
+    /* 写进去了：框里能看到那个引用（可选槽位不在 @ 候选里，渲染成什么样
+       由编辑器决定，这里只断言「字进去了，没被弹回」）。 */
+    await waitFor(() => {
+      expect(box.textContent).toContain('Mixed 2');
+    });
+    /* 但提示了：可选槽位只能被框选。 */
+    expect(await screen.findByText(/只能被框选/)).toBeInTheDocument();
+  });
+
   /* 反过来：粘一个**不存在**的 key，必须拒，并且说清是哪个 key。
      前面那条改动要是把校验一起放松了（「只要是花括号就放」），这条会红。 */
   it('粘贴不存在的槽位引用 → 拒掉，并指名是哪个 key', async () => {

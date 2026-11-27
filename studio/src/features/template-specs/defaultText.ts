@@ -332,7 +332,16 @@ export function optionalSlotRefError(
   prompt: string,
   slots: SpecSlotIn[],
 ): string | null {
-  const optional = slots.filter(slot => isOptionalSlot(slot));
+  /* 「可选」的判据与后端**同一句**（rules.py::validate_optional_slot_refs）：
+     参与编号（refMode=mixed）、用户自己挑（binding!=fixed）、可挑可不填
+     （minCount=0）。少了后两个条件就会把文本槽位与已固定槽位一起算进来 ——
+     而后端不管它们（它们不是插入点）→ 界面提供的引用按钮被自己拒掉。 */
+  const optional = slots.filter(
+    slot =>
+      (slot.refMode ?? 'mixed') === 'mixed' &&
+      (slot.binding ?? 'user') !== 'fixed' &&
+      isOptionalSlot(slot),
+  );
   if (!optional.length) return null;
   /* 段外的部分 = 作者自己写的引用；段内的 = 框选段（插入点）。 */
   const spans = parseAnchors(prompt);

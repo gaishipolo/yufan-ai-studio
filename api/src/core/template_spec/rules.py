@@ -447,27 +447,41 @@ def validate_optional_slot_refs(spec: TemplateSpec) -> None:
     def label_of(slot: InputSlot) -> str:
         return slot.label.strip() or slot.key
 
-    # 正文里每个槽位被**单个引用**了几次（整组 / 第 N 张引用不是插入点，不算）。
-    counts: dict[str, int] = {}
-    for match in _SLOT_REF.finditer(spec.prompt):
-        key, modifier = match.group(1), match.group(2) or ""
-        if modifier:
-            continue
-        counts[key] = counts.get(key, 0) + 1
+    # 一段提示词里，每个槽位被**单个引用**了几次
+    #（整组 / 第 N 张引用不是插入点，不算）。
+    def single_ref_counts(text: str) -> dict[str, int]:
+        counts: dict[str, int] = {}
+        for match in _SLOT_REF.finditer(text):
+            key, modifier = match.group(1), match.group(2) or ""
+            if modifier:
+                continue
+            counts[key] = counts.get(key, 0) + 1
+        return counts
+
+    # **两段提示词各算各的**：随机档提示词是整段替换主提示词的（另一段话），
+    # 它的插入点与主提示词里的互不相干。发布闸看两段（_check_executable），
+    # 新规则也要跟上 —— 否则随机档里可以写多处引用，编译时同一句兜底文案
+    # 在提示词里出现多次。
+    sections = (
+        ("提示词", single_ref_counts(spec.prompt)),
+        ("随机档提示词", single_ref_counts(spec.random_prompt)),
+    )
 
     for slot in optional:
         name = label_of(slot)
-        hits = counts.get(slot.key, 0)
-        if hits > 1:
-            raise BadRequest(
-                f"槽位「{name}」是可选的，提示词里却有 {hits} 处单个引用它 —— "
-                "可选槽位只能被框选一处（框选的那段是它的插入点）：请删掉多余的引用"
-            )
+        for where, counts in sections:
+            hits = counts.get(slot.key, 0)
+            if hits > 1:
+                raise BadRequest(
+                    f"槽位「{name}」是可选的，{where}里却有 {hits} 处单个引用它 —— "
+                    "可选槽位只能被引用一处（那一处是它的插入点）：请删掉多余的引用"
+                )
         if slot.empty_text.strip() and not slot.empty_text_from_anchor:
             quoted = slot.empty_text.strip()[:60]
             raise BadRequest(
                 f"槽位「{name}」的未选时文案「{quoted}」没有对应的正文段落 —— "
-                "请在提示词里框选一段作为它的默认描述（可以照抄这句）"
+                "请在提示词里框选一段作为它的默认描述（可以照抄这句）；"
+                "如果这一格本来就没被提示词引用，这句话用不上，删掉即可"
             )
 
 
