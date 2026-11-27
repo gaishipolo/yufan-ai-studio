@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/cn';
 import { RichPromptEditor } from '@/features/template-specs/RichPromptEditor';
 import type { RefChip } from '@/features/template-specs/specDraft';
@@ -48,6 +48,7 @@ export function SlotTextField({
   className,
   ariaLabel = '改提示词',
   chips = [],
+  authorText,
 }: {
   value: string;
   onChange: (value: string) => void;
@@ -58,17 +59,30 @@ export function SlotTextField({
   ariaLabel?: string;
   /** 胶囊上显示的槽位名：把整个模板的槽位传下来（引用可能指向别的槽位）。 */
   chips?: RefChip[];
+  /**
+   * 作者写的原文（该槽位的「未选时文案」）。
+   *
+   * 允许保留的引用以它为准 —— 模板或槽位一变它就跟着变，
+   * 不依赖「组件什么时候挂载」这种不显式的约定。
+   */
+  authorText?: string;
 }) {
   const [hint, setHint] = useState('');
-  /* 允许保留的引用 = **作者最初写的那份**里的那些。
+  /* 允许保留的引用 = **作者写的那份**里的那些。
      不能拿「当前 value」算：父组件一接受上一步文本，新 token 就进了 value，
      下一轮它就成了「本来就有的」→ 拦不住。
-     换槽位时靠 key 重挂载重新捕获（见 SlotMediaPicker / PackGroupPicker）。 */
-  const allowedTokens = useRef(new Set(tokensOf(value)));
+     以前靠「首次挂载时捕获」—— 换模板时改写框会被卸载重挂载，所以碰巧对；
+     那是不显式的约定：谁把改写框改成常驻渲染，就静默失效了。
+     现在直接按作者原文算 —— 模板或槽位一变，这个集合就跟着变。 */
+  const firstValue = useRef<string>(value);
+  const allowedTokens = useMemo(
+    () => new Set(tokensOf(authorText ?? firstValue.current)),
+    [authorText],
+  );
   const handleChange = (text: string) => {
     /* 允许保留的引用 = **当前这份**里已有的。作者写好的那些照旧，
        使用者新敲的一个都不许加。 */
-    const added = tokensOf(text).filter(token => !allowedTokens.current.has(token));
+    const added = tokensOf(text).filter(token => !allowedTokens.has(token));
     if (added.length) {
       setHint('这里不能插引用 —— 作者写好的引用会保持原样');
       return false; // 编辑器把 DOM 对齐回 value

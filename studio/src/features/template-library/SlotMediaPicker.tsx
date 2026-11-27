@@ -37,7 +37,7 @@ export function SlotMediaPicker({
   onModeChange,
   onTextChange,
   chips,
-}: {
+  authorText,}: {
   slot: SpecSlotOut;
   selected: string[];
   onChange: (ids: string[]) => void;
@@ -53,6 +53,8 @@ export function SlotMediaPicker({
   onTextChange?: (text: string) => void;
   /** 胶囊上的槽位名用：把整个模板的槽位传下来（引用可能指向别的槽位）。 */
   chips?: RefChip[];
+  /** 作者写的原文：允许保留的引用以它为准。 */
+  authorText?: string;
 }) {
   const kind = slot.type as 'image' | 'video';
   const label = KIND_LABEL[kind];
@@ -213,6 +215,7 @@ export function SlotMediaPicker({
           onChange={value => onTextChange?.(value)}
           placeholder="写这一格没素材时提示词怎么说"
           chips={chips}
+          authorText={authorText}
           ariaLabel={`${slot.label || slot.key} 的改提示词`}
         />
       ) : (

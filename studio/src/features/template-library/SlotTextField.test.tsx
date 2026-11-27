@@ -76,4 +76,41 @@ describe('使用者改写「未选时文案」的输入框', () => {
     /* 关键属性：**完整的新引用不能进提交**（后端会把它当引用处理）。 */
     expect(screen.getByTestId('value').textContent).not.toContain('{{Mixed 2}}');
   });
+
+  it('作者原文换了，允许保留的引用跟着换（不再靠「组件什么时候挂载」）', async () => {
+    const user = userEvent.setup();
+    const onChange = vi.fn();
+    const { rerender } = render(
+      <SlotTextField
+        value="参考 {{Mixed 1}} 的构图"
+        onChange={onChange}
+        authorText="参考 {{Mixed 1}} 的构图"
+        chips={[{token: '{{Mixed 1}}', label: '正面图', all: false, kind: 'image' as const}]}
+      />,
+    );
+    const box = screen.getByRole('textbox', {name: '改提示词'});
+    box.focus();
+    const range = document.createRange();
+    range.selectNodeContents(box.lastChild ?? box);
+    range.collapse(false);
+    const sel = window.getSelection()!;
+    sel.removeAllRanges();
+    sel.addRange(range);
+    await user.keyboard(' {{Mixed 2}}');
+    // 原文里只有 {{Mixed 1}} → {{Mixed 2}} 是新敲的，被拒
+    expect(onChange).not.toHaveBeenCalledWith(expect.stringContaining('{{Mixed 2}}'));
+
+    // 换成作者的原文里**有** {{Mixed 2}} → 同样的输入就该放行
+    onChange.mockClear();
+    rerender(
+      <SlotTextField
+        value="参考 {{Mixed 2}} 的构图"
+        onChange={onChange}
+        authorText="参考 {{Mixed 2}} 的构图"
+        chips={[{token: '{{Mixed 2}}', label: '正面图', all: false, kind: 'image' as const}]}
+      />,
+    );
+    await user.keyboard(' {{Mixed 2}}');
+    expect(onChange).toHaveBeenCalledWith(expect.stringContaining('{{Mixed 2}}'));
+  });
 });

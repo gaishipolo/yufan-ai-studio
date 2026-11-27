@@ -37,7 +37,7 @@ export function PackGroupPicker({
   onPickPack,
   onClear,
   chips,
-}: {
+  authorTexts,}: {
   /** 容器名（作者起的 / 没起名时按段序的默认名）。 */
   label: string;
   /** 容器里的槽位（顺序即编号顺序）。 */
@@ -54,6 +54,8 @@ export function PackGroupPicker({
   onPickPack: (packId: string) => void;
   /** 胶囊上的槽位名用：把整个模板的槽位传下来（引用可能指向别的槽位）。 */
   chips?: RefChip[];
+  /** 各成员作者写的原文：允许保留的引用以它为准。 */
+  authorTexts?: Record<string, string>;
   /** 清掉某一格（chip 上的 ×）。 */
   onClear: (slotKey: string) => void;
 }) {
@@ -234,6 +236,7 @@ export function PackGroupPicker({
                   onChange={value => onText(member.key, value)}
                   placeholder="写这一格没素材时提示词怎么说"
                   chips={chips}
+                  authorText={authorTexts?.[member.key]}
                   ariaLabel={`${member.label || member.key} 的改提示词`}
                 />
               )}
