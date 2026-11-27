@@ -397,6 +397,80 @@ def validate_required_slot_refs(spec: TemplateSpec) -> None:
         )
 
 
+def validate_optional_slot_refs(spec: TemplateSpec) -> None:
+    """可选槽位**只能被框选**（2026-11-27）。
+
+    ## 规则
+
+    1. 正文里**单个引用**（{{slot:x}}，没有修饰符）某个可选槽位的次数
+       **恰好一处** —— 那一处就是它的插入点，也就是框选出来的那段。
+    2. 可选槽位若写了「未选时文案」，这句话必须**来自正文里的框选段**
+       （empty_text_from_anchor）。
+
+    **只管单个引用**：整组引用（{{slot:x*}}）的语义是「列出这一组的编号」，
+    第 N 张引用（{{slot:x.2}}）的语义是「这一组的第 N 张」—— 两者都不是插入点，
+    不碰兜底文案（发布闸也不要求整组引用写兜底文案）。它们与插入点是两件事，
+    不在这里拦。
+
+    ## 为什么
+
+    可选槽位（min_count == 0）在正文里的那个引用就是它的**插入点**：
+    使用者填了素材 → 插编号；没填 → 插「未选时文案」。而「未选时文案」按设计
+    是**正文里框选出来的那一段**（提交时那段让位成插入点，文字挪进
+    empty_text）。
+
+    于是「正文里指向某个可选槽位的引用」必须恰好一处，且就是框选段：
+
+    - **多于一处** → 多出来的那处是「普通引用」（粘贴进来的）。库里两处长得
+      一模一样，打开草稿时无从分辨哪一处才是那段默认描述（hydrateAnchors
+      只能猜第一个）→ 作者原话被顶掉。
+    - **形态不是单个**（整组 / 第 N 张）→ 框选只产生单个引用；这两种形态
+      对可选槽位也不成立（可能没人填，那时没有编号可指）。
+
+    ## 未选时文案必须来自框选段
+
+    empty_text_from_anchor 为假（老数据，或作者当年在老界面手填的）→
+    这句话在正文里没有对应的那一段 → 打开草稿时还原不了 → 作者原话会被顶掉。
+    预检直接红，强制作者在正文里框选一次（消息里带上原来那句，可以照抄）。
+    """
+    spec = normalize_refs(spec)
+    optional = [
+        slot
+        for slot in spec.slots
+        if slot.ref_mode == "mixed"
+        and slot.min_count == 0
+        and slot.binding != "fixed"
+    ]
+    if not optional:
+        return
+
+    def label_of(slot: InputSlot) -> str:
+        return slot.label.strip() or slot.key
+
+    # 正文里每个槽位被**单个引用**了几次（整组 / 第 N 张引用不是插入点，不算）。
+    counts: dict[str, int] = {}
+    for match in _SLOT_REF.finditer(spec.prompt):
+        key, modifier = match.group(1), match.group(2) or ""
+        if modifier:
+            continue
+        counts[key] = counts.get(key, 0) + 1
+
+    for slot in optional:
+        name = label_of(slot)
+        hits = counts.get(slot.key, 0)
+        if hits > 1:
+            raise BadRequest(
+                f"槽位「{name}」是可选的，提示词里却有 {hits} 处单个引用它 —— "
+                "可选槽位只能被框选一处（框选的那段是它的插入点）：请删掉多余的引用"
+            )
+        if slot.empty_text.strip() and not slot.empty_text_from_anchor:
+            quoted = slot.empty_text.strip()[:60]
+            raise BadRequest(
+                f"槽位「{name}」的未选时文案「{quoted}」没有对应的正文段落 —— "
+                "请在提示词里框选一段作为它的默认描述（可以照抄这句）"
+            )
+
+
 def _validate_slot_texts(spec: TemplateSpec) -> None:
     """校验「选中时文案」与「未选时文案」。
 

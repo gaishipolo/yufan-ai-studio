@@ -15883,6 +15883,11 @@
             "title": "Emptytext",
             "default": ""
           },
+          "emptyTextFromAnchor": {
+            "type": "boolean",
+            "title": "Emptytextfromanchor",
+            "default": false
+          },
           "tagIds": {
             "items": {
               "type": "string"
@@ -15991,6 +15996,11 @@
             "maxLength": 2000,
             "title": "Emptytext",
             "default": ""
+          },
+          "emptyTextFromAnchor": {
+            "type": "boolean",
+            "title": "Emptytextfromanchor",
+            "default": false
           },
           "tagIds": {
             "items": {

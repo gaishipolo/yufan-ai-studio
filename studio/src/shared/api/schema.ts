@@ -1567,6 +1567,7 @@ export interface SpecSlotIn {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
+  emptyTextFromAnchor?: boolean;
   tagIds?: string[];
   position?: number;
 }
@@ -1584,6 +1585,7 @@ export interface SpecSlotOut {
   assetId?: string | null;
   filledText?: string;
   emptyText?: string;
+  emptyTextFromAnchor?: boolean;
   tagIds?: string[];
   position?: number;
 }

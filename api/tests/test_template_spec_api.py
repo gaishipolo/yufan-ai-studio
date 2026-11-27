@@ -986,6 +986,9 @@ def _optional_draft(
             "maxCount": 1,
             "position": 1,
             "label": "主图",
+            # 有「未选时文案」就意味着它来自正文里的框选段（2026-11-27 的新规则）。
+            # 不标这一位 → 预检要求作者重新框选一次（老数据就是缺这个标记的）。
+            "emptyTextFromAnchor": True,
             **slot_over,
         },
     ]

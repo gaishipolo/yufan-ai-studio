@@ -53,7 +53,9 @@
 
 import type {SpecSlotIn} from '@/shared/api/schema';
 import {
+  isOptionalSlot,
   referencedKeys,
+  slotRefModes,
   slotRefToken,
   slotTextRefError,
   toMixedTokens,
@@ -165,8 +167,17 @@ export function hydrateAnchors(prompt: string, slots: SpecSlotIn[]): string {
   let out = toSlotTokens(prompt, slots);
   for (const slot of slots) {
     const text = slot.emptyText?.trim() ?? '';
+    /* 只还原**标记过「来自框选段」**的那一格（2026-11-27）。
+     *
+     * 以前这里是「有未选时文案 + 有单张引用」就还原 —— 于是老模板（未选时文案
+     * 是当年在老界面手填的，正文里根本没有对应的那一段）也被还原：程序把正文里
+     * 作者自己写的引用换成了那句手填的话 → 作者原话被顶掉。
+     *
+     * 现在有标记才还原：没标记的老数据**保持引用原样**（作者原话不被顶掉），
+     * 预检会要求作者在正文里重新框选一次（强制改成符合要求的）。 */
     if (
       !text ||
+      slot.emptyTextFromAnchor !== true ||
       (slot.minCount ?? 1) !== 0 ||
       (slot.binding ?? 'user') !== 'user' ||
       parseAnchors(out).some(item => item.slotKey === slot.key)
@@ -303,6 +314,48 @@ export function bodyText(prompt: string): string {
   return out + prompt.slice(cursor);
 }
 
+/**
+ * 正文里指向**可选槽位**的单个引用，必须落在框选段内。
+ *
+ * 可选槽位在正文里的那个引用就是它的**插入点**：使用者填了素材 → 插编号；
+ * 没填 → 插「未选时文案」。而那一处必须是作者框选出来的那一段 —— 库里只存
+ * 「一处引用 + 一句文案」，分不出哪一处才是框选段，多出来的一处（粘贴进来的
+ * 「普通引用」）会让「打开草稿时还原哪一段」变成猜 → 作者原话被顶掉。
+ *
+ * **整组引用不算**：它的语义是「列出这一组的编号」，不是插入点，也不碰兜底
+ * 文案（发布闸同样不要求整组引用写兜底文案）。
+ *
+ * 与后端 `core/template_spec/rules.py::validate_optional_slot_refs` 同一口径
+ * （那边管库里的形状，这边管作者写的时候）。
+ */
+export function optionalSlotRefError(
+  prompt: string,
+  slots: SpecSlotIn[],
+): string | null {
+  const optional = slots.filter(slot => isOptionalSlot(slot));
+  if (!optional.length) return null;
+  /* 段外的部分 = 作者自己写的引用；段内的 = 框选段（插入点）。 */
+  const spans = parseAnchors(prompt);
+  let outside = '';
+  let cursor = 0;
+  for (const span of spans) {
+    outside += prompt.slice(cursor, span.start);
+    cursor = span.end;
+  }
+  outside += prompt.slice(cursor);
+  /* 作者写法（{{Mixed N}}）先换成内部写法（{{slot:key}}）才认得出指谁。 */
+  const modes = slotRefModes(toSlotTokens(outside, slots), slots);
+  for (const slot of optional) {
+    const forms = modes[slot.key];
+    if (!forms || !forms.has('')) continue;
+    const name = slot.label?.trim() || slot.key;
+    return (
+      `「${name}」是可选槽位，只能被框选 —— 正文里引用它的地方必须落在框选段里` +
+      '（那一段是它的插入点）；请把别处的引用删掉'
+    );
+  }
+  return null;
+}
 /** 摘掉某槽位的锚点（连它包住的内容一起 —— 那一段就是默认描述本身）。 */
 export function removeAnchor(prompt: string, slotKey: string): string {
   const span = parseAnchors(prompt).find(item => item.slotKey === slotKey);
@@ -383,20 +436,28 @@ export function readDefaultText(prompt: string, slotKey: string): string {
  * 一句正文，就把兜底文案清掉，是静默丢数据。区分的办法只能是**前后对比**：
  * 上一版正文里有这个锚点、这一版没了，才是作者亲手删的。
  */
-export function syncDefaultTexts<T extends {key: string; emptyText?: string}>(
-  prompt: string,
-  slots: T[],
-  previousPrompt = '',
-): T[] {
+export function syncDefaultTexts<
+  T extends {key: string; emptyText?: string; emptyTextFromAnchor?: boolean},
+>(prompt: string, slots: T[], previousPrompt = ''): T[] {
   const spans = parseAnchors(prompt);
   const byKey = new Map(spans.map(span => [span.slotKey, span]));
   const had = new Set(parseAnchors(previousPrompt).map(span => span.slotKey));
   return slots.map(slot => {
     const span = byKey.get(slot.key);
     if (!span) {
-      return had.has(slot.key) && slot.emptyText ? {...slot, emptyText: ''} : slot;
+      /* 段没了 → 这一格不再有「来自框选段」的未选时文案。
+         作者亲手删掉的（上一版里有段）连文案一起清；只是从来没框选过
+         （老数据）只把标记落回 false。 */
+      const cleared =
+        had.has(slot.key) && slot.emptyText ? {...slot, emptyText: ''} : {...slot};
+      return cleared.emptyTextFromAnchor
+        ? {...cleared, emptyTextFromAnchor: false}
+        : cleared;
     }
     const text = prompt.slice(span.start, span.end);
-    return text === (slot.emptyText ?? '') ? slot : {...slot, emptyText: text};
+    const next =
+      text === (slot.emptyText ?? '') ? {...slot} : {...slot, emptyText: text};
+    /* 段在 → 标记为 true（标记的真相来源也是正文，与文案同一个写点）。 */
+    return next.emptyTextFromAnchor ? next : {...next, emptyTextFromAnchor: true};
   });
 }

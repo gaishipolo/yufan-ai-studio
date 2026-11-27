@@ -53,6 +53,7 @@ from core.template_spec import (
     slot_ref_modes,
     slot_refs,
     strip_valid_refs,
+    validate_optional_slot_refs,
     validate_required_slot_refs,
     validate_spec,
 )
@@ -107,6 +108,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
                 tag_ids=tuple(slot.tag_ids),
                 filled_text=slot.filled_text,
                 empty_text=slot.empty_text,
+                empty_text_from_anchor=slot.empty_text_from_anchor,
                 position=slot.position,
             )
             for slot in payload.slots
@@ -160,6 +162,7 @@ def _slot_out(row: TemplateSpecSlot) -> SpecSlotOut:
         tag_ids=_slot_tag_ids(row),
         filled_text=row.filled_text or "",
         empty_text=row.empty_text or "",
+        empty_text_from_anchor=row.empty_text_from_anchor,
         position=row.position,
     )
 
@@ -621,6 +624,9 @@ async def validate_draft(
     # 素材会无条件传给供应商，提示词里不点名它就是白传。
     # 放在模型检查**之后**：模型接不下这些素材时，先说模型的事。
     validate_required_slot_refs(spec)
+    # 可选槽位**只能被框选**：正文里最多一处引用，且「未选时文案」必须来自
+    # 正文里的框选段。老数据没有这个标记 → 这里红，强制作者重新框选一次。
+    validate_optional_slot_refs(spec)
     await _check_fixed_refs(session, actor, spec)
     await _check_demo_ref(session, actor, spec)
     return SpecValidateOut(valid=True, fingerprint=fingerprint_of(payload))
@@ -694,6 +700,8 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     # 素材会无条件传给供应商，提示词里不点名它就是白传。
     # 放在模型检查**之后**：模型接不下这些素材时，先说模型的事。
     validate_required_slot_refs(spec)
+    # 可选槽位**只能被框选**（与保存草稿同一套判据）。
+    validate_optional_slot_refs(spec)
     # 发布 = 对外公开的那一刻：图/视频固定素材与展示案例必须**所有复用者都读得到**。
     # 固定文本例外：正文会抄进提示词，模板里不再引用素材（见 `_inline_fixed_text`）。
     # 草稿阶段不这么判（见 `_check_fixed_refs` 的两级判据说明）。
@@ -769,6 +777,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
                 tag_id=slot.tag_ids[0] if slot.tag_ids else "",
                 filled_text=slot.filled_text,
                 empty_text=slot.empty_text,
+                empty_text_from_anchor=slot.empty_text_from_anchor,
                 position=slot.position,
             )
         )

@@ -31,6 +31,7 @@ from typing import Any
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     Index,
     Integer,
@@ -198,6 +199,13 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #: **未选时文案**：使用者没填素材时这一段怎么说（纯提示词，不含槽位引用）。
     #: 空 = 编译期报错（可选槽位且被引用时，发布闸门就会拦）。
     empty_text: Mapped[str] = mapped_column(String(2000), default="", nullable=False)
+    #: 「未选时文案」是否来自正文里的框选段（2026-11-27）。
+    #:
+    #: 老数据一律 False → 预检会要求作者在正文里重新框选一次（见
+    #: core/template_spec/rules.py::validate_optional_slot_refs）。
+    empty_text_from_anchor: Mapped[bool] = mapped_column(
+        Boolean, default=False, nullable=False
+    )
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
 

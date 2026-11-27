@@ -5,6 +5,7 @@ import {
   assignDefaultText,
   defaultTextRefError,
   hydrateAnchors,
+  optionalSlotRefError,
   parseAnchors,
   readDefaultText,
   removeAnchor,
@@ -207,7 +208,9 @@ describe('提交形态与编辑形态的往返', () => {
   });
 
   it('载入时按 emptyText + 单张引用把高亮段还原出来', () => {
-    const slots = [slot('image_1', {emptyText: '一望无际的雪原'})];
+    const slots = [
+      slot('image_1', {emptyText: '一望无际的雪原', emptyTextFromAnchor: true}),
+    ];
     const saved = '将一只猫放入场景这个场景：{{Mixed 1}}';
     expect(hydrateAnchors(saved, slots)).toBe(
       '将一只猫放入场景这个场景：⟦e:image_1⟧一望无际的雪原⟦/e⟧',
@@ -229,7 +232,7 @@ describe('提交形态与编辑形态的往返', () => {
   });
 
   it('反向还原再提交，正文逐字回到原样（幂等）', () => {
-    const slots = [slot('image_1', {emptyText: '雪原'})];
+    const slots = [slot('image_1', {emptyText: '雪原', emptyTextFromAnchor: true})];
     const saved = '场景：{{Mixed 1}}，后续文字';
     expect(anchorsToRefs(hydrateAnchors(saved, slots), slots)).toBe(saved);
   });
@@ -242,5 +245,56 @@ describe('提交形态与编辑形态的往返', () => {
   it('必填 / 固定槽位上残留的锚点不会变成引用', () => {
     const required = [slot('image_1', {minCount: 1, emptyText: ''})];
     expect(anchorsToRefs('场景：⟦e:image_1⟧雪原⟦/e⟧', required)).toBe('场景：雪原');
+  });
+});
+
+describe('可选槽位只能被框选（2026-11-27）', () => {
+  const optional = (key: string, rest: Partial<SpecSlotIn> = {}): SpecSlotIn =>
+    slot(key, {minCount: 0, ...rest});
+
+  it('正文里指向可选槽位的单个引用，只许出现在框选段里', () => {
+    const slots = [optional('image_1', {label: '角色'})];
+    /* 段外：粘贴进来的普通引用 → 拦 */
+    expect(optionalSlotRefError('场景 {{Mixed 1}}', slots)).toContain('角色');
+    /* 框选段内：那是它的插入点 → 放行 */
+    expect(
+      optionalSlotRefError('场景 ⟦e:image_1⟧雪原⟦/e⟧', slots),
+    ).toBeNull();
+  });
+
+  it('整组引用不是插入点，不在这条规则里', () => {
+    const slots = [optional('image_1', {label: '角色'})];
+    expect(optionalSlotRefError('场景 {{Mixed 1*}}', slots)).toBeNull();
+  });
+
+  it('必填槽位的引用不受影响', () => {
+    const slots = [slot('image_1', {minCount: 1, label: '正面图'})];
+    expect(optionalSlotRefError('主图 {{Mixed 1}}', slots)).toBeNull();
+  });
+
+  it('老数据（没有「来自框选段」的标记）不还原：作者原话不被顶掉', () => {
+    // 库里存的正文里有一处引用，老模板的未选时文案是当年手填的 ——
+    // 打开草稿时**不能**把它换成那段手填的话（那会把作者原话顶掉）。
+    const slots = [optional('image_1', {emptyText: '999999999'})];
+    expect(hydrateAnchors('主图 {{Mixed 1}}', slots)).toBe('主图 {{Mixed 1}}');
+  });
+
+  it('有标记才还原成高亮段', () => {
+    const slots = [
+      optional('image_1', {emptyText: '雪原', emptyTextFromAnchor: true}),
+    ];
+    expect(hydrateAnchors('主图 {{Mixed 1}}', slots)).toBe(
+      '主图 ⟦e:image_1⟧雪原⟦/e⟧',
+    );
+  });
+
+  it('标记跟着正文走：段在就是 true，段被删就落回 false', () => {
+    const withAnchor = applyDefaultText('雪原', 'image_1', {start: 0, end: 2}, '雪原');
+    const slots = [{key: 'image_1', emptyText: '雪原', emptyTextFromAnchor: false}];
+    const synced = syncDefaultTexts(withAnchor, slots);
+    expect(synced[0].emptyTextFromAnchor).toBe(true);
+    /* 段被作者删掉 → 标记也落回 false（文案一并清空） */
+    const afterDelete = syncDefaultTexts(stripAnchors(withAnchor), slots, withAnchor);
+    expect(afterDelete[0].emptyTextFromAnchor).toBe(false);
   });
 });

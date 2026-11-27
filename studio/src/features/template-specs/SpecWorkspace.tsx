@@ -98,6 +98,7 @@ import {
   assignDefaultText,
   defaultTextRefError,
   hydrateAnchors,
+  optionalSlotRefError,
   parseAnchors,
   readDefaultText,
   rekeyAnchor,
@@ -997,6 +998,18 @@ export function SpecWorkspace() {
        **只提示、不拦写入**：作者可能正在把引用挪到正文，半路上的草稿本来
        就不合法，拦写入会让人改不动。判据见 requiredRefs.ts（与后端
        rules.py::validate_required_slot_refs 同一口径）。 */
+    /* 可选槽位**只能被框选**（2026-11-27）：正文里指向可选槽位的单个引用
+       只能落在框选段里 —— 那一处是它的插入点（填了素材插编号，没填插兜底
+       文案），而它必须就是作者框选出来的那一段。多出来的一处是粘贴进来的
+       「普通引用」：库里两处长得一模一样，打开草稿时分辨不出哪一处才是
+       框选段 → 作者原话被顶掉。
+       判据见 defaultText.ts::optionalSlotRefError（与后端
+       rules.py::validate_optional_slot_refs 同一口径）。 */
+    const optionalError = optionalSlotRefError(text, draft.slots ?? []);
+    if (optionalError) {
+      setHint(optionalError);
+      return false;
+    }
     setHint(requiredSlotRefError(text, draft.slots ?? []) ?? '');
     /* 存进去的永远是**作者写法**：手打或粘进来的 `{{slot:image_1}}`（内部 key）
        当场换成 `{{Mixed 1}}`。这样正文里只有一种写法，胶囊也能对上标签。 */

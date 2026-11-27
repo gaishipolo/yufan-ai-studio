@@ -41,6 +41,7 @@ from core.template_spec.rules import (
     slot_ref_modes,
     slot_refs,
     strip_valid_refs,
+    validate_optional_slot_refs,
     validate_required_slot_refs,
     validate_spec,
 )
@@ -71,6 +72,7 @@ __all__ = [
     "normalize_refs",
     "slot_ref_modes",
     "slot_refs",
+    "validate_optional_slot_refs",
     "validate_required_slot_refs",
     "validate_spec",
 ]
