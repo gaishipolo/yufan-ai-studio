@@ -30,7 +30,11 @@ from modules.template_pack.spec_schema import (
     SpecCompileOut,
     SpecLimitsOut,
     SpecPublishOut,
+    SpecTagsIn,
     SpecValidateOut,
+    TagIn,
+    TagOut,
+    TagParentIn,
     TemplateSpecIn,
     TemplateSpecListOut,
     TemplateSpecOut,
@@ -44,8 +48,10 @@ from modules.template_pack.spec_service import (
     publish,
     restore,
     save,
+    set_tags,
     validate_draft,
 )
+from modules.template_pack.tags import TagService
 
 router = APIRouter(prefix="/template-specs", tags=["模板规格"])
 
@@ -54,9 +60,7 @@ _WRITE_LIMIT = Depends(
 )
 
 
-@router.post(
-    "/validate", summary="预检模板规格（不落库）", dependencies=[_WRITE_LIMIT]
-)
+@router.post("/validate", summary="预检模板规格（不落库）", dependencies=[_WRITE_LIMIT])
 async def validate_spec_draft(
     payload: TemplateSpecIn,
     session: SessionDep,
@@ -65,9 +69,65 @@ async def validate_spec_draft(
     return ApiResponse.ok(await validate_draft(session, actor, payload))
 
 
+# ---- 模板独立标签词表（必须在 /{key} 之前声明，否则 tags 会被当成 key）----
+_TAG_LIMIT = Depends(rate_limit("template_pack.tag", limit=settings.rate_limit_default_per_min))
+
+
+@router.get("/tags", summary="模板标签词表（两级平铺，含每个标签的模板数）")
+async def list_tags(session: SessionDep, actor: TemplatePackReadDep) -> ApiResponse[list[TagOut]]:
+    return ApiResponse.ok(await TagService(session).list_tags())
+
+
 @router.post(
-    "", summary="保存草稿（同内容幂等，revision 冲突 409）", dependencies=[_WRITE_LIMIT]
+    "/tags",
+    summary="新建模板标签（同父同名返回已有那条）",
+    dependencies=[_TAG_LIMIT],
+    status_code=status.HTTP_201_CREATED,
 )
+async def create_tag(
+    payload: TagIn, session: SessionDep, actor: TemplatePackCreateDep
+) -> ApiResponse[TagOut]:
+    return ApiResponse.ok(await TagService(session).create(payload, actor))
+
+
+@router.patch("/tags/{tag_id}", summary="重命名模板标签", dependencies=[_TAG_LIMIT])
+async def rename_tag(
+    tag_id: str, payload: TagIn, session: SessionDep, actor: TemplatePackCreateDep
+) -> ApiResponse[TagOut]:
+    return ApiResponse.ok(await TagService(session).rename(tag_id, payload))
+
+
+@router.patch("/tags/{tag_id}/parent", summary="移动模板标签层级", dependencies=[_TAG_LIMIT])
+async def move_tag(
+    tag_id: str,
+    payload: TagParentIn,
+    session: SessionDep,
+    actor: TemplatePackCreateDep,
+) -> ApiResponse[TagOut]:
+    return ApiResponse.ok(await TagService(session).move(tag_id, payload))
+
+
+@router.delete("/tags/{tag_id}", summary="删除模板标签", dependencies=[_TAG_LIMIT])
+async def delete_tag(
+    tag_id: str, session: SessionDep, actor: TemplatePackCreateDep
+) -> ApiResponse[None]:
+    await TagService(session).delete(tag_id)
+    return ApiResponse.ok(None)
+
+
+@router.patch(
+    "/{key}/tags", summary="给模板打标签（完整替换，不改草稿/不发版）", dependencies=[_WRITE_LIMIT]
+)
+async def set_spec_tags(
+    key: str,
+    payload: SpecTagsIn,
+    session: SessionDep,
+    actor: TemplatePackCreateDep,
+) -> ApiResponse[TemplateSpecOut]:
+    return ApiResponse.ok(await set_tags(session, actor, key, payload.tag_ids))
+
+
+@router.post("", summary="保存草稿（同内容幂等，revision 冲突 409）", dependencies=[_WRITE_LIMIT])
 async def save_spec(
     payload: TemplateSpecIn,
     session: SessionDep,
@@ -82,6 +142,7 @@ async def list_specs(
     actor: TemplatePackReadDep,
     status_filter: str = Query(default="", alias="status", max_length=16),
     keyword: str = Query(default="", max_length=80),
+    tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
     page: int = Query(default=1, ge=1),
     page_size: int = Query(default=20, ge=1, le=100, alias="pageSize"),
 ) -> ApiResponse[TemplateSpecListOut]:
@@ -89,6 +150,7 @@ async def list_specs(
         await list_out(
             session,
             actor,
+            tag_ids=tuple(tag_ids or ()),
             status=status_filter,
             keyword=keyword,
             page=page,
@@ -102,6 +164,7 @@ async def list_published_specs(
     session: SessionDep,
     actor: TemplatePackReadDep,
     keyword: str = Query(default="", max_length=80),
+    tag_ids: Annotated[list[str] | None, Query(alias="tagIds")] = None,
     target: Annotated[
         Literal["all", "replacement", "generation"],
         Query(description="按模型声明的替换能力筛：replacement / generation / all"),
@@ -115,6 +178,7 @@ async def list_published_specs(
             actor,
             published_only=True,
             keyword=keyword,
+            tag_ids=tuple(tag_ids or ()),
             target=target,
             page=page,
             page_size=page_size,
@@ -181,9 +245,7 @@ async def publish_spec(
     return ApiResponse.ok(await publish(session, actor, key))
 
 
-@router.post(
-    "/{key}/disable", summary="下架（历史版本保留）", dependencies=[_WRITE_LIMIT]
-)
+@router.post("/{key}/disable", summary="下架（历史版本保留）", dependencies=[_WRITE_LIMIT])
 async def disable_spec(
     key: str, session: SessionDep, actor: TemplatePackPublishDep
 ) -> ApiResponse[TemplateSpecOut]:
@@ -197,9 +259,7 @@ async def delete_spec(
     return ApiResponse.ok(await delete(session, actor, key))
 
 
-@router.post(
-    "/{key}/restore", summary="从回收站恢复", dependencies=[_WRITE_LIMIT]
-)
+@router.post("/{key}/restore", summary="从回收站恢复", dependencies=[_WRITE_LIMIT])
 async def restore_spec(
     key: str, session: SessionDep, actor: TemplatePackPublishDep
 ) -> ApiResponse[TemplateSpecOut]:

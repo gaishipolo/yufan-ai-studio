@@ -20,6 +20,7 @@ vi.mock('@/entities/template-spec/api/spec.queries', () => ({
     data: {items: [specState.current], total: 1},
     isLoading: false,
   }),
+  useTemplateTags: () => ({data: [], isPending: false}),
   useSpecCompile: () => ({mutateAsync: compileMock, isPending: false}),
 }));
 

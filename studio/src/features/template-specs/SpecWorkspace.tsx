@@ -9,6 +9,8 @@ import {
   Library,
   Plus,
   RotateCcw,
+  Tag,
+  Tags,
   Trash2,
 } from 'lucide-react';
 import { useMutation } from '@tanstack/react-query';
@@ -23,18 +25,27 @@ import {
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useLibraryDetail, useLibraryTags } from '@/entities/library/api/library.queries';
 import { isPubliclyReadable, viewQuery } from '@/entities/library/model/types';
-import { scopeTagOptions } from '@/entities/library/model/tagTree';
+import {
+  scopeTagOptions,
+  secondLevelForSelection,
+  tagLabel,
+  tagsAtDepth,
+} from '@/entities/library/model/tagTree';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
   useSpecMutations,
   useSpecs,
+  useSpecTagMutations,
+  useTemplateTags,
   useTrashedSpecs,
 } from '@/entities/template-spec/api/spec.queries';
 import { useCaseMutations, useTemplateCases } from '@/entities/template-case/api/case.queries';
 import { reuseSpecName } from '@/entities/template-case/model/caseMeta';
 import type {
+  LibraryTagStatOut,
   SpecSlotIn,
+  TagOut,
   TemplateCaseOut,
   TemplateSpecIn,
   TemplateSpecOut,
@@ -47,6 +58,7 @@ import {
   ErrorState,
   FormField,
   Modal,
+  MultiSelect,
   Notice,
   PageHeader,
   TextInput,
@@ -110,6 +122,7 @@ import {
 import {requiredSlotRefError} from './requiredRefs';
 import {DefaultTextMenu} from './DefaultTextMenu';
 import { ImageSlotPresetModal } from './ImageSlotPresetModal';
+import { TemplateTagManager } from './TemplateTagManager';
 import type { CaretPoint } from './CursorMenu';
 import {
   filledTextOf,
@@ -207,8 +220,13 @@ type PendingCase = {
 };
 
 export function SpecWorkspace() {
-  const list = useSpecs();
+  /* 模板独立的两级标签筛选：选中的 id 直接进 useSpecs 的查询键，
+     切维度/取值就是切一份列表缓存，不会读到上一组的结果。 */
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const list = useSpecs('', selectedTagIds);
   const trash = useTrashedSpecs();
+  const templateTags = useTemplateTags();
+  const specTagMutation = useSpecTagMutations();
   const {validate, save, publish, disable, remove, restore} = useSpecMutations();
   // 规格可以指向视频模型，也可以指向图片模型；两组的参数区都由服务端 schema 驱动。
   const videoModels = useModels('video');
@@ -230,6 +248,8 @@ export function SpecWorkspace() {
   const canTemplateCaseWrite = useCan('template_pack:case:write');
   const canPublishTemplate = useCan('template_pack:publish');
   const canPublishCase = canTemplateCaseWrite && canPublishTemplate;
+  /* 词表管理是写操作，沿用既有的建模板权限码（新增权限码会让内置角色失权）。 */
+  const canManageTemplateTags = useCan('template_pack:create');
 
   const [draft, setDraft] = useState<TemplateSpecIn | null>(null);
   /*
@@ -313,6 +333,7 @@ export function SpecWorkspace() {
     disable.isPending ||
     remove.isPending ||
     restore.isPending ||
+    specTagMutation.isPending ||
     uploading ||
     promoteCase.isPending;
   // 契约里 `slots` 是可选的（后端有默认空列表），编辑器一律按非空处理。
@@ -508,6 +529,8 @@ export function SpecWorkspace() {
     else if (blocker.state === 'blocked') blocker.proceed();
   };
   const [view, setView] = useState<'list' | 'cases' | 'trash'>('list');
+  /** 模板标签词表管理弹窗。 */
+  const [tagManagerOpen, setTagManagerOpen] = useState(false);
   /** 「从案例库复用」的案例选择器。 */
   const [casePickerOpen, setCasePickerOpen] = useState(false);
   /** 「发布为案例」的弹窗。 */
@@ -1233,9 +1256,24 @@ export function SpecWorkspace() {
                   <FolderInput size={14} /> 从案例复用
                 </Button>
               )}
+              {canManageTemplateTags && (
+                <Button variant="secondary" onClick={() => setTagManagerOpen(true)}>
+                  <Tags size={14} /> 管理标签
+                </Button>
+              )}
             </div>
           )}
         </div>
+
+        {/* 标签筛选条只在模板列表那档出现：案例库、回收站有自己的口径。 */}
+        {!trashed && view === 'list' && (
+          <TemplateTagBar
+            tags={templateTags.data ?? []}
+            selected={selectedTagIds}
+            onChange={setSelectedTagIds}
+            busy={templateTags.isLoading}
+          />
+        )}
 
         {view === 'cases' ? (
           /* 案例库：另一档内容，口径（公共 / 我的 / 已删除）在面板内部再切一层。 */
@@ -1258,7 +1296,9 @@ export function SpecWorkspace() {
             ) : (
           /* 卡片而不是表格行：一张模板的"长相"是它的案例封面，列表里也该看得见。
              操作放在卡片脚上，扫一眼就知道哪张能发布、哪张已停用。
-             一行 5 个（`lg` 档 3 列过渡）：封面是 9:16，列数再少每张卡就太高。 */
+             一行 5 个（`lg` 档 3 列过渡）：封面是 9:16，列数再少每张卡就太高。
+             5 列下卡片较窄，脚上「打标签」用图标按钮（带 title/aria-label）
+             给其余文字按钮让位，五个一行刚好放得下。 */
           <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5">
             {rows.map(item => (
               <SpecCard
@@ -1269,6 +1309,17 @@ export function SpecWorkspace() {
                 }
                 busy={busy}
                 trashed={trashed}
+                tags={templateTags.data ?? []}
+                canTag={canManageTemplateTags}
+                onSetTags={(key, tagIds) =>
+                  specTagMutation.mutate(
+                    {key, tagIds},
+                    {
+                      onSuccess: () => toast('已更新模板标签', 'success'),
+                      onError: fail,
+                    },
+                  )
+                }
                 onEdit={() => {
                   openDraft(fromSpecOut(item));
                   clear();
@@ -1323,6 +1374,14 @@ export function SpecWorkspace() {
           onClose={() => setCasePickerOpen(false)}
           onPick={reuseCase}
         />
+
+        {/* 模板独立词表的管理弹窗：写操作入口由 template_pack:create 把关。 */}
+        {tagManagerOpen && (
+          <TemplateTagManager
+            tags={templateTags.data ?? []}
+            onClose={() => setTagManagerOpen(false)}
+          />
+        )}
 
         {/* 移进回收站的二次确认：删除这种**方向不可逆**的动作要让用户
             明确点一次，按钮上写着会发生什么（可恢复），不用去猜。 */}
@@ -2086,6 +2145,149 @@ function Section({
   );
 }
 
+/* 标签筛选条的胶囊样式：与全局 Button 区分开，它不是动作而是筛选状态。 */
+const FILTER_PILL =
+  'inline-flex shrink-0 items-center rounded-xs border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
+const FILTER_IDLE =
+  'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-primary-soft/60 hover:text-primary-deep';
+const FILTER_ACTIVE = 'border-primary bg-primary text-white shadow-sm';
+
+/**
+ * 模板封装列表页的两级标签筛选条。
+ *
+ * 第一行维度、第二行取值；第二行按当前选中的维度收窄（选了一个取值时保留
+ * 它的兄弟取值，否则没法做「同维度 OR」）。组合语义（同维度 OR / 跨维度 AND）
+ * 挂在两行标题的 `title` 上，常驻版面保持干净。
+ *
+ * 这里比素材库的 `LibraryTagBar` 简化：没有每行搜索框、计数徽标与管理入口
+ * （管理入口在工具栏），因为模板词表还小。选中的 id 交给容器写进
+ * `useSpecs(status, tagIds)` 的查询键。
+ */
+function TemplateTagBar({
+  tags,
+  selected,
+  onChange,
+  busy,
+}: {
+  tags: TagOut[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+  busy?: boolean;
+}) {
+  const stats = useMemo(() => tags as unknown as LibraryTagStatOut[], [tags]);
+  const top = useMemo(() => tagsAtDepth(stats, 1), [stats]);
+  /* 收窄规则与素材库共用同一份纯函数，不在这里重写一遍
+     「选中谁就列出谁的维度」的分支。 */
+  const second = useMemo(
+    () => secondLevelForSelection(stats, selected),
+    [stats, selected],
+  );
+  const active = useMemo(() => new Set(selected), [selected]);
+
+  const clear = () => onChange([]);
+  const toggle = (tag: TagOut) =>
+    onChange(
+      active.has(tag.id)
+        ? selected.filter((id) => id !== tag.id)
+        : [...selected, tag.id],
+    );
+
+  return (
+    <div className="space-y-1.5" role="group" aria-label="模板标签筛选">
+      {selected.length > 0 && (
+        <button
+          type="button"
+          onClick={clear}
+          className="text-body text-ink-mute hover:text-primary-deep"
+        >
+          清除筛选
+        </button>
+      )}
+      <div
+        role="group"
+        aria-label="模板维度标签"
+        className="flex min-h-[30px] flex-wrap items-center gap-1.5"
+      >
+        <span
+          className="w-12 shrink-0 truncate text-body font-medium text-ink-mute"
+          title="同一维度内多选是「或」（OR）；跨维度多选是「且」（AND）"
+        >
+          维度
+        </span>
+        <button
+          type="button"
+          onClick={clear}
+          aria-label="全部维度标签"
+          aria-pressed={selected.length === 0}
+          title="清空所有层级的标签筛选"
+          className={cn(FILTER_PILL, selected.length === 0 ? FILTER_ACTIVE : FILTER_IDLE)}
+        >
+          全部
+        </button>
+        {top.map((tag) => {
+          const isActive = active.has(tag.id);
+          return (
+            <button
+              key={tag.id}
+              type="button"
+              onClick={() => toggle(tag as unknown as TagOut)}
+              aria-label={tag.name}
+              aria-pressed={isActive}
+              title={`筛选「${tagLabel(tag)}」`}
+              className={cn(FILTER_PILL, isActive ? FILTER_ACTIVE : FILTER_IDLE)}
+            >
+              {tag.name}
+            </button>
+          );
+        })}
+      </div>
+      <div
+        role="group"
+        aria-label="模板取值标签"
+        className="flex min-h-[30px] flex-wrap items-center gap-1.5"
+      >
+        <span
+          className="w-12 shrink-0 truncate text-body font-medium text-ink-mute"
+          title="同维度多选是「或」；跨维度多选是「且」：只留同时满足这些取值的模板"
+        >
+          取值
+        </span>
+        <button
+          type="button"
+          onClick={clear}
+          aria-label="全部取值标签"
+          aria-pressed={selected.length === 0}
+          title="清空所有层级的标签筛选"
+          className={cn(FILTER_PILL, selected.length === 0 ? FILTER_ACTIVE : FILTER_IDLE)}
+        >
+          全部
+        </button>
+        {second.map((tag) => {
+          const isActive = active.has(tag.id);
+          return (
+            <button
+              key={tag.id}
+              type="button"
+              onClick={() => toggle(tag as unknown as TagOut)}
+              aria-label={tag.name}
+              aria-pressed={isActive}
+              title={`筛选「${tagLabel(tag)}」`}
+              className={cn(FILTER_PILL, isActive ? FILTER_ACTIVE : FILTER_IDLE)}
+            >
+              {tag.name}
+            </button>
+          );
+        })}
+      </div>
+      {!tags.length && (
+        <p className="text-body text-ink-mute">
+          {busy ? '标签加载中…' : '还没有标签'}
+        </p>
+      )}
+    </div>
+  );
+}
+
 /**
  * 模板卡片（列表页）。
  *
@@ -2097,6 +2299,9 @@ function SpecCard({
   modelLabel,
   busy,
   trashed,
+  tags,
+  canTag,
+  onSetTags,
   onEdit,
   onPublish,
   onDisable,
@@ -2109,6 +2314,10 @@ function SpecCard({
   modelLabel?: string;
   busy: boolean;
   trashed: boolean;
+  /** 模板独立词表：卡片上的标签名与打标选项都从它查。 */
+  tags: TagOut[];
+  canTag: boolean;
+  onSetTags: (key: string, tagIds: string[]) => void;
   onEdit: () => void;
   onPublish: () => void;
   onDisable: () => void;
@@ -2119,6 +2328,18 @@ function SpecCard({
   const model = item.draft?.model || item.latest?.model || '';  /* 悬停态挂在整张卡上（不是封面那个 button）：脚上的状态与操作也算「鼠标在这张卡上」，
      视频不该因为鼠标压到下面几行就断掉。 */
   const [hovering, setHovering] = useState(false);
+  const [tagging, setTagging] = useState(false);
+  const [tagIds, setTagIds] = useState<string[]>([]);
+  const stats = useMemo(() => tags as unknown as LibraryTagStatOut[], [tags]);
+  const byId = useMemo(() => new Map(stats.map((tag) => [tag.id, tag])), [stats]);
+  const labels = (item.tagIds ?? [])
+    .map((id) => byId.get(id))
+    .filter((tag): tag is LibraryTagStatOut => Boolean(tag));
+  /* 维度不可打标：只列二级取值（TagOut 没有 childCount，depth 最可靠）。 */
+  const tagSelectOptions = useMemo(
+    () => tagsAtDepth(stats, 2).map((tag) => ({ value: tag.id, label: tagLabel(tag) })),
+    [stats],
+  );
   return (
     <div
       onMouseEnter={() => setHovering(true)}
@@ -2200,6 +2421,24 @@ function SpecCard({
             </>
           )}
         </p>
+        {labels.length > 0 && (
+          <div className="flex flex-wrap gap-1 pt-0.5">
+            {labels.slice(0, 3).map((tag) => (
+              <span
+                key={tag.id}
+                title={tagLabel(tag)}
+                className="max-w-[92px] truncate rounded-xs bg-primary-soft px-1.5 py-[1px] text-micro text-primary-deep"
+              >
+                {tag.name}
+              </span>
+            ))}
+            {labels.length > 3 && (
+              <span className="rounded-xs bg-panel-soft px-1.5 py-[1px] text-micro text-ink-mute">
+                +{labels.length - 3}
+              </span>
+            )}
+          </div>
+        )}
       </div>
 
       {/* 脚上四个动作：都是**按钮**，不是一行文字链接。
@@ -2207,7 +2446,10 @@ function SpecCard({
           四个又同样弱 ——「编辑」是蓝字、「删除」是灰字，剩下的分不出轻重。
           现在统一成 `size="sm"` 的小按钮（与全局 Button 同一种形状），
           差别只靠字色与 hover 的底色表达。 */}
-      <div className="mt-2 flex items-center gap-1.5 border-t border-line-soft px-2 py-2">
+      {/* 5 列下卡片内宽约 215px，5 个按钮要塞进一行，靠两处收紧：
+          gap 1（4px）与按钮 px-1.5（比默认 px-2.5 每个省 8px，5 个共 40px）。
+          不换行 + shrink-0：宁可挤也不让「删除」孤零零掉到第二行。 */}
+      <div className="mt-2 flex items-center gap-1 border-t border-line-soft px-2 py-2 [&>button]:shrink-0 [&>button]:px-1.5">
         {trashed ? (
           <Button
             size="sm"
@@ -2246,6 +2488,25 @@ function SpecCard({
                 停用
               </Button>
             )}
+            {canTag && (
+              /* 图标按钮：5 列下卡片内宽约 256px，5 个文字按钮要 284px，
+                 会把「删除」挤到第二行。图标省下 48px，其余按钮仍是文字。
+                 名字放在 title / aria-label 里，悬浮可读、读屏可懂。 */
+              <Button
+                size="sm"
+                icon={<Tag size={12} />}
+                className="px-1.5"
+                aria-label="打标签"
+                title="打标签"
+                aria-pressed={tagging}
+                disabled={busy}
+                onClick={() => {
+                  /* 打开时把服务端当前的标签带进来，取消就等于什么都没改。 */
+                  setTagIds(item.tagIds ?? []);
+                  setTagging((value) => !value);
+                }}
+              />
+            )}
             <Button
               size="sm"
               className="ml-auto hover:border-danger-line hover:bg-danger-soft hover:text-danger"
@@ -2257,6 +2518,36 @@ function SpecCard({
           </>
         )}
       </div>
+
+      {tagging && !trashed && (
+        <div className="border-t border-line-soft px-2 py-2">
+          <MultiSelect
+            options={tagSelectOptions}
+            value={tagIds}
+            onChange={setTagIds}
+            placeholder="选择取值标签"
+            emptyText="还没有可打标的取值标签"
+            searchable
+            ariaLabel={`${item.name} 的标签`}
+          />
+          <div className="mt-2 flex justify-end gap-1.5">
+            <Button size="sm" variant="ghost" onClick={() => setTagging(false)}>
+              取消
+            </Button>
+            <Button
+              size="sm"
+              variant="primary"
+              disabled={busy}
+              onClick={() => {
+                onSetTags(item.key, tagIds);
+                setTagging(false);
+              }}
+            >
+              保存标签
+            </Button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -50,6 +50,7 @@ __all__ = [
     "TemplateSpec",
     "TemplateSpecSlot",
     "TemplateSpecVersion",
+    "TemplateTag",
 ]
 
 #: 规格生命周期。`disabled` 是"下架"，不是删除：历史版本与已生成任务照旧可查。
@@ -75,9 +76,7 @@ class TemplateSpec(Base, UUIDMixin, TimestampMixin):
     __tablename__ = "template_specs"
     # 唯一约束声明成 `UniqueConstraint` 而不是列上 `unique=True`：后者在迁移里
     # 到底是建约束还是建唯一索引会随方言变，`compare_metadata` 会报"缺约束"。
-    __table_args__ = (
-        UniqueConstraint("spec_key", name="uq_template_specs_spec_key"),
-    )
+    __table_args__ = (UniqueConstraint("spec_key", name="uq_template_specs_spec_key"),)
 
     #: 幂等边界。发布后不可改：改模板 = 换 key 发新版本。
     spec_key: Mapped[str] = mapped_column(String(80), nullable=False)
@@ -92,14 +91,37 @@ class TemplateSpec(Base, UUIDMixin, TimestampMixin):
     fingerprint: Mapped[str] = mapped_column(String(64), default="", nullable=False)
     #: 最新已发布版本号；0 = 从未发布。
     current_version: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
-    published_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+    #: 模板自身的两级标签（存 template_tags.id）。独立于 draft JSON 与发布快照：
+    #: 标签是分类元信息，改了立刻生效，不该要求发新版本，也不该让历史任务的
+    #: 快照跟着变。ids 指向词表行；词表改名/删除时由 TagService 同步清理这里的 ids。
+    tag_ids: Mapped[list[str]] = mapped_column(JSON, default=list, nullable=False)
+
+
+class TemplateTag(Base, UUIDMixin):
+    """模板**独立**的两级标签词表（维度 / 取值），与素材库词表互不影响。
+
+    `parent_id == ""` 是一级（维度，只做分组），指向一级的是二级（取值，能打在
+    模板上）。两级上限由 `tags.TagService` 守卫，不在库约束里（跨 sqlite/pg 一致）。
+    """
+
+    __tablename__ = "template_tags"
+    __table_args__ = (
+        # 空串哨兵而不是 NULL：PG/SQLite 的唯一索引里 NULL 互不相等，
+        # 会让两个同名一级标签同时存在。
+        UniqueConstraint("name", "parent_id", name="uq_template_tags_name"),
+        Index("ix_template_tags_parent", "parent_id"),
     )
-    disabled_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+
+    name: Mapped[str] = mapped_column(String(40), nullable=False)
+    parent_id: Mapped[str] = mapped_column(
+        String(32), default="", server_default="", nullable=False
     )
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
+    created_by: Mapped[str] = mapped_column(String(32), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), nullable=False, default=utcnow
     )
 
 
@@ -203,9 +225,7 @@ class TemplateSpecSlot(Base, UUIDMixin):
     #:
     #: 老数据一律 False → 预检会要求作者在正文里重新框选一次（见
     #: core/template_spec/rules.py::validate_optional_slot_refs）。
-    empty_text_from_anchor: Mapped[bool] = mapped_column(
-        Boolean, default=False, nullable=False
-    )
+    empty_text_from_anchor: Mapped[bool] = mapped_column(Boolean, default=False, nullable=False)
     position: Mapped[int] = mapped_column(Integer, nullable=False)
 
 
@@ -271,14 +291,8 @@ class TemplateCase(Base, UUIDMixin, TimestampMixin):
     status: Mapped[str] = mapped_column(String(16), default="published", nullable=False, index=True)
     #: 发布者。
     owner_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
-    published_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     #: 最近一次下架时间；重新上架时清空。
-    offline_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    offline_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     #: 软删时间。非空 = 在回收站里，列表与复用选择器都看不到它。
-    deleted_at: Mapped[datetime | None] = mapped_column(
-        DateTime(timezone=True), nullable=True
-    )
+    deleted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

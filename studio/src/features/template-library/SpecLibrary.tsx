@@ -18,7 +18,11 @@ import {
   type ParamValue,
 } from '@/entities/model/lib/paramForm';
 import { useCreateTask } from '@/entities/task/api/task.queries';
-import { usePublishedSpecs, useSpecCompile } from '@/entities/template-spec/api/spec.queries';
+import {
+  usePublishedSpecs,
+  useSpecCompile,
+  useTemplateTags,
+} from '@/entities/template-spec/api/spec.queries';
 import type { SpecSlotOut, TemplateSpecOut, SpecSlotIn,
 } from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
@@ -63,6 +67,8 @@ import {
   type SlotFillMode,
 } from './randomness';
 import { hasFallbackSlotRef, requiredSlotCount } from './slotIndexRefs';
+import { SpecTagBar } from './SpecTagBar';
+import { effectiveTemplateTagIds, templateTagLabel } from './specTagUtils';
 
 /**
  * 模板库（填表）：左边选模板，右边就地填素材 → 生成。
@@ -94,7 +100,7 @@ function maxOf(slot: SpecSlotOut): number {
  * 它是**纯展示**字段（存在草稿里、不进发布快照），所以这里只读、不可交互。
  */
 /**
- * 模板卡片：案例封面 + 压在图上的名称 + 「要什么素材」的标签 + 一行模型。
+ * 模板卡片：案例封面 + 压在图上的名称 + 模板标签胶囊 + 一行模型。
  *
  * 名称压在封面底部而不是另起一行：卡片是「挑图」，图应该占满视觉重心，文字只做
  * 标注。版本号反而放右上角 —— 它是作者关心的东西，不该占掉选模板时的注意力。
@@ -104,19 +110,17 @@ function TemplateCard({
   selected,
   onSelect,
   modelLabel,
+  tagLabels,
 }: {
   item: TemplateSpecOut;
   selected: boolean;
   onSelect: () => void;
   /** 模型的**友好名**（目录里的中文名）。拿不到就退回 id。 */
   modelLabel?: string;
+  /** 由 `item.tagIds` 经词表映射出的**全路径**标签（父 / 名）。 */
+  tagLabels: string[];
 }) {
-  const itemSlots = slotsOf(item);
-  const fixed = itemSlots.filter(slot => slot.binding === 'fixed').length;
-  const pending = itemSlots.length - fixed;
-  // 要什么类型的素材：卡片上一眼能看出来，省得点进去才发现是视频模板。
-  const kinds = [...new Set(itemSlots.map(slot => slot.type))];
-  /* 悬停态挂在**整张卡**上：封面只占卡片上半截，鼠标落在名称/chips 那一带时
+  /* 悬停态挂在**整张卡**上：封面只占卡片上半截，鼠标落在名称/标签那一带时
      视频区收不到 mouseenter，看起来就是「这张卡不会动」。 */
   const [hovering, setHovering] = useState(false);
   return (
@@ -156,19 +160,31 @@ function TemplateCard({
       </div>
 
       <div className="flex flex-col gap-1.5 px-1 pb-0.5 pt-2">
-        <div className="flex flex-wrap gap-1">
-          {itemSlots.length === 0 ? (
-            <Chip tone="ok">纯提示词</Chip>
-          ) : pending > 0 ? (
-            <Chip tone="warn">待填 {pending}</Chip>
+        {/* 卡片下方只摆模板标签，不再摆插槽状态（待填 N / 纯提示词 / 图片·视频）：
+            那些说的是「这张表要填什么」，只有点进去才用得上；标签说的是
+            「这张模板归哪几档」，才是挑模板时该看的。样式与素材库卡片一致，
+            最多 4 枚，超出用 +N —— 再多会把卡片撑得参差。 */}
+        <div className="flex min-h-[19px] flex-wrap items-center gap-1">
+          {tagLabels.length > 0 ? (
+            <>
+              {tagLabels.slice(0, 4).map((label, index) => (
+                <span
+                  key={`${label}-${index}`}
+                  title={label}
+                  className="inline-flex max-w-full items-center rounded-pill border border-line-soft bg-panel-soft px-1.5 py-px text-xs leading-[15px] text-ink-soft"
+                >
+                  <span className="max-w-[110px] truncate">{label}</span>
+                </span>
+              ))}
+              {tagLabels.length > 4 && (
+                <span className="shrink-0 text-micro text-ink-mute">
+                  +{tagLabels.length - 4}
+                </span>
+              )}
+            </>
           ) : (
-            <Chip tone="ok">素材已固定</Chip>
+            <span className="text-micro text-ink-mute/70">未打标签</span>
           )}
-          {/* 素材类型是**内容**，用中性徽章 —— 蓝色只留给身份标记
-              （颜色预算，见 docs/CODE_STYLE.md §3.5.1）。 */}
-          {kinds.map(kind => (
-            <Chip key={kind}>{TYPE_LABEL[kind] ?? kind}</Chip>
-          ))}
         </div>
         {/* `mt-auto`：一行里卡片的 chip 数量不同时会换行成一两行，不推到底的话
             底栏会各自停在不同高度，一排看过去参差。 */}
@@ -221,7 +237,18 @@ function PanelSection({
 }
 
 export function SpecLibrary() {
-  const published = usePublishedSpecs();
+  /* 标签筛选留在组件 state（不进 URL）：模板库是填表入口，筛选只是这次浏览的
+     视角，不该变成可以分享/回退的页面状态。 */
+  const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
+  const tagsQuery = useTemplateTags();
+  const tags = useMemo(() => tagsQuery.data ?? [], [tagsQuery.data]);
+  /* 发请求前收敛：同维度里选了维度又选了它的取值时只留取值。
+     界面上两枚胶囊都高亮，真正参与筛选的是这一份。 */
+  const effectiveTagIds = useMemo(
+    () => effectiveTemplateTagIds(tags, selectedTagIds),
+    [tags, selectedTagIds],
+  );
+  const published = usePublishedSpecs(effectiveTagIds);
   const compile = useSpecCompile();
   const createTask = useCreateTask();
   const navigate = useNavigate();
@@ -270,6 +297,12 @@ export function SpecLibrary() {
     const word = keyword.trim().toLowerCase();
     return word ? all.filter(item => item.name.toLowerCase().includes(word)) : all;
   }, [published.data, keyword]);
+  /* 词表 id → 全路径显示名。卡片只拿映射结果，不各自查词表。 */
+  const tagLabelById = useMemo(
+    () => new Map(tags.map(tag => [tag.id, templateTagLabel(tag)])),
+    [tags],
+  );
+  const hasActiveFilter = keyword.trim().length > 0 || selectedTagIds.length > 0;
 
   const spec = items.find(item => item.key === selectedKey) ?? items[0];
   const slots = slotsOf(spec);
@@ -791,6 +824,27 @@ export function SpecLibrary() {
   }
 
   if (items.length === 0) {
+    /* 筛空了 ≠ 没有模板：这时说「还没有已发布的模板」是在骗人，
+       得给出一键回到全量的出口（两行筛选条在这个分支里也随之消失）。 */
+    if (hasActiveFilter) {
+      return (
+        <EmptyState
+          title="没有符合筛选条件的模板"
+          action={
+            <Button
+              size="sm"
+              variant="secondary"
+              onClick={() => {
+                setKeyword('');
+                setSelectedTagIds([]);
+              }}
+            >
+              清除筛选
+            </Button>
+          }
+        />
+      );
+    }
     return (
       /* 空状态是一次邀请，不是段说明：按钮里直接写「去哪儿做」，
          就不用在下面再补一句「先在模板封装里定一张表并发布」。 */
@@ -823,6 +877,14 @@ export function SpecLibrary() {
             {items.length} 个模板
           </span>
         </div>
+        {/* 两行标签筛选（维度 / 取值）放在工具栏下方，跟搜索框同属「挑模板」的
+            前置动作；选中项发后端筛选，关键词仍在本地滤。 */}
+        <SpecTagBar
+          tags={tags}
+          selected={selectedTagIds}
+          busy={tagsQuery.isPending}
+          onChange={setSelectedTagIds}
+        />
         {/* 网格放在一层很淡的"托盘"上：卡片本身是白的，如果页面也是白的，
             就只能靠 1px 描边区分，看一眼全是线。给托盘一点底色，卡片立刻浮起来
             —— 比给每张卡加更重的阴影更省、也更不会脏。 */}
@@ -835,6 +897,9 @@ export function SpecLibrary() {
                 selected={item.key === spec?.key}
                 onSelect={() => setSelectedKey(item.key)}
                 modelLabel={modelLabelOf(item.latest?.model ?? '')}
+                tagLabels={(item.tagIds ?? [])
+                  .map(id => tagLabelById.get(id))
+                  .filter((label): label is string => !!label)}
               />
             ))}
           </div>
@@ -1091,7 +1156,8 @@ export function SpecLibrary() {
                    的东西**说话：
 
                    - 「直接生成即可」= 下面那个可点的主按钮；
-                   - 「纯提示词」/「素材已固定」= 左侧卡片上的 chip；
+                   - 「纯提示词」/「素材已固定」这类插槽状态已从卡片上移除
+                     （卡片下方只摆模板标签），再讲一遍等于复活旧信息；
                    - 「均衡模式：可选素材交给模型」= 上方那个分段控件
                      （均衡档时可选槽位整个不出现，这本身就是解释）。
 

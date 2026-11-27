@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { RouterProvider, createMemoryRouter } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { LibraryAssetOut, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
+import type { LibraryAssetOut, TagOut, TemplateSpecIn, TemplateSpecOut } from '@/shared/api/schema';
 import { libraryApi } from '@/entities/library/api/library.api';
 import { useToastStore } from '@/shared/lib/toast';
 import { Toaster } from '@/shared/ui/Toaster';
@@ -20,10 +20,15 @@ import { SpecWorkspace } from './SpecWorkspace';
  * **没有任何入口** —— 死胡同。
  */
 
-const { specs, trashedSpecs, listState, mutations, canState } = vi.hoisted(() => ({
-  canState: {caseWrite: true},
+const { specs, trashedSpecs, listState, mutations, canState, templateTags, specFilterCalls, specTagCalls } = vi.hoisted(() => ({
+  canState: { caseWrite: true, templateTagCreate: true },
   specs: { current: [] as TemplateSpecOut[] },
   trashedSpecs: { current: [] as TemplateSpecOut[] },
+  templateTags: { current: [] as TagOut[] },
+  /** 每次 useSpecs 收到的 tagIds：断言标签筛选真的进了查询键。 */
+  specFilterCalls: [] as string[][],
+  /** 每次打标提交的参数。 */
+  specTagCalls: [] as { key: string; tagIds: string[] }[],
   listState: { isError: false, error: null as unknown, refetch: vi.fn() },
   mutations: {
     /* 入参就是提交体（`TemplateSpecIn`）：有用例要断言「提交上去的提示词 /
@@ -41,20 +46,39 @@ const { specs, trashedSpecs, listState, mutations, canState } = vi.hoisted(() =>
 
 /* 权限是输入条件之一：「设置案例」只在有 `library:case:write` 时出现。 */
 vi.mock('@/shared/access/use-access', () => ({
-  useCan: (permission: string) =>
-    permission === 'library:case:write' ? canState.caseWrite : true,
+  useCan: (permission: string) => {
+    if (permission === 'library:case:write') return canState.caseWrite;
+    if (permission === 'template_pack:create') return canState.templateTagCreate;
+    return true;
+  },
 }));
 
 vi.mock('@/entities/template-spec/api/spec.queries', () => ({
   /* 上限来自后端：两个数说的是不同的事（存草稿 / 能不能发布）。 */
   useSpecLimits: () => ({data: {promptMax: 20000, promptExecutionLimit: 7000}}),
-  useSpecs: () => ({
-    data: listState.isError ? undefined : { items: specs.current, total: specs.current.length, page: 1, pageSize: 100 },
-    isLoading: false,
-    isError: listState.isError,
-    error: listState.error,
-    isFetching: false,
-    refetch: listState.refetch,
+  useSpecs: (_status: string, tagIds: string[] = []) => {
+    specFilterCalls.push(tagIds);
+    return {
+      data: listState.isError ? undefined : { items: specs.current, total: specs.current.length, page: 1, pageSize: 100 },
+      isLoading: false,
+      isError: listState.isError,
+      error: listState.error,
+      isFetching: false,
+      refetch: listState.refetch,
+    };
+  },
+  useTemplateTags: () => ({ data: templateTags.current, isLoading: false }),
+  useTemplateTagMutations: () => ({
+    create: { mutateAsync: vi.fn(), isPending: false },
+    rename: { mutateAsync: vi.fn(), isPending: false },
+    move: { mutateAsync: vi.fn(), isPending: false },
+    remove: { mutateAsync: vi.fn(), isPending: false },
+  }),
+  useSpecTagMutations: () => ({
+    mutate: (args: { key: string; tagIds: string[] }) => {
+      specTagCalls.push(args);
+    },
+    isPending: false,
   }),
   useTrashedSpecs: () => ({
     data: {
@@ -121,6 +145,10 @@ function specOf(overrides: Partial<TemplateSpecOut> = {}): TemplateSpecOut {
 /* toast store 是模块级单例：成功提示现在走 toast，每个用例必须从空开始 */
 beforeEach(() => {
   canState.caseWrite = true;
+  canState.templateTagCreate = true;
+  templateTags.current = [];
+  specFilterCalls.length = 0;
+  specTagCalls.length = 0;
   /* 图片插槽预设存在 localStorage；不清的话上一个用例改的预设会漏到下一个。 */
   localStorage.clear();
   for (const item of useToastStore.getState().items) {
@@ -252,6 +280,114 @@ describe('模板封装 · 列表卡片的操作集合', () => {
  *
  * 「+ 文本素材」也去掉了：左栏「槽位」板块的加号菜单本来就能加任意类型。
  */
+/**
+ * 模板独立的两级标签：筛选条、词表管理入口、卡片标签。
+ *
+ * 守卫点都在「串起来」的地方：筛选必须进 useSpecs 的 tagIds（否则点了没反应），
+ * 打标只提交二级取值（维度不可打标），管理入口必须过权限码。
+ */
+const TEMPLATE_TAGS: TagOut[] = [
+  { id: 't1', name: '产品', depth: 1, specCount: 4 },
+  { id: 't11', name: '6036', parentId: 't1', parentName: '产品', depth: 2, specCount: 2 },
+  { id: 't12', name: 'T35', parentId: 't1', parentName: '产品', depth: 2, specCount: 2 },
+  { id: 't2', name: '风格', depth: 1, specCount: 3 },
+  { id: 't21', name: '写实', parentId: 't2', parentName: '风格', depth: 2, specCount: 3 },
+];
+
+describe('模板封装 · 两级标签', () => {
+  it('筛选条分维度 / 取值两行，取值随选中维度收窄', async () => {
+    const user = userEvent.setup();
+    templateTags.current = TEMPLATE_TAGS;
+    renderWorkspace([specOf()]);
+
+    const top = within(screen.getByRole('group', { name: '模板维度标签' }));
+    const second = within(screen.getByRole('group', { name: '模板取值标签' }));
+    expect(top.getByRole('button', { name: '产品' })).toBeInTheDocument();
+    expect(second.getByRole('button', { name: '写实' })).toBeInTheDocument();
+    /* 组合语义挂在行标题 title 上，常驻版面不再摆一行小字。 */
+    expect(screen.getByText('维度')).toHaveAttribute(
+      'title',
+      expect.stringContaining('或'),
+    );
+
+    await user.click(top.getByRole('button', { name: '产品' }));
+    expect(second.queryByRole('button', { name: '写实' })).not.toBeInTheDocument();
+    expect(second.getByRole('button', { name: '6036' })).toBeInTheDocument();
+    /* 真的进了查询键 —— 只改视觉高亮不算筛选。 */
+    expect(specFilterCalls.at(-1)).toEqual(['t1']);
+  });
+
+  it('点取值切换选中，兄弟取值仍可见；再点一次取消', async () => {
+    const user = userEvent.setup();
+    templateTags.current = TEMPLATE_TAGS;
+    renderWorkspace([specOf()]);
+
+    const second = within(screen.getByRole('group', { name: '模板取值标签' }));
+    await user.click(second.getByRole('button', { name: '6036' }));
+    expect(specFilterCalls.at(-1)).toEqual(['t11']);
+    expect(second.getByRole('button', { name: 'T35' })).toBeInTheDocument();
+
+    await user.click(second.getByRole('button', { name: 'T35' }));
+    expect(specFilterCalls.at(-1)).toEqual(['t11', 't12']);
+
+    await user.click(second.getByRole('button', { name: 'T35' }));
+    expect(specFilterCalls.at(-1)).toEqual(['t11']);
+
+    await user.click(screen.getByRole('button', { name: '清除筛选' }));
+    expect(specFilterCalls.at(-1)).toEqual([]);
+  });
+
+  it('管理标签入口受 template_pack:create 控制', async () => {
+    const user = userEvent.setup();
+    templateTags.current = TEMPLATE_TAGS;
+    canState.templateTagCreate = false;
+    renderWorkspace([specOf()]);
+    expect(screen.queryByRole('button', { name: '管理标签' })).not.toBeInTheDocument();
+
+    canState.templateTagCreate = true;
+    renderWorkspace([specOf()]);
+    await user.click(screen.getByRole('button', { name: '管理标签' }));
+    expect(screen.getByRole('dialog', { name: '管理模板标签' })).toBeInTheDocument();
+  });
+
+  it('卡片显示标签名，最多 3 枚，其余收成 +N', () => {
+    templateTags.current = TEMPLATE_TAGS;
+    renderWorkspace([specOf({ tagIds: ['t11', 't12', 't21', 't1'] })]);
+
+    const card = cardOf('商品图模板');
+    expect(card.getByText('6036')).toBeInTheDocument();
+    expect(card.getByText('T35')).toBeInTheDocument();
+    expect(card.getByText('写实')).toBeInTheDocument();
+    /* 第 4 枚不画，维度本身也不该被当成可显示的业务标签。 */
+    expect(card.queryByText('产品')).not.toBeInTheDocument();
+    expect(card.getByText('+1')).toBeInTheDocument();
+  });
+
+  it('打标签只提交二级取值，不把维度当可选项', async () => {
+    const user = userEvent.setup();
+    templateTags.current = TEMPLATE_TAGS;
+    renderWorkspace([specOf({ tagIds: ['t11'] })]);
+
+    const card = cardOf('商品图模板');
+    await user.click(card.getByRole('button', { name: '打标签' }));
+    await user.click(card.getByRole('button', { name: '商品图模板 的标签' }));
+
+    expect(screen.queryByRole('checkbox', { name: '产品' })).not.toBeInTheDocument();
+    await user.click(await screen.findByRole('checkbox', { name: '产品 / T35' }));
+    await user.click(card.getByRole('button', { name: '保存标签' }));
+
+    expect(specTagCalls).toEqual([{ key: 'spec-1', tagIds: ['t11', 't12'] }]);
+  });
+
+  it('没有建模板权限时卡片不给打标签入口', () => {
+    canState.templateTagCreate = false;
+    renderWorkspace([specOf({ tagIds: ['t11'] })]);
+    expect(
+      cardOf('商品图模板').queryByRole('button', { name: '打标签' }),
+    ).not.toBeInTheDocument();
+  });
+});
+
 describe('模板封装 · 编辑器里的提示词', () => {
   const enterEditor = async () => {
     const user = userEvent.setup();

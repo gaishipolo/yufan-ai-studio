@@ -1590,6 +1590,11 @@ export interface SpecSlotOut {
   position?: number;
 }
 
+/** 给一个模板打标签：交回**完整** id 数组（空数组 = 清空）。 */
+export interface SpecTagsIn {
+  tagIds?: string[];
+}
+
 /** SpecValidateOut */
 export interface SpecValidateOut {
   valid?: boolean;
@@ -1639,19 +1644,14 @@ export interface SubmitIn {
   source?: string;
 }
 
-/** 新建 / 重命名标签。
-
-`parent_id` **只在新建时生效**：给一个父标签的 id 就建成它的下一级（最多三级），
-留 null 建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在
-一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。 */
-export interface TagIn {
+/** 词表里的一条模板标签（平铺，两级：`parentId` 空 = 一级维度）。 */
+export interface TagOut {
+  id: string;
   name: string;
   parentId?: string | null;
-}
-
-/** 移动标签：`parentId` 指向一个父标签（最多到二级），`null` 表示提升为一级。 */
-export interface TagParentIn {
-  parentId?: string | null;
+  parentName?: string | null;
+  depth?: number;
+  specCount?: number;
 }
 
 /** TaskFeedItem */
@@ -1853,6 +1853,7 @@ export interface TemplateSpecOut {
   updatedAt: string;
   draft?: TemplateSpecIn | null;
   demoAssetId?: string | null;
+  tagIds?: string[];
   latest?: SpecVersionOut | null;
 }
 
@@ -2196,6 +2197,21 @@ export interface modules__catalog__schema__ModelOut {
   isDefault?: boolean;
 }
 
+/** 新建 / 重命名标签。
+
+`parent_id` **只在新建时生效**：给一个父标签的 id 就建成它的下一级（最多三级），
+留 null 建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在
+一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。 */
+export interface modules__library__schema__TagIn {
+  name: string;
+  parentId?: string | null;
+}
+
+/** 移动标签：`parentId` 指向一个父标签（最多到二级），`null` 表示提升为一级。 */
+export interface modules__library__schema__TagParentIn {
+  parentId?: string | null;
+}
+
 /** ModelListOut */
 export interface modules__model_driver__schema__ModelListOut {
   items?: modules__model_driver__schema__ModelOut[];
@@ -2284,6 +2300,17 @@ export interface modules__task__schema__TaskOut {
   subtitleErase?: TaskVariantOut | null;
   /** 上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照 */
   externalId?: string | null;
+}
+
+/** 新建 / 重命名标签。`parentId` 留空 = 一级维度。 */
+export interface modules__template_pack__spec_schema__TagIn {
+  name: string;
+  parentId?: string | null;
+}
+
+/** 移动层级。`parentId` 留空 = 提升为一级。 */
+export interface modules__template_pack__spec_schema__TagParentIn {
+  parentId?: string | null;
 }
 
 /* --------------------- 接口 → data 类型（已解包封套） --------------------- */
@@ -2576,6 +2603,16 @@ export interface EndpointData {
   "GET /api/v1/template-specs/limits": SpecLimitsOut;
   /** 模板库：已发布的规格卡片 */
   "GET /api/v1/template-specs/published": TemplateSpecListOut;
+  /** 模板标签词表（两级平铺，含每个标签的模板数） */
+  "GET /api/v1/template-specs/tags": TagOut[];
+  /** 新建模板标签（同父同名返回已有那条） */
+  "POST /api/v1/template-specs/tags": TagOut;
+  /** 删除模板标签 */
+  "DELETE /api/v1/template-specs/tags/{tag_id}": null;
+  /** 重命名模板标签 */
+  "PATCH /api/v1/template-specs/tags/{tag_id}": TagOut;
+  /** 移动模板标签层级 */
+  "PATCH /api/v1/template-specs/tags/{tag_id}/parent": TagOut;
   /** 回收站：已软删的规格 */
   "GET /api/v1/template-specs/trash": TemplateSpecListOut;
   /** 预检模板规格（不落库） */
@@ -2592,6 +2629,8 @@ export interface EndpointData {
   "POST /api/v1/template-specs/{key}/publish": SpecPublishOut;
   /** 从回收站恢复 */
   "POST /api/v1/template-specs/{key}/restore": TemplateSpecOut;
+  /** 给模板打标签（完整替换，不改草稿/不发版） */
+  "PATCH /api/v1/template-specs/{key}/tags": TemplateSpecOut;
   /** 用量总览（汇总 / 趋势 / 构成） */
   "GET /api/v1/usage/overview": UsageOverviewOut;
   /** 用量明细 */

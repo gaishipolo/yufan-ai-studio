@@ -5129,7 +5129,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TagIn"
+                "$ref": "#/components/schemas/modules__library__schema__TagIn"
               }
             }
           }
@@ -5186,7 +5186,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TagIn"
+                "$ref": "#/components/schemas/modules__library__schema__TagIn"
               }
             }
           }
@@ -5289,7 +5289,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/TagParentIn"
+                "$ref": "#/components/schemas/modules__library__schema__TagParentIn"
               }
             }
           }
@@ -6887,6 +6887,298 @@
         ]
       }
     },
+    "/api/v1/template-specs/tags": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "模板标签词表（两级平铺，含每个标签的模板数）",
+        "operationId": "list_tags_api_v1_template_specs_tags_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_list_TagOut__"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "新建模板标签（同父同名返回已有那条）",
+        "operationId": "create_tag_api_v1_template_specs_tags_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/modules__template_pack__spec_schema__TagIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TagOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/template-specs/tags/{tag_id}": {
+      "patch": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "重命名模板标签",
+        "operationId": "rename_tag_api_v1_template_specs_tags__tag_id__patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/modules__template_pack__spec_schema__TagIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TagOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "删除模板标签",
+        "operationId": "delete_tag_api_v1_template_specs_tags__tag_id__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_NoneType_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-specs/tags/{tag_id}/parent": {
+      "patch": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "移动模板标签层级",
+        "operationId": "move_tag_api_v1_template_specs_tags__tag_id__parent_patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "tag_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Tag Id"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/modules__template_pack__spec_schema__TagParentIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TagOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/template-specs/{key}/tags": {
+      "patch": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "给模板打标签（完整替换，不改草稿/不发版）",
+        "operationId": "set_spec_tags_api_v1_template_specs__key__tags_patch",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "key",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Key"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SpecTagsIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_TemplateSpecOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/template-specs": {
       "post": {
         "tags": [
@@ -6969,6 +7261,25 @@
             }
           },
           {
+            "name": "tagIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tagids"
+            }
+          },
+          {
             "name": "page",
             "in": "query",
             "required": false,
@@ -7039,6 +7350,25 @@
               "maxLength": 80,
               "default": "",
               "title": "Keyword"
+            }
+          },
+          {
+            "name": "tagIds",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Tagids"
             }
           },
           {
@@ -9499,6 +9829,33 @@
         "type": "object",
         "title": "ApiResponse[StoryboardListOut]"
       },
+      "ApiResponse_TagOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/TagOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[TagOut]"
+      },
       "ApiResponse_TaskFeedOut_": {
         "properties": {
           "code": {
@@ -10157,6 +10514,37 @@
         },
         "type": "object",
         "title": "ApiResponse[list[ShareRequestOut]]"
+      },
+      "ApiResponse_list_TagOut__": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "items": {
+                  "$ref": "#/components/schemas/TagOut"
+                },
+                "type": "array"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[list[TagOut]]"
       },
       "ApiResponse_list_TextAssetVersionOut__": {
         "properties": {
@@ -16027,6 +16415,22 @@
         "title": "SpecSlotOut",
         "description": "槽位出参：与入参同形。"
       },
+      "SpecTagsIn": {
+        "properties": {
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "maxItems": 40,
+            "title": "Tagids"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "SpecTagsIn",
+        "description": "给一个模板打标签：交回**完整** id 数组（空数组 = 清空）。"
+      },
       "SpecValidateOut": {
         "properties": {
           "valid": {
@@ -16230,52 +16634,56 @@
         ],
         "title": "SubmitIn"
       },
-      "TagIn": {
+      "TagOut": {
         "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
           "name": {
             "type": "string",
-            "maxLength": 40,
-            "minLength": 1,
             "title": "Name"
           },
           "parentId": {
             "anyOf": [
               {
-                "type": "string",
-                "maxLength": 32
+                "type": "string"
               },
               {
                 "type": "null"
               }
             ],
             "title": "Parentid"
+          },
+          "parentName": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentname"
+          },
+          "depth": {
+            "type": "integer",
+            "title": "Depth",
+            "default": 1
+          },
+          "specCount": {
+            "type": "integer",
+            "title": "Speccount",
+            "default": 0
           }
         },
         "type": "object",
         "required": [
+          "id",
           "name"
         ],
-        "title": "TagIn",
-        "description": "新建 / 重命名标签。\n\n`parent_id` **只在新建时生效**：给一个父标签的 id 就建成它的下一级（最多三级），\n留 null 建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在\n一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。"
-      },
-      "TagParentIn": {
-        "properties": {
-          "parentId": {
-            "anyOf": [
-              {
-                "type": "string",
-                "maxLength": 32
-              },
-              {
-                "type": "null"
-              }
-            ],
-            "title": "Parentid"
-          }
-        },
-        "type": "object",
-        "title": "TagParentIn",
-        "description": "移动标签：`parentId` 指向一个父标签（最多到二级），`null` 表示提升为一级。"
+        "title": "TagOut",
+        "description": "词表里的一条模板标签（平铺，两级：`parentId` 空 = 一级维度）。"
       },
       "TaskFeedItem": {
         "properties": {
@@ -17138,6 +17546,13 @@
               }
             ],
             "title": "Demoassetid"
+          },
+          "tagIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Tagids"
           },
           "latest": {
             "anyOf": [
@@ -18419,6 +18834,53 @@
         ],
         "title": "ModelOut"
       },
+      "modules__library__schema__TagIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TagIn",
+        "description": "新建 / 重命名标签。\n\n`parent_id` **只在新建时生效**：给一个父标签的 id 就建成它的下一级（最多三级），\n留 null 建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在\n一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。"
+      },
+      "modules__library__schema__TagParentIn": {
+        "properties": {
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          }
+        },
+        "type": "object",
+        "title": "TagParentIn",
+        "description": "移动标签：`parentId` 指向一个父标签（最多到二级），`null` 表示提升为一级。"
+      },
       "modules__model_driver__schema__ModelListOut": {
         "properties": {
           "items": {
@@ -18791,6 +19253,55 @@
         ],
         "title": "TaskOut",
         "description": "任务出参：字段名与前端 `VideoTask` 完全一致。"
+      },
+      "modules__template_pack__spec_schema__TagIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Name"
+          },
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "TagIn",
+        "description": "新建 / 重命名标签。`parentId` 留空 = 一级维度。"
+      },
+      "modules__template_pack__spec_schema__TagParentIn": {
+        "properties": {
+          "parentId": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 32
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Parentid"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "title": "TagParentIn",
+        "description": "移动层级。`parentId` 留空 = 提升为一级。"
       }
     },
     "securitySchemes": {

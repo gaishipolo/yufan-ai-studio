@@ -115,9 +115,7 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
         ),
         attributes=dict(payload.attributes),
         demo_asset_id=payload.demo_asset_id,
-        groups=tuple(
-            SpecGroup(key=group.key, label=group.label) for group in payload.groups
-        ),
+        groups=tuple(SpecGroup(key=group.key, label=group.label) for group in payload.groups),
     )
 
 
@@ -208,6 +206,7 @@ def _spec_out(
         updated_at=head.updated_at,
         draft=draft,
         demo_asset_id=(draft.demo_asset_id if draft is not None else None),
+        tag_ids=list(head.tag_ids or ()),
         latest=(
             SpecVersionOut(
                 version=latest.version,
@@ -235,9 +234,7 @@ def _spec_out(
 # --------------------------------------------------------------------------- #
 async def _find(session: AsyncSession, key: str) -> SpecRow | None:
     return await session.scalar(
-        select(SpecRow).where(
-            SpecRow.spec_key == key, SpecRow.deleted_at.is_(None)
-        )
+        select(SpecRow).where(SpecRow.spec_key == key, SpecRow.deleted_at.is_(None))
     )
 
 
@@ -356,14 +353,11 @@ def _check_optional_slots_have_fallback(spec: TemplateSpec) -> None:
     if missing:
         raise BadRequest(
             "这些可选槽位被提示词引用了，要写「未选时文案」"
-            "（使用者不填素材时这一段怎么说）："
-            + "、".join(missing)
+            "（使用者不填素材时这一段怎么说）：" + "、".join(missing)
         )
 
 
-def effective_model_ids(
-    fixed_model: str, allowed_models: Sequence[str]
-) -> tuple[str, ...]:
+def effective_model_ids(fixed_model: str, allowed_models: Sequence[str]) -> tuple[str, ...]:
     """这份模板能跑的全部模型：**固定模型 + 作者声明的允许清单**（去重、保序）。
 
     固定模型永远在可选项里：它是模板自己的模型，作者没把它写进清单也不该让
@@ -422,18 +416,16 @@ def _check_model_params(spec: TemplateSpec, model: ModelSummary) -> None:
     )
     if locked:
         labels = "、".join(
-            str(schema[key].get("label") or key) for key in locked  # type: ignore[index]
+            str(schema[key].get("label") or key)
+            for key in locked  # type: ignore[index]
         )
         raise BadRequest(
-            f"{labels} 由使用模板的人来选，封装时不用设置；"
-            "它会在模板库填表时让用户自己选",
+            f"{labels} 由使用模板的人来选，封装时不用设置；它会在模板库填表时让用户自己选",
             details={"userSelectableParams": locked},
         )
     mixed = [slot for slot in spec.slots if slot.ref_mode == "mixed"]
     # 固定槽位是确定的（1 个），用户槽位按上限算 —— 超了现在就报，别等提交。
-    upper = sum(
-        1 if slot.binding == "fixed" else slot.max_count for slot in mixed
-    )
+    upper = sum(1 if slot.binding == "fixed" else slot.max_count for slot in mixed)
     if upper > MAX_SLOT_REFS:
         raise BadRequest(f"参与编号的素材上限 {upper} 个，超过 {MAX_SLOT_REFS}")
     # 与模型的承接能力比：**不能只判 `max_references == 0`**。只判 0 的话，
@@ -494,11 +486,7 @@ async def _check_fixed_refs(
     # **固定文本槽位不在这里判可见性**：发布时它的正文会被抄进提示词
     # （见 `_inline_fixed_text`），模板里不再有对那份素材的引用 —— 复用者
     # 根本不需要读它。图 / 视频没法内联，仍必须全员可读。
-    asset_ids = [
-        slot.asset_id
-        for slot in spec.slots
-        if slot.asset_id and slot.type != "text"
-    ]
+    asset_ids = [slot.asset_id for slot in spec.slots if slot.asset_id and slot.type != "text"]
     if not asset_ids:
         return
     readable = await lookup.readable_ids(session, actor, asset_ids)
@@ -508,11 +496,7 @@ async def _check_fixed_refs(
     if not require_public:
         return
     refs = await lookup.get_many(session, asset_ids)
-    private = [
-        item
-        for item in asset_ids
-        if item in refs and not _is_publicly_readable(refs[item])
-    ]
+    private = [item for item in asset_ids if item in refs and not _is_publicly_readable(refs[item])]
     if private:
         raise BadRequest(
             f"固定素材只有你自己能看到，发布后别人用不了：{'、'.join(private)}。"
@@ -554,8 +538,7 @@ async def _check_demo_ref(
     ref = refs.get(asset_id)
     if ref is not None and not _is_publicly_readable(ref):
         raise BadRequest(
-            "展示案例只有你自己能看到，别人打开模板库看不到。"
-            "请把它移进案例池，或改成团队可见。"
+            "展示案例只有你自己能看到，别人打开模板库看不到。请把它移进案例池，或改成团队可见。"
         )
 
 
@@ -598,9 +581,7 @@ async def _inline_fixed_text(
         random_prompt = inline_slot_ref(random_prompt, slot.key, ref.content)
 
     dropped = {slot.key for slot in fixed}
-    return prompt, random_prompt, tuple(
-        slot for slot in spec.slots if slot.key not in dropped
-    )
+    return prompt, random_prompt, tuple(slot for slot in spec.slots if slot.key not in dropped)
 
 
 async def validate_draft(
@@ -792,6 +773,36 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     return SpecPublishOut(version=version, spec=out)
 
 
+async def set_tags(
+    session: AsyncSession, actor: CurrentUser, key: str, tag_ids: Sequence[str]
+) -> TemplateSpecOut:
+    """给模板打标签（完整替换）。只改 head 的 tag_ids，不动 draft、不发版。
+
+    只接受**叶子**标签：有下级的一级维度是分组，不能打在模板上（与素材库同
+    口径）。孤立一级（没有下级的维度）仍可打 —— 删维度后提升上来的取值也
+    是这个形状，拦掉会让正在用的词一夜之间选不了。
+    """
+    from modules.template_pack.tags import all_tags, children_of
+
+    head = await _find(session, key)
+    if head is None:
+        raise NotFound("模板不存在")
+    wanted = list(dict.fromkeys(tag_ids))
+    rows = await all_tags(session)
+    by_id = {row.id: row for row in rows}
+    missing = [item for item in wanted if item not in by_id]
+    if missing:
+        raise BadRequest(f"标签不存在：{'、'.join(missing[:5])}")
+    grouped = set(children_of(rows))
+    invalid = [item for item in wanted if item in grouped]
+    if invalid:
+        names = "、".join(by_id[item].name for item in invalid[:5])
+        raise BadRequest(f"这些是分组维度，不能打在模板上：{names}")
+    head.tag_ids = wanted
+    await session.commit()
+    return await _spec_out_of(session, head)
+
+
 async def disable(session: AsyncSession, actor: CurrentUser, key: str) -> TemplateSpecOut:
     """下架：不再出现在模板库，但历史版本与已生成任务照旧可查。"""
     head = await _find(session, key)
@@ -845,9 +856,7 @@ async def restore(session: AsyncSession, actor: CurrentUser, key: str) -> Templa
 # --------------------------------------------------------------------------- #
 # 读
 # --------------------------------------------------------------------------- #
-async def get_out(
-    session: AsyncSession, actor: CurrentUser, key: str
-) -> TemplateSpecOut:
+async def get_out(session: AsyncSession, actor: CurrentUser, key: str) -> TemplateSpecOut:
     """规格详情。
 
     **已发布的是公开的**（模板库要给所有人用），**草稿与停用是作者私有的**：
@@ -874,6 +883,7 @@ async def list_out(
     published_only: bool = False,
     target: str = "all",
     trashed: bool = False,
+    tag_ids: tuple[str, ...] = (),
     page: int = 1,
     page_size: int = 20,
 ) -> TemplateSpecListOut:
@@ -915,13 +925,9 @@ async def list_out(
         ]
         condition: ColumnElement[bool]
         if target == "replacement":
-            condition = (
-                TemplateSpecVersion.model.in_(replaceable) if replaceable else false()
-            )
+            condition = TemplateSpecVersion.model.in_(replaceable) if replaceable else false()
         else:
-            condition = (
-                TemplateSpecVersion.model.notin_(replaceable) if replaceable else true()
-            )
+            condition = TemplateSpecVersion.model.notin_(replaceable) if replaceable else true()
         # 只跟「当前发布版本」 join：草稿里的模型不算数，停用后重新编辑过也一样。
         join_on = and_(
             TemplateSpecVersion.spec_id == SpecRow.id,
@@ -932,23 +938,35 @@ async def list_out(
     needle = keyword.strip()
     if needle:
         # 名称或 key 命中即可：运营记的是其中一个，不该逼他们想另一个。
-        stmt = stmt.where(
-            SpecRow.name.contains(needle) | SpecRow.spec_key.contains(needle)
-        )
+        stmt = stmt.where(SpecRow.name.contains(needle) | SpecRow.spec_key.contains(needle))
         count_stmt = count_stmt.where(
             SpecRow.name.contains(needle) | SpecRow.spec_key.contains(needle)
         )
-    total = int(await session.scalar(count_stmt) or 0)
     order = (
         (SpecRow.deleted_at.desc(), SpecRow.id)
         if trashed
         else (SpecRow.updated_at.desc(), SpecRow.id)
     )
-    rows = await session.scalars(
-        stmt.order_by(*order)
-        .limit(page_size)
-        .offset((page - 1) * page_size)
-    )
+    if tag_ids:
+        # 标签筛选在 Python 里做：tag_ids 是 JSON 列，跨维度 AND 用 SQL 表达
+        # 要写方言相关的 JSON 查询（sqlite/pg 行为不一致），而模板数量本来就少。
+        # 关键是 total 与 items 走**同一份**过滤后的列表，否则分页会错位。
+        from modules.template_pack.tags import all_tags, group_by_dimension, spec_matches_groups
+
+        rows_all = list((await session.scalars(stmt.order_by(*order))).all())
+        groups = group_by_dimension(await all_tags(session), list(tag_ids))
+        matching = [row for row in rows_all if spec_matches_groups(row, groups)] if groups else []
+        total = len(matching)
+        rows = matching[(page - 1) * page_size : page * page_size]
+    else:
+        total = int(await session.scalar(count_stmt) or 0)
+        rows = list(
+            (
+                await session.scalars(
+                    stmt.order_by(*order).limit(page_size).offset((page - 1) * page_size)
+                )
+            ).all()
+        )
     items = [await _spec_out_of(session, row) for row in rows]
     return TemplateSpecListOut(items=items, total=total)
 
@@ -1004,10 +1022,7 @@ def _apply_slot_text_overrides(
                 "不能改未选时文案；要改请把它改成可选槽位"
             )
         if any(item for item in slot_values.get(key, ())):
-            raise BadRequest(
-                f"「{name}」既挑了素材又改了文案："
-                "一格只有一种说法，请二选一"
-            )
+            raise BadRequest(f"「{name}」既挑了素材又改了文案：一格只有一种说法，请二选一")
         if not ({"", "*"} & modes.get(key, set())):
             raise BadRequest(
                 f"「{name}」在这份模板的提示词里没有插入点"
@@ -1018,8 +1033,7 @@ def _apply_slot_text_overrides(
             raise BadRequest(f"「{name}」改写的提示词不能为空")
         if len(text) > MAX_SLOT_TEXT_OVERRIDE:
             raise BadRequest(
-                f"「{name}」改写的提示词 {len(text)} 字，"
-                f"超过上限 {MAX_SLOT_TEXT_OVERRIDE} 字"
+                f"「{name}」改写的提示词 {len(text)} 字，超过上限 {MAX_SLOT_TEXT_OVERRIDE} 字"
             )
         # 改写里可以引用**必定有素材**的槽位（必填 / 已固定）：
         # 那段话提到的别格素材一定在，编号一定成立。规则与作者侧同一套
@@ -1028,9 +1042,7 @@ def _apply_slot_text_overrides(
         # 先把作者写法（{{Mixed N}}）归一成内部写法再判 —— 改写框里
         # 预填的就是作者写法，不归一就认不出它引用了谁。
         if "{{" in text:
-            normalized = normalize_text_refs(
-                text, spec, where=f"「{name}」改写的提示词"
-            )
+            normalized = normalize_text_refs(text, spec, where=f"「{name}」改写的提示词")
             refs = set(slot_refs(normalized))
             # 改写的是「未选时文案」—— 用的正是这一格没素材的时候，
             # 所以它不能引用自己（那一格此时没有编号可指）。规范 §12 不变量 25
@@ -1091,10 +1103,7 @@ async def compile_for(
     # 而页面看起来一切正常（模型名还显示着他选的那款）。
     chosen = (payload.model or row.model).strip()
     if chosen not in effective:
-        raise BadRequest(
-            f"模型不在该模板允许的清单里：{chosen}；"
-            f"可选：{'、'.join(effective)}"
-        )
+        raise BadRequest(f"模型不在该模板允许的清单里：{chosen}；可选：{'、'.join(effective)}")
     spec = TemplateSpec(
         key=head.spec_key,
         name=head.name,
@@ -1125,9 +1134,7 @@ async def compile_for(
         spec = replace(spec, prompt=spec.random_prompt)
     # 使用者改写的「未选时文案」：同样在编译前换进 spec。顺序放在随机档之后，
     # 这样查「有没有插入点」查的就是这次真正要编的那一段。
-    spec = _apply_slot_text_overrides(
-        spec, payload.slot_text_overrides, payload.slot_values
-    )
+    spec = _apply_slot_text_overrides(spec, payload.slot_text_overrides, payload.slot_values)
     fills = await _fills(session, actor, spec, payload.slot_values)
     compiled = compile_spec(spec, fills)
     # 使用者对「运行时参数」的选择（计费模式等）：只在编译结果里生效，
@@ -1188,6 +1195,8 @@ def _checked_overrides(model_id: str, overrides: Mapping[str, Any]) -> dict[str,
     # `resolve_params` 会把它们的默认值补齐 —— 那等于使用者替作者做了决定。
     subset = {key: dict(schema[key]) for key in overrides}  # type: ignore[misc]
     return dict(resolve_params(model_id, subset, overrides))
+
+
 def _slot_core(row: TemplateSpecSlot) -> InputSlot:
     return InputSlot(
         key=row.slot_key,
@@ -1286,4 +1295,3 @@ def _compile_out(
         text_library_ids=list(compiled.text_ids),
         slots=slots,
     )
-

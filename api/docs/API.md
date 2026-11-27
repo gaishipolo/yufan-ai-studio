@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **153** 个接口 / **13** 个模块
+> 版本 `0.2.0`｜共 **159** 个接口 / **13** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -273,7 +273,7 @@ Authorization: Bearer <accessToken>
 | 资产库 | 47 | 见下方 `4.9` |
 | LLM 配置 | 5 | 见下方 `4.10` |
 | 模型驱动 | 12 | 见下方 `4.11` |
-| 模板封装 | 20 | 见下方 `4.12` |
+| 模板封装 | 26 | 见下方 `4.12` |
 | 用量看板 | 2 | 见下方 `4.13` |
 
 ### 4.1 身份（42 个）
@@ -2944,7 +2944,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 `parentId` 给父标签的 id 就建成它的下一级（最多三级）；留空建成一级。
 
-**请求体** `TagIn`
+**请求体** `modules__library__schema__TagIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -2969,7 +2969,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|---|
 | `tag_id` | path | `string` | 是 |  |
 
-**请求体** `TagIn`
+**请求体** `modules__library__schema__TagIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -3006,7 +3006,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|---|
 | `tag_id` | path | `string` | 是 |  |
 
-**请求体** `TagParentIn`
+**请求体** `modules__library__schema__TagParentIn`
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
@@ -3444,7 +3444,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.12 模板封装（20 个）
+### 4.12 模板封装（26 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3460,6 +3460,11 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `GET` | `/api/v1/template-specs` | 本人可见的规格列表 | 🔒 |
 | `GET` | `/api/v1/template-specs/limits` | 编辑页要显示的上限（存草稿 / 可发布） | 🔒 |
 | `GET` | `/api/v1/template-specs/published` | 模板库：已发布的规格卡片 | 🔒 |
+| `GET` | `/api/v1/template-specs/tags` | 模板标签词表（两级平铺，含每个标签的模板数） | 🔒 |
+| `POST` | `/api/v1/template-specs/tags` | 新建模板标签（同父同名返回已有那条） | 🔒 |
+| `PATCH` | `/api/v1/template-specs/tags/{tag_id}` | 重命名模板标签 | 🔒 |
+| `DELETE` | `/api/v1/template-specs/tags/{tag_id}` | 删除模板标签 | 🔒 |
+| `PATCH` | `/api/v1/template-specs/tags/{tag_id}/parent` | 移动模板标签层级 | 🔒 |
 | `GET` | `/api/v1/template-specs/trash` | 回收站：已软删的规格 | 🔒 |
 | `POST` | `/api/v1/template-specs/validate` | 预检模板规格（不落库） | 🔒 |
 | `GET` | `/api/v1/template-specs/{key}` | 规格详情（含草稿与最近发布） | 🔒 |
@@ -3468,6 +3473,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `POST` | `/api/v1/template-specs/{key}/disable` | 下架（历史版本保留） | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/publish` | 发布：把当前草稿冻结成新版本 | 🔒 |
 | `POST` | `/api/v1/template-specs/{key}/restore` | 从回收站恢复 | 🔒 |
+| `PATCH` | `/api/v1/template-specs/{key}/tags` | 给模板打标签（完整替换，不改草稿/不发版） | 🔒 |
 
 #### `GET /api/v1/template-cases`
 
@@ -3755,6 +3761,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `GET /api/v1/template-specs`
@@ -3765,6 +3772,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 |---|---|---|---|---|
 | `status` | query | `string` | 否 |  |
 | `keyword` | query | `string` | 否 |  |
+| `tagIds` | query | `string[] | null` | 否 |  |
 | `page` | query | `number` | 否 |  |
 | `pageSize` | query | `number` | 否 |  |
 
@@ -3797,6 +3805,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `keyword` | query | `string` | 否 |  |
+| `tagIds` | query | `string[] | null` | 否 |  |
 | `target` | query | `"all" | "replacement" | "generation"` | 否 | 按模型声明的替换能力筛：replacement / generation / all |
 | `page` | query | `number` | 否 |  |
 | `pageSize` | query | `number` | 否 |  |
@@ -3807,6 +3816,104 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 |---|---|---|---|
 | `items` | `TemplateSpecOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
+
+#### `GET /api/v1/template-specs/tags`
+
+**模板标签词表（两级平铺，含每个标签的模板数）**
+
+**响应** `ApiResponse<TagOut[]>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `[].id` | `string` | 是 |  |
+| `[].name` | `string` | 是 |  |
+| `[].parentId` | `string \| null` | 否 |  |
+| `[].parentName` | `string \| null` | 否 |  |
+| `[].depth` | `number` | 否 |  |
+| `[].specCount` | `number` | 否 |  |
+
+#### `POST /api/v1/template-specs/tags`
+
+**新建模板标签（同父同名返回已有那条）**
+
+**请求体** `modules__template_pack__spec_schema__TagIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+
+**响应** `ApiResponse<TagOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
+| `specCount` | `number` | 否 |  |
+
+#### `PATCH /api/v1/template-specs/tags/{tag_id}`
+
+**重命名模板标签**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `tag_id` | path | `string` | 是 |  |
+
+**请求体** `modules__template_pack__spec_schema__TagIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+
+**响应** `ApiResponse<TagOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
+| `specCount` | `number` | 否 |  |
+
+#### `DELETE /api/v1/template-specs/tags/{tag_id}`
+
+**删除模板标签**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `tag_id` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<null>`（前端取 `res.data`）
+
+#### `PATCH /api/v1/template-specs/tags/{tag_id}/parent`
+
+**移动模板标签层级**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `tag_id` | path | `string` | 是 |  |
+
+**请求体** `modules__template_pack__spec_schema__TagParentIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `parentId` | `string \| null` | 否 |  |
+
+**响应** `ApiResponse<TagOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
+| `specCount` | `number` | 否 |  |
 
 #### `GET /api/v1/template-specs/trash`
 
@@ -3884,6 +3991,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `DELETE /api/v1/template-specs/{key}`
@@ -3914,6 +4022,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `POST /api/v1/template-specs/{key}/compile`
@@ -3980,6 +4089,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `POST /api/v1/template-specs/{key}/publish`
@@ -4036,6 +4146,44 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
+| `latest` | `SpecVersionOut \| null` | 否 |  |
+
+#### `PATCH /api/v1/template-specs/{key}/tags`
+
+**给模板打标签（完整替换，不改草稿/不发版）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `key` | path | `string` | 是 |  |
+
+**请求体** `SpecTagsIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `tagIds` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<TemplateSpecOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `description` | `string` | 是 |  |
+| `ownerId` | `string` | 是 |  |
+| `status` | `"draft" \| "published" \| "disabled"` | 是 |  |
+| `revision` | `number` | 是 |  |
+| `fingerprint` | `string` | 是 |  |
+| `currentVersion` | `number` | 是 |  |
+| `publishedAt` | `string \| null` | 否 |  |
+| `disabledAt` | `string \| null` | 否 |  |
+| `deletedAt` | `string \| null` | 否 |  |
+| `createdAt` | `string` | 是 |  |
+| `updatedAt` | `string` | 是 |  |
+| `draft` | `TemplateSpecIn \| null` | 否 |  |
+| `demoAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 ### 4.13 用量看板（2 个）
@@ -5642,6 +5790,14 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `tagIds` | `string[]` | 否 |  |
 | `position` | `number` | 否 |  |
 
+### `SpecTagsIn`
+
+给一个模板打标签：交回**完整** id 数组（空数组 = 清空）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `tagIds` | `string[]` | 否 |  |
+
 ### `SpecValidateOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -5698,26 +5854,18 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `referenceUrls` | `string[]` | 否 |  |
 | `source` | `string` | 否 |  |
 
-### `TagIn`
+### `TagOut`
 
-新建 / 重命名标签。
-
-`parent_id` **只在新建时生效**：给一个父标签的 id 就建成它的下一级（最多三级），
-留 null 建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在
-一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。
+词表里的一条模板标签（平铺，两级：`parentId` 空 = 一级维度）。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
+| `id` | `string` | 是 |  |
 | `name` | `string` | 是 |  |
 | `parentId` | `string \| null` | 否 |  |
-
-### `TagParentIn`
-
-移动标签：`parentId` 指向一个父标签（最多到二级），`null` 表示提升为一级。
-
-| 字段 | 类型 | 必填 | 说明 |
-|---|---|---|---|
-| `parentId` | `string \| null` | 否 |  |
+| `parentName` | `string \| null` | 否 |  |
+| `depth` | `number` | 否 |  |
+| `specCount` | `number` | 否 |  |
 
 ### `TaskFeedItem`
 
@@ -5922,6 +6070,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `updatedAt` | `string` | 是 |  |
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
+| `tagIds` | `string[]` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 ### `TextAssetIn`
@@ -6235,6 +6384,27 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `aliases` | `string[]` | 否 | 兼容历史模型 id 或旧展示名的别名列表，供前端解析存量模板/任务 |
 | `isDefault` | `boolean` | 否 |  |
 
+### `modules__library__schema__TagIn`
+
+新建 / 重命名标签。
+
+`parent_id` **只在新建时生效**：给一个父标签的 id 就建成它的下一级（最多三级），
+留 null 建成一级。改名时不改层级，走 `PATCH /tags/{id}/parent`——把改名与移动混在
+一个接口里，会让「只想改个错别字」的请求顺手改变整棵树的形状。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+
+### `modules__library__schema__TagParentIn`
+
+移动标签：`parentId` 指向一个父标签（最多到二级），`null` 表示提升为一级。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `parentId` | `string \| null` | 否 |  |
+
 ### `modules__model_driver__schema__ModelListOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -6304,3 +6474,20 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `startedAt` | `string \| null` | 否 | 开始生成时间，未开始为 null |
 | `subtitleErase` | `TaskVariantOut \| null` | 否 | 去字幕版；没有派生过时为 null。前端据此显示进度与「原片/去字幕」切换 |
 | `externalId` | `string \| null` | 否 | 上游任务标识，形如 `<归档工作区>:<上游 task_id>`。**给排队查询用**：LibTV 的队列位次只能按上游 task_id 查，前端拿它拆出 task_id 去`POST /model-driver/libtv/progress`，不必由后端再存一份排队快照 |
+
+### `modules__template_pack__spec_schema__TagIn`
+
+新建 / 重命名标签。`parentId` 留空 = 一级维度。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `parentId` | `string \| null` | 否 |  |
+
+### `modules__template_pack__spec_schema__TagParentIn`
+
+移动层级。`parentId` 留空 = 提升为一级。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `parentId` | `string \| null` | 否 |  |

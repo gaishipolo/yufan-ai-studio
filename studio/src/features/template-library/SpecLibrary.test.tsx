@@ -3,10 +3,10 @@ import {render, screen, waitFor, within} from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import {MemoryRouter} from 'react-router-dom';
 import {beforeEach, describe, expect, it, vi} from 'vitest';
-import type {TemplateSpecOut} from '@/shared/api/schema';
+import type {TagOut, TemplateSpecOut} from '@/shared/api/schema';
 import {SpecLibrary} from './SpecLibrary';
 
-const {compileMock, createTaskMock, generateImageMock, modelsMock, specState, publishedState} = vi.hoisted(() => ({
+const {compileMock, createTaskMock, generateImageMock, modelsMock, specState, publishedState, publishedTagCalls, tagState} = vi.hoisted(() => ({
   compileMock: vi.fn(),
   createTaskMock: vi.fn(),
   generateImageMock: vi.fn(),
@@ -14,17 +14,24 @@ const {compileMock, createTaskMock, generateImageMock, modelsMock, specState, pu
   /* 当前发布的规格。用例可以换掉它来测另一种槽位配置。 */
   specState: {current: null as unknown},
   publishedState: {isError: false, error: null as unknown, refetch: vi.fn()},
+  /* 筛选条选中后传给 usePublishedSpecs 的 tagIds —— 守卫「真的发后端筛了」。 */
+  publishedTagCalls: [] as string[][],
+  tagState: {current: [] as TagOut[]},
 }));
 
 vi.mock('@/entities/template-spec/api/spec.queries', () => ({
-  usePublishedSpecs: () => ({
-    data: publishedState.isError ? undefined : {items: [specState.current], total: 1},
-    isLoading: false,
-    isError: publishedState.isError,
-    error: publishedState.error,
-    isFetching: false,
-    refetch: publishedState.refetch,
-  }),
+  usePublishedSpecs: (tagIds: string[] = []) => {
+    publishedTagCalls.push(tagIds);
+    return {
+      data: publishedState.isError ? undefined : {items: [specState.current], total: 1},
+      isLoading: false,
+      isError: publishedState.isError,
+      error: publishedState.error,
+      isFetching: false,
+      refetch: publishedState.refetch,
+    };
+  },
+  useTemplateTags: () => ({data: tagState.current, isPending: false}),
   useSpecCompile: () => ({mutateAsync: compileMock, isPending: false}),
 }));
 
@@ -144,8 +151,32 @@ const LIBTV = {
   },
 };
 
+/** 模板独立的两级标签词表（与素材库词表无关）。 */
+const TEMPLATE_TAGS: TagOut[] = [
+  {id: 'tt-product', name: '产品', depth: 1, specCount: 2},
+  {id: 'tt-style', name: '画面风格', depth: 1, specCount: 1},
+  {
+    id: 'tt-6036',
+    name: '6036',
+    parentId: 'tt-product',
+    parentName: '产品',
+    depth: 2,
+    specCount: 1,
+  },
+  {
+    id: 'tt-real',
+    name: '写实',
+    parentId: 'tt-style',
+    parentName: '画面风格',
+    depth: 2,
+    specCount: 1,
+  },
+];
+
 beforeEach(() => {
   specState.current = SPEC;
+  tagState.current = TEMPLATE_TAGS;
+  publishedTagCalls.length = 0;
   modelsMock.mockImplementation((capability: string) =>
     capability === 'video' ? [LIBTV] : [],
   );
@@ -594,5 +625,74 @@ describe('模板库：右栏', () => {
     ]);
     renderLibrary();
     await waitFor(() => expect(screen.getAllByText('LibTV · Wan 3.0').length).toBeGreaterThan(0));
+  });
+});
+
+/**
+ * 模板独立标签：卡片展示 + 顶部两行筛选。
+ *
+ * 三处守卫各管一段链路，缺任何一段都会红：
+ * 1. 卡片下方不再有插槽状态 chip，而是词表映射出的标签胶囊；
+ * 2. 筛选条真的有两行，且行标题写明组合语义；
+ * 3. 选中项作为 `tagIds` 交给 `usePublishedSpecs`（后端筛选），不是只在本地.hide。
+ */
+describe('模板库：标签筛选与卡片标签', () => {
+  beforeEach(() => {
+    specState.current = {...SPEC, tagIds: ['tt-6036']};
+  });
+
+  it('卡片下方不再摆插槽 chip，改摆模板标签胶囊', async () => {
+    renderLibrary();
+
+    const card = await screen.findByRole('button', {name: /商品替换/});
+    expect(within(card).queryByText(/待填/)).toBeNull();
+    expect(within(card).queryByText('纯提示词')).toBeNull();
+    expect(within(card).queryByText('素材已固定')).toBeNull();
+    /* 类型徽章也随插槽 chip 一起撤掉（右栏的槽位标签不在这张卡里）。 */
+    expect(within(card).queryByText('图片')).toBeNull();
+    expect(within(card).queryByText('成片')).toBeNull();
+    /* 版本号角标 / 填写入口仍在。 */
+    expect(within(card).getByText('v3')).toBeInTheDocument();
+    expect(within(card).getByText(/填写/)).toBeInTheDocument();
+    expect(within(card).getByTitle('产品 / 6036')).toBeInTheDocument();
+  });
+
+  it('筛选条两行都在，行标题写明同维度「或」、跨维度「且」', async () => {
+    renderLibrary();
+
+    const dimension = await screen.findByRole('group', {name: '模板维度标签'});
+    const value = screen.getByRole('group', {name: '模板取值标签'});
+    expect(within(dimension).getByText('维度').title).toContain('或');
+    expect(within(value).getByText('取值').title).toContain('且');
+    expect(within(dimension).getByRole('button', {name: /产品/})).toBeInTheDocument();
+    expect(within(value).getByRole('button', {name: /6036/})).toBeInTheDocument();
+  });
+
+  it('选中标签后把 tagIds 交给 usePublishedSpecs 发后端筛选', async () => {
+    const user = userEvent.setup();
+    renderLibrary();
+
+    const dimension = await screen.findByRole('group', {name: '模板维度标签'});
+    await user.click(within(dimension).getByRole('button', {name: /产品/}));
+
+    await waitFor(() => {
+      expect(publishedTagCalls[publishedTagCalls.length - 1]).toContain('tt-product');
+    });
+  });
+
+  it('选了维度后取值行只留该维度下的取值，没选维度时列全部', async () => {
+    const user = userEvent.setup();
+    renderLibrary();
+
+    const dimension = await screen.findByRole('group', {name: '模板维度标签'});
+    const value = screen.getByRole('group', {name: '模板取值标签'});
+    expect(within(value).getByRole('button', {name: /6036/})).toBeInTheDocument();
+
+    await user.click(within(dimension).getByRole('button', {name: /画面风格/}));
+
+    await waitFor(() =>
+      expect(within(value).queryByRole('button', {name: /6036/})).toBeNull(),
+    );
+    expect(within(value).getByRole('button', {name: /写实/})).toBeInTheDocument();
   });
 });

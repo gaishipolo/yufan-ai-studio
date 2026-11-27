@@ -36,7 +36,6 @@ _SPEC_KEY = r"^[a-z][a-z0-9_-]{0,39}$"
 _GROUP = r"^(|[a-z][a-z0-9_]{0,39})$"
 
 
-
 class StrictIn(CamelModel):
     """入参拒绝未声明的键：少一个拼写错误就变成"配置被静默忽略"。"""
 
@@ -181,9 +180,7 @@ class SpecSlotIn(StrictIn):
         if not isinstance(data, dict):
             return data
         legacy = [
-            key
-            for key in ("packId", "packVersion", "pack_id", "pack_version")
-            if key in data
+            key for key in ("packId", "packVersion", "pack_id", "pack_version") if key in data
         ]
         if not legacy:
             return data
@@ -292,6 +289,8 @@ class TemplateSpecOut(CamelModel):
     draft: TemplateSpecIn | None = None
     #: 展示案例（图片/视频资产 id）。存在草稿里，不进发布快照 —— 改案例不用发新版。
     demo_asset_id: str | None = None
+    #: 模板自身的标签 id（template_tags）。独立于 draft，改了立即生效、不发版。
+    tag_ids: list[str] = Field(default_factory=list)
     #: 最近一次发布；为空表示从未发布。
     latest: SpecVersionOut | None = None
 
@@ -403,3 +402,52 @@ class SpecLimitsOut(CamelModel):
 
     prompt_max: int = MAX_PROMPT
     prompt_execution_limit: int = EXECUTION_PROMPT_LIMIT
+
+
+# ---- 模板独立标签词表（2026-11-27）----
+# 与素材库词表互不影响：模板的分类轴是另一回事。标签存在 head 的 tag_ids
+# JSON 列，改了立即生效，不进发布快照。
+
+#: 一个模板最多挂多少标签（与 tags.py 同口径）。
+MAX_SPEC_TAGS = 40
+MAX_TAG_NAME = 40
+
+
+class TagOut(CamelModel):
+    """词表里的一条模板标签（平铺，两级：`parentId` 空 = 一级维度）。"""
+
+    id: str
+    name: str
+    parent_id: str | None = None
+    #: 父的整条链；两级下就是一级维度名（如「用途」）。
+    parent_name: str | None = None
+    #: 1 = 维度（分组），2 = 取值（可打在模板上）
+    depth: int = 1
+    #: 挂了这个标签（或其下级）的模板数
+    spec_count: int = 0
+
+
+class TagIn(StrictIn):
+    """新建 / 重命名标签。`parentId` 留空 = 一级维度。"""
+
+    name: str = Field(min_length=1, max_length=MAX_TAG_NAME)
+    parent_id: str | None = Field(default=None, max_length=32)
+
+
+class TagParentIn(StrictIn):
+    """移动层级。`parentId` 留空 = 提升为一级。"""
+
+    parent_id: str | None = Field(default=None, max_length=32)
+
+
+class SpecTagsIn(StrictIn):
+    """给一个模板打标签：交回**完整** id 数组（空数组 = 清空）。"""
+
+    tag_ids: list[str] = Field(default_factory=list, max_length=MAX_SPEC_TAGS)
+
+    @field_validator("tag_ids")
+    @classmethod
+    def _no_dupes(cls, value: list[str]) -> list[str]:
+        if len(value) != len(set(value)):
+            raise ValueError("标签不能重复")
+        return value

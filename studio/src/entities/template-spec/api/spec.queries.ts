@@ -1,6 +1,10 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useSessionStore } from '@/shared/access/session';
-import type { SpecCompileIn } from '@/shared/api/schema';
+import type {
+  SpecCompileIn,
+  modules__template_pack__spec_schema__TagIn,
+  modules__template_pack__spec_schema__TagParentIn,
+} from '@/shared/api/schema';
 import { specApi } from './spec.api';
 
 /** 列表与详情共用一个前缀；发布/停用会改状态，失效范围覆盖同前缀。 */
@@ -10,11 +14,17 @@ export const specKeys = {
   detail: (owner: string, key: string) => [...specKeys.all(owner), 'detail', key] as const,
 };
 
-export function useSpecs(status = '') {
+/** 标签筛选必须进 queryKey：否则从「产品」切到「角色」会读到上一组缓存。 */
+export function useSpecs(status = '', tagIds: string[] = []) {
   const owner = useSessionStore(s => s.subject.id);
   return useQuery({
-    queryKey: specKeys.list(owner, status),
-    queryFn: () => specApi.list({status: status || undefined, pageSize: 100}),
+    queryKey: [...specKeys.list(owner, status), 'tags', tagIds],
+    queryFn: () =>
+      specApi.list({
+        status: status || undefined,
+        tagIds: tagIds.length ? tagIds : undefined,
+        pageSize: 100,
+      }),
   });
 }
 
@@ -43,11 +53,24 @@ export function useSpecLimits() {
 }
 
 /** 模板库（填表）读的是**已发布**的规格，与「我的草稿」不是一个集合。 */
-export function usePublishedSpecs() {
+export function usePublishedSpecs(tagIds: string[] = []) {
   const owner = useSessionStore(s => s.subject.id);
   return useQuery({
-    queryKey: [...specKeys.all(owner), 'published'],
-    queryFn: () => specApi.published({pageSize: 100}),
+    queryKey: [...specKeys.all(owner), 'published', tagIds],
+    queryFn: () =>
+      specApi.published({
+        tagIds: tagIds.length ? tagIds : undefined,
+        pageSize: 100,
+      }),
+  });
+}
+
+/** 模板独立标签词表。词表改动影响所有模板卡片，缓存 30 秒够用。 */
+export function useTemplateTags() {
+  return useQuery({
+    queryKey: ['template-specs', 'tags'],
+    queryFn: specApi.tags,
+    staleTime: 30_000,
   });
 }
 
@@ -77,4 +100,45 @@ export function useSpecMutations() {
     remove: useMutation({mutationFn: specApi.remove, onSettled: refresh}),
     restore: useMutation({mutationFn: specApi.restore, onSettled: refresh}),
   };
+}
+
+/** 词表管理（改名/移动/删除会改所有模板卡片上的标签显示）。 */
+export function useTemplateTagMutations() {
+  const client = useQueryClient();
+  const refresh = () => {
+    void client.invalidateQueries({queryKey: ['template-specs', 'tags']});
+    void client.invalidateQueries({queryKey: ['template-specs']});
+  };
+  return {
+    create: useMutation({
+      mutationFn: (payload: modules__template_pack__spec_schema__TagIn) => specApi.createTag(payload),
+      onSettled: refresh,
+    }),
+    rename: useMutation({
+      mutationFn: ({id, payload}: {id: string; payload: modules__template_pack__spec_schema__TagIn}) =>
+        specApi.renameTag(id, payload),
+      onSettled: refresh,
+    }),
+    move: useMutation({
+      mutationFn: ({id, payload}: {id: string; payload: modules__template_pack__spec_schema__TagParentIn}) =>
+        specApi.moveTag(id, payload),
+      onSettled: refresh,
+    }),
+    remove: useMutation({
+      mutationFn: (id: string) => specApi.deleteTag(id),
+      onSettled: refresh,
+    }),
+  };
+}
+
+/** 给模板打标签：只改 head 的 tag_ids，不碰草稿/发布。 */
+export function useSpecTagMutations() {
+  const client = useQueryClient();
+  return useMutation({
+    mutationFn: ({key, tagIds}: {key: string; tagIds: string[]}) =>
+      specApi.setTags(key, {tagIds}),
+    onSettled: () => {
+      void client.invalidateQueries({queryKey: ['template-specs']});
+    },
+  });
 }
