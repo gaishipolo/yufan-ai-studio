@@ -35,14 +35,19 @@ import hashlib
 import json
 import os
 import tempfile
-from collections.abc import Collection, Sequence
+from collections.abc import Sequence
 from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 
 from core.config import ENV_FILE
+from infra.env_lock import env_write_lock
 from infra.llm.providers import source as provider_source
-from infra.llm.providers.openai_compatible import MAX_CHAIN, parse_model_chain
+from infra.llm.providers.openai_compatible import (
+    MAX_CHAIN,
+    get_llm_settings,
+    parse_model_chain,
+)
 from infra.llm.providers.source import (
     MAX_MODELS,
     discover_provider_names,
@@ -237,7 +242,18 @@ def _validate_base_url(url: str) -> str:
         raise ValueError("网关地址必须是完整的 http(s) URL")
     if parts.username or parts.password or parts.query or parts.fragment:
         raise ValueError("网关地址不能带账号、查询串或片段")
-    validate_public_url(url)
+
+    host = (parts.hostname or "").lower()
+    netloc = parts.netloc.rsplit("@", 1)[-1].lower()
+    allowed = get_llm_settings().allowed_host_set()
+    # 白名单是**额外**放行，不是替换公网校验：没登记的主机仍按公网规则校验。
+    if host not in allowed and netloc not in allowed:
+        try:
+            validate_public_url(url)
+        except ValueError as exc:
+            raise ValueError(
+                f"{exc}；如果这是私网/本机网关，请把主机加入 LLM_ALLOWED_HOSTS"
+            ) from exc
     return url.rstrip("/")
 
 
@@ -273,7 +289,21 @@ def save_provider(
     if len(models) > MAX_MODELS:
         raise ValueError(f"模型最多 {MAX_MODELS} 个")
     models = _normalize_models(name, models)
+    clean_url = _validate_base_url(_validate_value("网关地址", base_url))
+    # 读-改-写整段加锁：另一个页面/进程同时保存时不能丢更新。
+    with env_write_lock():
+        return _save_provider_locked(
+            name=name, clean_url=clean_url, api_key=api_key, models=models
+        )
 
+
+def _save_provider_locked(
+    *,
+    name: str,
+    clean_url: str,
+    api_key: str,
+    models: tuple[ModelMapping, ...],
+) -> ProviderOut:
     lines = read_lines()
     before = read_file_values()
     # `default` 直接写 LLM_* —— 与运行时 LLMSettings 前缀一致，不再"迁移"到
@@ -287,7 +317,6 @@ def save_provider(
         else ()
     )
 
-    clean_url = _validate_base_url(_validate_value("网关地址", base_url))
     changes: dict[str, str] = {url_key: clean_url}
 
     if api_key.strip():
@@ -352,21 +381,31 @@ def _normalize_chain(models: Sequence[str]) -> tuple[str, ...]:
     return tuple(chain)
 
 
-def save_model_chain(models: Sequence[str], *, known: Collection[str]) -> tuple[str, ...]:
-    """保存默认模型/降级顺序；每个 id 必须已存在于某个供应商的模型映射里。"""
+def save_model_chain(models: Sequence[str]) -> tuple[str, ...]:
+    """保存默认模型/降级顺序；每个 id 必须已存在于某个供应商的模型映射里。
+
+    校验与写入在同一把锁内完成：否则「列表里还有 → 另一个页面删掉供应商 →
+    链写入」会留下指向不存在模型的链。
+    """
     chain = _normalize_chain(models)
-    unknown = [model_id for model_id in chain if model_id not in known]
-    if unknown:
-        raise ValueError("这些模型不在任何供应商的模型映射里：" + "、".join(unknown))
     if MODEL_CHAIN_KEY in os.environ:
         raise ValueError(f"这些项由进程环境变量提供，不能在页面改：{MODEL_CHAIN_KEY}")
 
-    lines = read_lines()
-    changes = {MODEL_CHAIN_KEY: _validate_value("模型优先链", _encode_chain(chain))}
-    _atomic_write(_replace_lines(lines, changes))
-    from infra.env_settings import clear_cache
+    with env_write_lock():
+        current = {
+            model.id
+            for provider in list_providers().providers
+            for model in provider.models
+        }
+        unknown = [model_id for model_id in chain if model_id not in current]
+        if unknown:
+            raise ValueError("这些模型不在任何供应商的模型映射里：" + "、".join(unknown))
+        lines = read_lines()
+        changes = {MODEL_CHAIN_KEY: _validate_value("模型优先链", _encode_chain(chain))}
+        _atomic_write(_replace_lines(lines, changes))
+        from infra.env_settings import clear_cache
 
-    clear_cache()
+        clear_cache()
     return chain
 
 
@@ -378,24 +417,27 @@ def delete_provider(name: str) -> None:
         keys.update(
             ("LLM_DEFAULT_BASE_URL", "LLM_DEFAULT_API_KEY", "LLM_DEFAULT_MODELS", "LLM_MODEL")
         )
-    lines = read_lines()
-    values = read_file_values()
-    overridden = [k for k in keys if k in os.environ]
-    if overridden:
-        raise ValueError("这些项由进程环境变量提供，不能删除：" + "、".join(sorted(overridden)))
-    if not any(k in values for k in keys):
-        raise ValueError(f"供应商 {name} 不存在")
-    kept = [
-        line
-        for line in lines
-        if not ((match := _LINE_RE.match(line)) is not None and match.group(1) in keys)
-    ]
-    changes: dict[str, str] = {}
-    _prune_chain(changes, name, ())
-    _atomic_write(_replace_lines(kept, changes) if changes else kept)
-    from infra.env_settings import clear_cache
+    with env_write_lock():
+        lines = read_lines()
+        values = read_file_values()
+        overridden = [k for k in keys if k in os.environ]
+        if overridden:
+            raise ValueError(
+                "这些项由进程环境变量提供，不能删除：" + "、".join(sorted(overridden))
+            )
+        if not any(k in values for k in keys):
+            raise ValueError(f"供应商 {name} 不存在")
+        kept = [
+            line
+            for line in lines
+            if not ((match := _LINE_RE.match(line)) is not None and match.group(1) in keys)
+        ]
+        changes: dict[str, str] = {}
+        _prune_chain(changes, name, ())
+        _atomic_write(_replace_lines(kept, changes) if changes else kept)
+        from infra.env_settings import clear_cache
 
-    clear_cache()
+        clear_cache()
 
 
 def _replace_lines(lines: list[str], changes: dict[str, str]) -> list[str]:

@@ -21,6 +21,7 @@
 | 2026-11-27 | 请求/响应硬化：保留键不可从 `params` 覆盖；200 假成功/缺 choices 报 `UpstreamError`；content 片段只取文本；上游错误正文脱敏密钥 | §4.1 |
 | 2026-11-27 | 配置校验一致性：坏模型表按供应商隔离为 `configError`、坏链为 `modelChainError`；运行时明确 400；100 个模型上限与 32 KiB 行长对齐 | §5.5 |
 | 2026-11-27 | 运维端点：`test` 未知模型 400、超时用供应商配置；`fetch`/`test` 成功写审计 | §5.6 |
+| 2026-11-27 | 部署/权限边界：`.env` 读-改-写共享文件锁；`LLM_ALLOWED_HOSTS` 私网白名单；写权限可用已存密钥出网（文档/审计说明） | §5.7 |
 
 ---
 
@@ -275,6 +276,12 @@ LLM_MODEL_CHAIN=["minimax/flash","llm/qwen-plus","bailian/deepseek-v3"]
 - `POST /providers/{name}/test` 的 `modelId` 留空取该供应商第一个模型；显式传了但不在映射里一律 400，不静默回落。
 - 连通测试的超时与正式调用同源：default 用 `LLM_TIMEOUT_SEC`，具名用 `LLM_<NAME>_TIMEOUT_SEC`；不再写死 30s，避免推理模型被误判为连不通。
 - `models:fetch` 与 `provider/test` 成功后写审计：只记供应商、模型 id、结果与 token 用量，不记密钥与回复正文。
+
+### 5.7 部署与权限边界（2026-11-27）
+
+- **`.env` 写锁**：LLM 配置页与模型运维页的「读整个 `.env` → 改 → 原子替换」共用 `infra/env_lock.py` 的文件锁（Windows `msvcrt` / POSIX `fcntl`），锁区间覆盖整个读-改-写，跨进程避免丢更新；超时 10 秒按 409 返回，不无限等待。
+- **私网白名单**：页面保存网关仍默认只允许公网；`LLM_ALLOWED_HOSTS`（逗号分隔，host 或 host:port）里的主机额外放行，用于 Ollama / VPC 内 one-api。白名单是**额外**放行，不替换公网校验；未登记的主机照常走 `validate_public_url`。
+- **写权限边界**：`llm_config:write` 可以修改网关并用已存密钥发起连通测试——这等价于能让密钥出网到新网关，所以权限描述里写明"只授予运维"；保存供应商、拉取模型、连通测试的审计都记录网关地址。不强制改网关时重填密钥（按 2026-11-27 拍板保留现状）。
 
 ---
 

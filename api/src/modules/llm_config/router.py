@@ -123,8 +123,12 @@ async def put_provider(
         actor_id=actor.id,
         target_type="llm_provider",
         target_id=result.name,
-        # 审计只记「改了哪家、几个模型」，绝不记密钥/网关明文
-        detail={"models": len(result.models), "api_key_changed": bool(payload.api_key.strip())},
+        # 审计只记「改了哪家、几个模型、网关」，绝不记密钥
+        detail={
+            "models": len(result.models),
+            "api_key_changed": bool(payload.api_key.strip()),
+            "base_url": result.base_url,
+        },
     )
     return ApiResponse.ok(_provider_out(result))
 
@@ -161,9 +165,7 @@ async def put_model_chain(
     等于把故障留到调用时；这里当场拒掉。
     """
     try:
-        result = await run_in_threadpool(list_providers)
-        known = {model.id for provider in result.providers for model in provider.models}
-        chain = await run_in_threadpool(save_model_chain, payload.models, known=known)
+        chain = await run_in_threadpool(save_model_chain, payload.models)
     except ValueError as exc:
         raise BadRequest(str(exc)) from exc
     await audit(
@@ -219,8 +221,8 @@ async def fetch_models(
         actor_id=actor.id,
         target_type="llm_provider",
         target_id=name,
-        # 只记数量；模型名不是密钥，但没必要把整张表塞进审计
-        detail={"models": len(ids)},
+        # 只记数量与网关；模型名不是密钥，网关是管理员可见的配置
+        detail={"models": len(ids), "base_url": provider.base_url},
     )
     return ApiResponse.ok(FetchModelsOut(models=ids))
 
@@ -284,9 +286,10 @@ async def test_provider(
         actor_id=actor.id,
         target_type="llm_provider",
         target_id=name,
-        # 记连通性结果与 token 用量；不记回复正文
+        # 记连通性结果、网关与 token 用量；不记密钥与回复正文
         detail={
             "model": mapping.id,
+            "base_url": config.base_url,
             "finish_reason": answer.finish_reason,
             "prompt_tokens": answer.usage.prompt_tokens,
             "completion_tokens": answer.usage.completion_tokens,

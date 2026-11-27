@@ -43,6 +43,8 @@ class LLMSettings(DriverSettings):
     # 全局模型优先/降级链（JSON 数组，第一项为默认模型）。只有 `llm/default`
     # 走这条链；链项形如 `llm/qwen-plus` 或 `minimax/flash`。
     model_chain: str = ""
+    # 页面保存网关时允许的私网/本机主机（逗号分隔）。空 = 只允许公网。
+    allowed_hosts: str = ""
 
     # V1 没有业务场景：生产不配 LLM 也应当能起。等真接业务再加入必填。
     # ClassVar 必须保留：写成普通字段会被 pydantic 当成 env 项，
@@ -75,6 +77,11 @@ class LLMSettings(DriverSettings):
     def model_chain_ids(self) -> tuple[str, ...]:
         """解析 ``LLM_MODEL_CHAIN``；坏值抛 ``ValueError``（由调用方转 400）。"""
         return parse_model_chain(self.model_chain)
+
+    def allowed_host_set(self) -> frozenset[str]:
+        """``LLM_ALLOWED_HOSTS``：页面允许保存的私网/本机主机（可含端口）。"""
+        raw = self.allowed_hosts.replace(";", ",")
+        return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
 
 
 get_llm_settings = vendor_settings(LLMSettings, env_prefix="LLM")

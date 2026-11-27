@@ -288,7 +288,7 @@ def test_页面保存default后llm_default可用(clean_env: None) -> None:
         api_key="sk-real",
         models=(ModelMapping("llm/flash", "MiniMax-M3.1-Flash"), ModelMapping("llm/pro", "Pro")),
     )
-    save_model_chain(["llm/flash"], known={"llm/flash", "llm/pro"})
+    save_model_chain(["llm/flash"])
 
     settings = get_llm_settings()
     assert settings.model_chain_ids() == ("llm/flash",)
@@ -309,8 +309,7 @@ def test_保存或删除供应商会剪掉降级链里的失效模型(clean_env:
         api_key="k",
         models=(ModelMapping("bailian/qwen", "Q"),),
     )
-    known = {"minimax/flash", "minimax/pro", "bailian/qwen"}
-    save_model_chain(["minimax/pro", "minimax/flash", "bailian/qwen"], known=known)
+    save_model_chain(["minimax/pro", "minimax/flash", "bailian/qwen"])
 
     # 从供应商里移除 minimax/pro → 链里对应项必须一起消失
     save_provider(
@@ -327,13 +326,13 @@ def test_保存或删除供应商会剪掉降级链里的失效模型(clean_env:
 
 def test_模型优先链的校验(clean_env: None) -> None:
     with pytest.raises(ValueError, match="llm/default"):
-        save_model_chain(["llm/default"], known={"llm/default"})
+        save_model_chain(["llm/default"])
     with pytest.raises(ValueError, match="不在任何供应商"):
-        save_model_chain(["ghost/x"], known=set())
+        save_model_chain(["ghost/x"])
     with pytest.raises(ValueError, match="重复"):
-        save_model_chain(["llm/a", "llm/a"], known={"llm/a"})
+        save_model_chain(["llm/a", "llm/a"])
     with pytest.raises(ValueError, match="不能为空"):
-        save_model_chain([""], known={"llm/a"})
+        save_model_chain([""])
 
 
 def test_模型优先链被环境变量覆盖时拒绝页面保存(
@@ -341,7 +340,7 @@ def test_模型优先链被环境变量覆盖时拒绝页面保存(
 ) -> None:
     monkeypatch.setenv("LLM_MODEL_CHAIN", '["llm/a"]')
     with pytest.raises(ValueError, match="环境变量"):
-        save_model_chain([], known=set())
+        save_model_chain([])
 
 
 def test_坏模型列表只影响该供应商并返回configError(clean_env: None) -> None:
@@ -410,3 +409,65 @@ def test_供应商超时来自环境变量(clean_env: None, monkeypatch: pytest.
     monkeypatch.setenv("LLM_X_TIMEOUT_SEC", "not-a-number")
     with pytest.raises(ValueError, match="不是数字"):
         provider_config("x")
+
+
+def test_私网网关需要LLM_ALLOWED_HOSTS(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from infra.env_settings import clear_cache
+
+    clear_cache()
+    with pytest.raises(ValueError, match="LLM_ALLOWED_HOSTS"):
+        save_provider(
+            "local",
+            base_url="http://127.0.0.1:11434/v1",
+            api_key="k",
+            models=(),
+        )
+
+    monkeypatch.setenv("LLM_ALLOWED_HOSTS", "127.0.0.1")
+    save_provider(
+        "local",
+        base_url="http://127.0.0.1:11434/v1",
+        api_key="k",
+        models=(),
+    )
+    assert list_providers().providers[0].base_url == "http://127.0.0.1:11434/v1"
+
+    # 白名单是额外放行，不是替换公网校验：未登记的其他私网仍拒
+    with pytest.raises(ValueError, match="LLM_ALLOWED_HOSTS"):
+        save_provider(
+            "other",
+            base_url="http://10.0.0.5:8000/v1",
+            api_key="k",
+            models=(),
+        )
+
+    # 公网主机不受白名单影响
+    save_provider(
+        "public",
+        base_url="https://api.example.com/v1",
+        api_key="k",
+        models=(),
+    )
+
+
+def test_保存删除与模型链都持有env写锁(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from contextlib import contextmanager
+
+    import modules.llm_config.store as store_module
+
+    calls: list[int] = []
+
+    @contextmanager
+    def spy():
+        calls.append(1)
+        yield
+
+    monkeypatch.setattr(store_module, "env_write_lock", spy)
+    store_module.save_provider(
+        "x", base_url="https://x.example/v1", api_key="k", models=()
+    )
+    store_module.save_model_chain([])
+    store_module.delete_provider("x")
+    assert len(calls) == 3

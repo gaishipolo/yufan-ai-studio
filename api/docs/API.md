@@ -162,7 +162,7 @@ Authorization: Bearer <accessToken>
 | 权限码 | 名称 | 说明 |
 |---|---|---|
 | `llm_config:read` | 查看 LLM 供应商与模型配置 |  |
-| `llm_config:write` | 修改 LLM 供应商、模型映射并发起连通测试 |  |
+| `llm_config:write` | 修改 LLM 供应商、网关、模型映射并发起连通测试（写权限可用已存密钥出网，只授予运维） |  |
 | `model_driver:config:read` | 查看运行时配置 | 查看域名白名单与供应商接入状态；密钥只显示脱敏掩码与指纹，不显示明文 |
 | `model_driver:config:write` | 修改运行时配置 | 修改域名白名单与供应商密钥/地址，写回服务实际读取的 .env；下一次请求即生效。高危：白名单是 SSRF 防线，写错会让外部链接被当成可信来源 |
 | `model_driver:refresh` | 刷新模型驱动目录 | 重新扫描驱动目录，把新增的驱动文件热接上（进程级：只影响本实例，多实例各自收敛）。改已加载的文件不热替换，要重启才生效 |

@@ -248,6 +248,9 @@ function ProviderEditor({
             aria-label="网关地址"
             required
           />
+          <p className="mt-1 text-meta text-ink-mute">
+            私网/本机地址（如 http://127.0.0.1:11434/v1）需先在 LLM_ALLOWED_HOSTS 登记。
+          </p>
         </FormField>
         <FormField label="密钥" htmlFor="llm-api-key">
           <TextInput
@@ -581,6 +584,11 @@ export default function LlmConfigPage() {
           )
         }
       />
+
+      <p className="text-meta text-ink-mute">
+        写权限可修改网关并用已存密钥发起连通测试，请只授予运维；私网/本机网关需先在
+        <code className="mx-1">LLM_ALLOWED_HOSTS</code>里登记主机。
+      </p>
 
       {notice && (
         <Notice tone="info" title="操作结果" onClose={() => setNotice(null)}>

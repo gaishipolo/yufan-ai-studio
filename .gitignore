@@ -26,6 +26,8 @@ api/src/var/*
 .env
 .env.local
 .env.*.local
+# 读-改-写互斥用的锁文件（不是配置内容）
+.env.lock
 # 切换驱动前的手工备份（`cp .env .env.bak-...`），含明文密钥
 .env.bak*
 

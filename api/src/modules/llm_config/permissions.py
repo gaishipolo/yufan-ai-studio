@@ -19,7 +19,7 @@ SPECS = (
     ),
     PermissionSpec(
         PERM_WRITE,
-        "修改 LLM 供应商、模型映射并发起连通测试",
+        "修改 LLM 供应商、网关、模型映射并发起连通测试（写权限可用已存密钥出网，只授予运维）",
         group="运维",
         pages=(PAGE,),
     ),

@@ -9,6 +9,7 @@
 
 写入机制（解析 env、原子替换）是本模块内部实现，不跨模块复用；
 热生效缓存本身在 `infra/env_settings.py`，那里不含任何供应商名。
+读-改-写互斥锁在 `infra/env_lock.py`，与 LLM 配置页共用同一把锁。
 
 ## 清单从哪来
 
@@ -51,6 +52,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from core.config import ENV_FILE
+from infra.env_lock import env_write_lock
 from infra.env_settings import clear_cache
 from infra.http import validate_public_url
 
@@ -384,7 +386,12 @@ def apply_updates(values: dict[str, str]) -> ConfigUpdate:
     unknown = set(values) - set(_FIELDS_BY_KEY)
     if unknown:
         raise ValueError("不支持编辑的配置项：" + "、".join(sorted(unknown)))
+    # 与 LLM 配置页共用同一把 `.env` 写锁：两个页面同时保存时不能丢更新。
+    with env_write_lock():
+        return _apply_updates_locked(values)
 
+
+def _apply_updates_locked(values: dict[str, str]) -> ConfigUpdate:
     lines = _read_env_lines()
     before = _env_file_values(lines)
     skipped = tuple(
