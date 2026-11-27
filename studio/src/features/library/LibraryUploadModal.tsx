@@ -249,6 +249,9 @@ export function LibraryUploadModal({ open, tags, onClose }: LibraryUploadModalPr
             emptyText="还没有可用标签"
             disabled={busy}
             ariaLabel="上传标签"
+            /* 标签词表几十条，翻列表找一条很慢；搜索框放在下拉列表上方。 */
+            searchable
+            searchPlaceholder="搜索标签，如 6036 / 正面图"
           />
         </div>
 

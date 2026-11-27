@@ -180,4 +180,68 @@ describe('MultiSelect', () => {
       expect(screen.getByTestId('picked')).toHaveTextContent('t1');
     });
   });
+
+  describe('搜索（searchable）', () => {
+    function SearchHarness() {
+      const [value, setValue] = useState<string[]>([]);
+      return (
+        <>
+          <MultiSelect
+            options={OPTIONS}
+            value={value}
+            onChange={setValue}
+            ariaLabel="标签"
+            searchable
+          />
+          <output data-testid="picked">{value.join(',')}</output>
+        </>
+      );
+    }
+
+    it('搜索框在列表上方，按关键字过滤候选', async () => {
+      const user = userEvent.setup();
+      render(<SearchHarness />);
+      await user.click(screen.getByRole('button', { name: '标签' }));
+
+      const search = screen.getByRole('searchbox', { name: '搜索标签' });
+      expect(search).toBeInTheDocument();
+      await user.type(search, '乐');
+
+      expect(screen.getByRole('checkbox', { name: '音乐' })).toBeInTheDocument();
+      expect(screen.queryByRole('checkbox', { name: '音效' })).not.toBeInTheDocument();
+    });
+
+    it('搜索不改动已选中的项', async () => {
+      const user = userEvent.setup();
+      render(<SearchHarness />);
+      await user.click(screen.getByRole('button', { name: '标签' }));
+      await user.click(screen.getByRole('checkbox', { name: '音乐' }));
+      await user.type(screen.getByRole('searchbox', { name: '搜索标签' }), '乐');
+
+      expect(screen.getByRole('checkbox', { name: '音乐' })).toBeChecked();
+      expect(screen.getByTestId('picked')).toHaveTextContent('t1');
+    });
+
+    it('搜不到时说清没匹配，而不是当成「还没有标签」', async () => {
+      const user = userEvent.setup();
+      render(<SearchHarness />);
+      await user.click(screen.getByRole('button', { name: '标签' }));
+      await user.type(screen.getByRole('searchbox', { name: '搜索标签' }), '不存在');
+
+      expect(screen.getByText(/没有匹配/)).toBeInTheDocument();
+      expect(screen.queryByText('还没有标签')).not.toBeInTheDocument();
+    });
+
+    it('关闭再展开时清空上次搜索，不会只显示那一两条', async () => {
+      const user = userEvent.setup();
+      render(<SearchHarness />);
+      await user.click(screen.getByRole('button', { name: '标签' }));
+      await user.type(screen.getByRole('searchbox', { name: '搜索标签' }), '音乐');
+      await user.click(screen.getByRole('button', { name: '标签' })); // 收起
+      await user.click(screen.getByRole('button', { name: '标签' })); // 再展开
+
+      expect(screen.getByRole('searchbox', { name: '搜索标签' })).toHaveValue('');
+      expect(screen.getByRole('checkbox', { name: '音效' })).toBeInTheDocument();
+    });
+  });
 });

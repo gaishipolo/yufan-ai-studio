@@ -15,9 +15,12 @@ import { createPortal } from 'react-dom';
 import { Check, ChevronDown } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import { useDropPlacement } from '@/shared/hooks/useDropPlacement';
+import { SearchInput } from './SearchInput';
 
-/** 浮层大致高度：列表 196 + 内边距 + 新建行。下方不够就朝上展开。 */
+/** 浮层大致高度：列表 196 + 内边距 + 搜索框（开启时约 44）。下方不够就朝上展开。 */
 const POPOVER_MIN_SPACE = 250;
+/** 开启搜索时的额外高度：方向判断要把它算进去，否则浮层底部会溢出视口。 */
+const SEARCH_EXTRA_SPACE = 44;
 
 /** 浮层渲染到 body 时的层级：必须高于 Modal 的 Z_BASE(100) + 栈位偏移，
     否则在弹窗里展开的浮层会被弹窗自己盖住。 */
@@ -58,6 +61,16 @@ export interface MultiSelectProps {
   id?: string;
   /** 可访问名；不传则用收起态文本 */
   ariaLabel?: string;
+  /**
+   * 展开后在选项列表**上方**显示搜索框。
+   *
+   * 默认关：多数组合只有几项（角色、小组），搜索框纯占地方。
+   * 标签词表几十条时才值得开 —— 调用点自己知道自己的规模。
+   * 搜索只过滤候选，不改选中：输入关键字时已选的那几项仍保持勾选。
+   */
+  searchable?: boolean;
+  /** 搜索框占位文字；传了 searchable 才有意义 */
+  searchPlaceholder?: string;
 }
 
 /**
@@ -83,15 +96,23 @@ export function MultiSelect({
   disabled = false,
   id,
   ariaLabel,
+  searchable = false,
+  searchPlaceholder = '搜索…',
 }: MultiSelectProps) {
   const [open, setOpen] = useState(false);
+  const [query, setQuery] = useState('');
   const rootRef = useRef<HTMLDivElement>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const listId = useId();
   /* 浮层朝上还是朝下：量出来的，不是声明的。贴底的批量栏里朝下展开会落到视口外
      （只看得到一条边）。方向逻辑在 `useDropPlacement` 里，模板封装的 @ 候选面板
      用的是同一份 —— 两份实现漂移就是「同一个浮层两个页面表现不一样」。 */
-  const { side, space } = useDropPlacement(rootRef, listRef, open, POPOVER_MIN_SPACE);
+  const { side, space } = useDropPlacement(
+    rootRef,
+    listRef,
+    open,
+    POPOVER_MIN_SPACE + (searchable ? SEARCH_EXTRA_SPACE : 0),
+  );
   const dropUp = side === 'top';
 
   /* 浮层用 Portal 渲染到 body（见下方 JSX），所以不能靠 `absolute` 挂在 root 上 ——
@@ -176,8 +197,20 @@ export function MultiSelect({
      同一个组件在批量栏（贴底）和详情弹窗（页面中部）要用不同方向，量比重申可靠。
      估算高度 = 列表 196 + 内边距 + 新建行，取 250。 */
   const toggleOpen = () => {
+    /* 每次展开都从空查询开始：上次搜的关键字留在框里，下次打开只看到
+       那一两条，会以为标签只剩这些了。 */
+    if (searchable) setQuery('');
     setOpen(!open);
   };
+
+  const keyword = query.trim().toLowerCase();
+  const visible = keyword
+    ? options.filter(
+        (option) =>
+          option.label.toLowerCase().includes(keyword) ||
+          (option.description ?? '').toLowerCase().includes(keyword),
+      )
+    : options;
 
   return (
     <div ref={rootRef} className="relative">
@@ -225,16 +258,30 @@ export function MultiSelect({
           } satisfies CSSProperties}
           className="overflow-hidden rounded-lg border border-line bg-panel shadow-pop"
         >
-          {options.length === 0 ? (
+          {searchable && options.length > 0 && (
+            <div className="border-b border-line-soft p-1.5">
+              <SearchInput
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={searchPlaceholder}
+                aria-label={`搜索${ariaLabel ?? '选项'}`}
+              />
+            </div>
+          )}
+          {options.length === 0 || visible.length === 0 ? (
             <div className="px-3 py-4 text-center">
-              <p className="text-meta text-ink-mute">{emptyText}</p>
-              {emptyActionNode && (
+              <p className="text-meta text-ink-mute">
+                {options.length === 0
+                  ? emptyText
+                  : `没有匹配「${query.trim()}」的${ariaLabel ?? '选项'}`}
+              </p>
+              {options.length === 0 && emptyActionNode && (
                 <div className="mt-2 flex justify-center">{emptyActionNode}</div>
               )}
             </div>
           ) : (
             <ul className="max-h-[196px] space-y-0.5 overflow-auto p-1.5">
-              {options.map((option) => {
+              {visible.map((option) => {
                 const checked = value.includes(option.value);
                 return (
                   <li key={option.value}>
