@@ -20,6 +20,7 @@ from core.exceptions import AppError, BadRequest
 from core.response import ApiResponse
 from infra.llm import LlmMessage, LlmRequest, OpenAICompatibleClient
 from infra.llm.providers.openai_compatible import LLMSettings
+from infra.llm.providers.source import provider_config
 from modules.llm_config.schema import (
     FetchModelsOut,
     LlmModelOut,
@@ -32,6 +33,7 @@ from modules.llm_config.schema import (
 from modules.llm_config.store import (
     ModelMapping,
     ProviderListOut,
+    ProviderOut,
     credentials_of,
     delete_provider,
     list_providers,
@@ -44,6 +46,26 @@ router = APIRouter(prefix="/llm-config", tags=["LLM 配置"])
 
 ReadDep = Annotated[CurrentUser, Depends(require("llm_config:read"))]
 WriteDep = Annotated[CurrentUser, Depends(require("llm_config:write"))]
+
+
+def _select_model(provider: ProviderOut, model_id: str) -> ModelMapping:
+    """选本次连通测试的模型。
+
+    留空取第一个；显式传了但不在映射里是 4xx —— 静默回落到第一个会让
+    调用方以为测的是自己点的那一款。
+    """
+    if provider.config_error:
+        raise BadRequest(f"供应商 {provider.name} 的模型映射配置有误：{provider.config_error}")
+    if not provider.models:
+        raise BadRequest("该供应商还没有配置模型映射")
+    wanted = model_id.strip()
+    if not wanted:
+        return provider.models[0]
+    mapping = next((model for model in provider.models if model.id == wanted), None)
+    if mapping is None:
+        options = "、".join(model.id for model in provider.models)
+        raise BadRequest(f"模型不在该供应商的映射里：{wanted}；可选：{options}")
+    return mapping
 
 
 def _providers_out(result: ProviderListOut) -> LlmProvidersOut:
@@ -192,6 +214,14 @@ async def fetch_models(
         for item in body["data"]
         if isinstance(item, dict) and item.get("id")
     ]
+    await audit(
+        "llm_config.models.fetch",
+        actor_id=actor.id,
+        target_type="llm_provider",
+        target_id=name,
+        # 只记数量；模型名不是密钥，但没必要把整张表塞进审计
+        detail={"models": len(ids)},
+    )
     return ApiResponse.ok(FetchModelsOut(models=ids))
 
 
@@ -207,17 +237,35 @@ async def test_provider(
     provider = next((p for p in result.providers if p.name == name), None)
     if provider is None:
         raise BadRequest(f"供应商 {name} 不存在")
-    if provider.config_error:
-        raise BadRequest(f"供应商 {name} 的模型映射配置有误：{provider.config_error}")
-    if not provider.models:
-        raise BadRequest("该供应商还没有配置模型映射")
-    mapping = next((m for m in provider.models if m.id == model_id), provider.models[0])
+    mapping = _select_model(provider, model_id)
 
-    base_url, api_key = credentials_of(name)
-    settings_for_test = LLMSettings(base_url=base_url, api_key=api_key, timeout_sec=30)
-    model_map = {m.id: m.upstream for m in provider.models}
     try:
-        answer = await OpenAICompatibleClient(settings_for_test, model_map=model_map).complete(
+        config = provider_config(name)
+    except ValueError as exc:
+        raise BadRequest(f"供应商 {name} 的配置有误：{exc}") from exc
+    if not config.base_url.strip():
+        raise BadRequest(
+            f"LLM 供应商 {name} 未配置：请设置 {config.base_url_env}（OpenAI 兼容端点）"
+        )
+    if not config.api_key.strip():
+        raise BadRequest(f"LLM 供应商 {name} 未配置：请设置 {config.api_key_env}")
+
+    # 超时与正式调用同源（LLM_<NAME>_TIMEOUT_SEC）；不再固定 30s，免得推理
+    # 模型被误判为连不通。
+    settings_for_test = LLMSettings(
+        base_url=config.base_url,
+        api_key=config.api_key,
+        timeout_sec=config.timeout_sec,
+    )
+    model_map = {m.id: m.upstream for m in provider.models}
+    client = OpenAICompatibleClient(
+        settings_for_test,
+        model_map=model_map,
+        api_key_env=config.api_key_env,
+        vendor="LLM" if name == "default" else f"LLM {name}",
+    )
+    try:
+        answer = await client.complete(
             LlmRequest(
                 model=mapping.id,
                 messages=(LlmMessage("user", "只回复 OK 两个字，用于连通性检查"),),
@@ -230,6 +278,20 @@ async def test_provider(
     except httpx.HTTPError as exc:
         # 网络层异常（连不上 / 超时）client 没包装：给一句不泄露细节的提示。
         raise BadRequest("连通测试失败：无法连接到供应商网关") from exc
+
+    await audit(
+        "llm_config.provider.test",
+        actor_id=actor.id,
+        target_type="llm_provider",
+        target_id=name,
+        # 记连通性结果与 token 用量；不记回复正文
+        detail={
+            "model": mapping.id,
+            "finish_reason": answer.finish_reason,
+            "prompt_tokens": answer.usage.prompt_tokens,
+            "completion_tokens": answer.usage.completion_tokens,
+        },
+    )
     return ApiResponse.ok(
         {
             "model": answer.model,

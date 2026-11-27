@@ -397,3 +397,16 @@ def test_坏降级链不阻断供应商列表(clean_env: None) -> None:
     out = _providers_out(ProviderListOut(()))
     assert out.model_chain == []
     assert "不是合法 JSON" in out.model_chain_error
+
+
+def test_供应商超时来自环境变量(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """连通测试与正式调用共用 LLM_<NAME>_TIMEOUT_SEC，不再写死 30s。"""
+    from infra.llm.providers.source import provider_config
+
+    monkeypatch.setenv("LLM_X_BASE_URL", "https://x.example/v1")
+    monkeypatch.setenv("LLM_X_TIMEOUT_SEC", "7.5")
+    assert provider_config("x").timeout_sec == 7.5
+
+    monkeypatch.setenv("LLM_X_TIMEOUT_SEC", "not-a-number")
+    with pytest.raises(ValueError, match="不是数字"):
+        provider_config("x")
