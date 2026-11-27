@@ -62,7 +62,7 @@ def _draft(video: str, *, key: str | None = None, name: str = "演示模板") ->
         "name": name,
         "model": MODEL,
         "params": {},
-        "prompt": "8 秒 · 9:16 竖屏\n\n{{slot:hero}} 与 {{slot:note*}}；原片 {{slot:source}}",
+        "prompt": "8 秒 · 9:16 竖屏\n\n{{slot:hero}} 与 {{slot:note}}；原片 {{slot:source}}",
         "slots": [
             {
                 "key": "source",
@@ -91,6 +91,10 @@ def _draft(video: str, *, key: str | None = None, name: str = "演示模板") ->
                 "maxCount": 1,
                 "position": 2,
                 "label": "细节",
+                # 可选槽位被**单张引用** → 必须写「未选时文案」，且它来自正文里
+                # 的框选段（2026-11-27 的两条新规则）。
+                "emptyText": "细节图",
+                "emptyTextFromAnchor": True,
             },
         ],
     }

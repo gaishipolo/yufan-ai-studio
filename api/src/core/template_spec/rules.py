@@ -146,6 +146,37 @@ def normalize_refs(spec: TemplateSpec) -> TemplateSpec:
 
 
 
+def _validate_ref_modifier(text: str, where: str) -> None:
+    """这段文字里有**带修饰符**的槽位引用吗？
+
+    一槽一素材（契约里 max_count 恒为 1），所以「整组引用」（{{slot:x*}}）与
+    「第 N 张引用」（{{slot:x.2}}）这两种写法**不存在**。
+
+    它们曾经有意义（多值槽位时代）：整组 = 「列出这组的编号」，第 N 张 = 「取
+    编号列表里的第 N 个」。多值槽位下线后，这两种写法只剩坏处：
+
+    - **整组引用会绕过「选中时文案」** —— 填了素材时直接插编号，作者在槽位
+      卡片里写的那句措辞被无视；
+    - **「第 N 张」在没填素材时必然报错**（一个槽位只有一张，哪来的第 2 张），
+      而单张引用会走「未选时文案」兜底 —— 使用者看到的是一句莫名的话。
+
+    所以直接拒，并说清是哪种写法、出现在哪。
+    """
+    for match in _SLOT_REF.finditer(text):
+        modifier = match.group(2)
+        if not modifier:
+            continue
+        form = (
+            "整组引用（*）"
+            if modifier == "*"
+            else f"第 {modifier[1:]} 张引用（{modifier}）"
+        )
+        raise BadRequest(
+            f"{where}里的{form}不再支持：一个槽位只有一张素材，"
+            "没有「整组 / 第 N 张」这种写法 —— 请改成单个引用"
+        )
+
+
 def validate_spec(spec: TemplateSpec) -> None:
     """校验槽位声明与提示词形状。任一不合法就抛 `BadRequest`（带可读原因）。
 
@@ -183,6 +214,7 @@ def validate_spec(spec: TemplateSpec) -> None:
     _validate_prompt_text(spec.prompt, keys, "提示词")
     if spec.random_prompt.strip():
         _validate_prompt_text(spec.random_prompt, keys, "随机档提示词")
+    # 槽位文案里的引用同理（选中时文案的自引用也只允许单个引用）。
 
     _validate_slot_texts(spec)
 
@@ -196,6 +228,7 @@ def _validate_prompt_text(text: str, keys: set[str], name: str) -> None:
 
     随机档提示词允许为空（表示该模板不支持随机档）；非空时按主提示词的全套规则管。
     """
+    _validate_ref_modifier(text, name)
     for ref in sorted(slot_refs(text)):
         if ref not in keys:
             raise BadRequest(
@@ -541,6 +574,7 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
                 "要让素材可以被省略，请把它改成「可选」。"
             )
         if slot.filled_text:
+            _validate_ref_modifier(slot.filled_text, f"槽位「{label}」的选中时文案")
             for ref in sorted(slot_refs(slot.filled_text)):
                 if ref != slot.key and ref not in always_filled:
                     raise BadRequest(
@@ -554,6 +588,7 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
                     "（检查括号与槽位 key）"
                 )
         if slot.empty_text:
+            _validate_ref_modifier(slot.empty_text, f"槽位「{label}」的未选时文案")
             # 未选时文案**不能引用自己**：它用的正是「这一格没素材」的时候。
             refs = [
                 ref

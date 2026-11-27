@@ -124,9 +124,14 @@ def test_random_prompt_optional_slot_needs_fallback_at_publish(client: TestClien
         video,
         first,
         second,
-        # `note` 是可选槽位且没写 emptyText；主提示词用的是整组引用（不需要兜底）。
+        # 主提示词里**不引用** note —— 只让随机档那一段引用它，这样发布时拦下来
+        # 的就只能是随机档那条（主提示词那条没有触发条件）。
+        editable="主图 {{slot:hero}}；原片 {{slot:source}}",
         randomPrompt="随机档：{{slot:hero}} 与 {{slot:note}} 换夜景",
     )
+    # note 是可选槽位且没写兜底文案 → 随机档单张引用它 → 发布时要拦。
+    draft["slots"][2]["emptyText"] = ""
+    draft["slots"][2]["emptyTextFromAnchor"] = False
     _save(client, headers, draft)
 
     response = client.post(f"{API}/{draft['key']}/publish", headers=headers)

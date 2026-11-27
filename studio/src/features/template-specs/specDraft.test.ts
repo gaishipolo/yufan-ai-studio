@@ -497,14 +497,11 @@ describe('「选中时文案」的自身候选', () => {
     expect(chips.map(chip => chip.token)).toEqual(['{{slot:image_1}}']);
   });
 
-  it('多值槽位有「单张 / 全部 / 第 N 张」三种写法', () => {
+  it('一槽一素材：只有「单张」一种写法', () => {
+    // 「整组 / 第 N 张」在多值槽位时代才有意义；一槽一素材之后它们不存在了
+    // （后端结构校验直接拒，见 rules.py::_validate_ref_modifier）。
     const chips = selfRefChips({key: 'image_1', type: 'image', maxCount: 3} as SpecSlotIn);
-    expect(chips.map(chip => chip.token)).toEqual([
-      '{{slot:image_1}}',
-      '{{slot:image_1*}}',
-      '{{slot:image_1.2}}',
-      '{{slot:image_1.3}}',
-    ]);
+    expect(chips.map(chip => chip.token)).toEqual(['{{slot:image_1}}']);
   });
 
   it('「第 1 张」不单独列：它就是「单张」，重复列会让人以为有两个意思', () => {
@@ -764,11 +761,15 @@ describe('promptRefError：提示词里的引用', () => {
     expect(promptRefError('一张图，暖色调', SLOTS)).toBeNull();
   });
 
-  it('合法引用一律放行（含空格、`*`、`.N` 三种修饰符）', () => {
+  it('合法引用一律放行（含空格）；带修饰符的写法另说（见下）', () => {
     expect(promptRefError('{{Mixed 1}}', SLOTS)).toBeNull();
     expect(promptRefError('{{ Mixed 2 }}', SLOTS)).toBeNull();
-    expect(promptRefError('整组 {{Mixed 3*}}', SLOTS)).toBeNull();
-    expect(promptRefError('第二张 {{Mixed 3.2}}', SLOTS)).toBeNull();
+    /* 带修饰符的写法不存在了：一槽一素材，整组 / 第 N 张都会被后端拒。 */
+    expect(promptRefError('整组 {{Mixed 3*}}', SLOTS)).toContain('整组引用');
+    expect(promptRefError('第二张 {{Mixed 3.2}}', SLOTS)).toContain('第 2 张引用');
+    expect(promptRefError('整组 {{slot:copy*}}', SLOTS)).toContain('整组引用');
+    /* 正文里普通的乘号与小数点是正常文字，不能被误伤。 */
+    expect(promptRefError('价格 * 3，倍率 2.5 倍', SLOTS)).toBeNull();
     // 文本槽位仍有自己的写法（独立编号空间），照旧按 key 引用
     expect(promptRefError('{{slot:copy}}', SLOTS)).toBeNull();
   });

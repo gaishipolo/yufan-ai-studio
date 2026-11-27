@@ -925,21 +925,9 @@ export function selfRefChips(slot: SpecSlotIn, mixedIndex = 0): RefChip[] {
   const token = (modifier = '') =>
     mixedIndex > 0 ? `{{Mixed ${mixedIndex}${modifier}}}` : `{{slot:${slot.key}${modifier}}}`;
 
-  const chips: RefChip[] = [{token: token(), label: `${name}（单张）`, all: false, kind}];
-  const max = slot.maxCount ?? 1;
-  if (max > 1) {
-    chips.push({token: token('*'), label: `${name}（全部）`, all: true, kind});
-    // 「第 N 张」从 2 起：第 1 张就是「单张」，重复列一份只会让人以为有两个意思。
-    for (let index = 2; index <= max; index += 1) {
-      chips.push({
-        token: token(`.${index}`),
-        label: `${name}（第 ${index} 张）`,
-        all: false,
-        kind,
-      });
-    }
-  }
-  return chips;
+  /* **只有单张一种写法**：一槽一素材，「全部 / 第 N 张」已经不存在
+     （后端结构校验直接拒，见 rules.py::_validate_ref_modifier）。 */
+  return [{token: token(), label: `${name}（单张）`, all: false, kind}];
 }
 
 /**
@@ -1019,18 +1007,31 @@ export function promptRefError(prompt: string, slots: SpecSlotIn[]): string | nu
   for (const match of prompt.matchAll(/\{\{[\s\S]*?\}\}/g)) {
     const raw = match[0];
     /* 视觉槽位的引用写法：`{{Mixed N}}`，N 是第几个图片/成片槽位。 */
-    const mixed = /^\{\{\s*Mixed\s+(\d+)(?:\*|\.\d+)?\s*\}\}$/.exec(raw);
+    const mixed = /^\{\{\s*Mixed\s+(\d+)(\*|\.\d+)?\s*\}\}$/.exec(raw);
     if (mixed) {
       const index = Number(mixed[1]);
       if (index < 1 || index > visualCount) {
         return `没有第 ${index} 个图片/成片槽位（现在 ${visualCount} 个）`;
       }
+      /* 带修饰符的引用（整组 / 第 N 张）不存在了：一槽一素材。 */
+      const modifier = mixed[2];
+      if (modifier) {
+        return modifier === '*'
+          ? '整组引用（*）不存在了：一个槽位只有一张素材'
+          : `第 ${modifier.slice(1)} 张引用不存在了：一个槽位只有一张素材`;
+      }
       rest = rest.replace(raw, '');
       continue;
     }
-    const ref = /^\{\{\s*slot:([a-z][a-z0-9_]{0,39})(?:\*|\.\d+)?\s*\}\}$/.exec(raw);
+    const ref = /^\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d+)?\s*\}\}$/.exec(raw);
     if (ref) {
       if (!known.has(ref[1])) return `没有叫「${ref[1]}」的槽位，检查一下这个引用`;
+      const modifier = ref[2];
+      if (modifier) {
+        return modifier === '*'
+          ? '整组引用（*）不存在了：一个槽位只有一张素材'
+          : `第 ${modifier.slice(1)} 张引用不存在了：一个槽位只有一张素材`;
+      }
       rest = rest.replace(raw, '');
       continue;
     }

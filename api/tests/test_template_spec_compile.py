@@ -76,27 +76,27 @@ def test_numbers_follow_slot_order_and_skip_attachments() -> None:
     spec = _spec(
         _source(),
         _user("hero", 1),
-        _user("detail", 2, min_count=0, max_count=2),
+        _user("detail", 2, min_count=0, max_count=1),
         InputSlot(
             key="bgm", type="audio", binding="user",
             ref_mode="attachment", position=3, label="配乐",
         ),
         editable=(
-            "{{slot:hero}} 与 {{slot:detail*}}；原片 {{slot:source}}"
+            "{{slot:hero}} 与 {{slot:detail}}；原片 {{slot:source}}"
         ),
     )
     out = compile_spec(
         spec,
-        _fills(source=(VIDEO,), hero=(HERO,), detail=(DETAIL_1, DETAIL_2), bgm=(BGM,)),
+        _fills(source=(VIDEO,), hero=(HERO,), detail=(DETAIL_1,), bgm=(BGM,)),
     )
 
-    assert out.prompt == "{{Mixed 2}} 与 {{Mixed 3}}、{{Mixed 4}}；原片 {{Mixed 1}}"
+    assert out.prompt == "{{Mixed 2}} 与 {{Mixed 3}}；原片 {{Mixed 1}}"
     # 视觉参考按编号顺序，附加输入追加在后 —— 音频永远不插到图中间。
-    assert out.reference_ids == ("v-src", "i-hero", "i-d1", "i-d2", "a-bgm")
+    assert out.reference_ids == ("v-src", "i-hero", "i-d1", "a-bgm")
     assert out.slot_tokens == {
         "source": ("{{Mixed 1}}",),
         "hero": ("{{Mixed 2}}",),
-        "detail": ("{{Mixed 3}}", "{{Mixed 4}}"),
+        "detail": ("{{Mixed 3}}",),
     }
 
 
@@ -105,15 +105,15 @@ def test_short_fill_shifts_later_numbers() -> None:
     spec = _spec(
         _source(),
         _user("hero", 1),
-        _user("detail", 2, min_count=0, max_count=2),
+        _optional("detail", 2, empty_text="细节图"),
         _user("look", 3, min_count=0, max_count=1),
-        editable="{{slot:hero}} {{slot:detail*}} {{slot:look}}",
+        editable="{{slot:hero}} {{slot:detail}} {{slot:look}}",
     )
     out = compile_spec(
         spec,
         _fills(source=(VIDEO,), hero=(HERO,), detail=(), look=(FilledAsset("i-look", "image"),)),
     )
-    assert out.prompt == "{{Mixed 2}}  {{Mixed 3}}"
+    assert out.prompt == "{{Mixed 2}} 细节图 {{Mixed 3}}"
 
 
 def test_text_slot_gets_its_own_number_space() -> None:
@@ -171,13 +171,13 @@ def test_two_text_slots_number_in_slot_order() -> None:
     [
         ("{{slot:missing}}", "不存在的槽位"),
         ("{{slot:bgm}}", "附加输入"),
-        ("{{slot:hero.2}}", "第 2 张不存在"),
+        ("{{slot:hero.2}}", "第 2 张引用"),
         ("{{slot:hero", "无法解析"),
         # 带空格的坏引用：`_SLOT_REF` 容空格，所以它必须同样被残留检查兜住，
         # 否则原样进入供应商提示词（用户看到的是一坨带大括号的乱码）。
         ("{{ slot:hero", "无法解析"),
         ("{{ slot:Key }}", "无法解析"),
-        ("{{ slot:hero.1234 }}", "无法解析"),
+        ("{{ slot:hero.1234 }}", "第 1234 张引用"),
     ],
 )
 def test_bad_references_are_rejected(editable: str, message: str) -> None:
@@ -195,10 +195,10 @@ def test_bad_references_are_rejected(editable: str, message: str) -> None:
 
 
 def test_count_bounds_and_type_are_enforced() -> None:
-    spec = _spec(_source(), _user("hero", 1, min_count=1, max_count=2), editable="{{slot:hero*}}")
+    spec = _spec(_source(), _user("hero", 1, min_count=1, max_count=1), editable="{{slot:hero}}")
     with pytest.raises(BadRequest, match="至少需要"):
         compile_spec(spec, _fills(source=(VIDEO,), hero=()))
-    with pytest.raises(BadRequest, match="需要 1~2 个素材"):
+    with pytest.raises(BadRequest, match="需要 1~1 个素材"):
         compile_spec(
             spec,
             _fills(source=(VIDEO,), hero=(HERO, DETAIL_1, DETAIL_2)),
@@ -208,14 +208,24 @@ def test_count_bounds_and_type_are_enforced() -> None:
 
 
 def test_too_many_numbered_refs_is_rejected() -> None:
-    many = tuple(FilledAsset(f"i-{index}", "image") for index in range(11))
+    """参与编号的素材超过上限 → 拒。
+
+    一槽一素材之后，「一个槽位塞 11 张」已经不可能了 —— 上限只可能由**槽位个数**
+    顶到。
+    """
+    slots = [_source()] + [
+        _user(f"slot{index}", index + 1) for index in range(11)
+    ]
     spec = _spec(
-        _source(),
-        _user("hero", 1, min_count=0, max_count=11),
-        editable="{{slot:hero*}}",
+        *slots,
+        editable=" ".join(f"{{{{slot:slot{index}}}}}" for index in range(11)),
+    )
+    fills = _fills(
+        source=(VIDEO,),
+        **{f"slot{index}": (FilledAsset(f"i-{index}", "image"),) for index in range(11)},
     )
     with pytest.raises(BadRequest, match="超过上限"):
-        compile_spec(spec, _fills(source=(VIDEO,), hero=many))
+        compile_spec(spec, fills)
 
 
 def test_mixed_ref_points_at_the_nth_visual_slot() -> None:
@@ -245,14 +255,16 @@ def test_mixed_ref_expands_to_the_number_this_fill_produces() -> None:
     一模一样，只有张数不同才分得出来。
     """
     spec = _spec(
-        _user("hero", 1, min_count=1, max_count=2),
+        _source(),
+        _optional("hero", 1, empty_text="主角是穿红裙的年轻女性"),
         _user("detail", 2),
-        editable="细节 {{Mixed 2}}",
+        editable="细节 {{Mixed 3}}",
     )
-    out = compile_spec(spec, _fills(hero=(HERO, DETAIL_1), detail=(DETAIL_2,)))
+    out = compile_spec(spec, _fills(source=(VIDEO,), detail=(DETAIL_2,)))
 
-    assert out.prompt == "细节 {{Mixed 3}}"
-    assert out.slot_tokens["detail"] == ("{{Mixed 3}}",)
+    # hero 是可选且没填 → 不占号 → detail 前移到 2 号
+    assert out.prompt == "细节 {{Mixed 2}}"
+    assert out.slot_tokens["detail"] == ("{{Mixed 2}}",)
 
 
 def test_mixed_ref_that_points_nowhere_is_rejected() -> None:
@@ -269,7 +281,7 @@ def test_reference_to_a_missing_slot_is_rejected_by_validation() -> None:
     很容易出现。以前预检会放行、发布也放行，直到用户点生成才拿到一句跟操作看不出
     关系的错 —— 那种错用户不会认为是自己删槽位删出来的。
     """
-    spec = _spec(_user("hero", 1), editable="{{slot:hero}} 和 {{slot:gone*}}")
+    spec = _spec(_user("hero", 1), editable="{{slot:hero}} 和 {{slot:gone}}")
     with pytest.raises(BadRequest, match="不存在的槽位「gone」"):
         validate_spec(spec)
 
@@ -322,7 +334,7 @@ def test_reference_with_spaces_compiles_like_the_tight_form() -> None:
         _source(),
         _user("hero", 1),
         locked="原片 {{ slot:source }}",
-        editable="主图 {{slot:hero }} 与 {{ slot:hero* }}",
+        editable="主图 {{slot:hero }} 与 {{ slot:hero }}",
     )
 
     out = compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
@@ -405,34 +417,30 @@ def test_filled_text_is_optional_and_keeps_the_old_behaviour() -> None:
     assert out.prompt == "{{Mixed 2}}"
 
 
-def test_filled_text_may_reference_the_whole_group() -> None:
-    """段落里可以写 `{{slot:x*}}`：多选槽位要把整组都写进去。"""
+def test_filled_text_may_not_reference_the_whole_group() -> None:
+    """段落里写 `{{slot:x*}}` → 不再支持：一个槽位只有一张素材。
+
+    整组引用会**绕过「选中时文案」**（填了素材时直接插编号），作者写的那句
+    措辞被无视 —— 与其留着这个坑，不如当场拒。
+    """
     spec = _spec(
         _source(),
-        _optional(
-            "hero", 1, max_count=2, filled_text="人物参考 {{slot:hero*}}"
-        ),
+        _optional("hero", 1, filled_text="人物参考 {{slot:hero*}}"),
         editable="{{slot:hero}}",
     )
-    out = compile_spec(
-        spec, _fills(source=(VIDEO,), hero=(HERO, DETAIL_1))
-    )
-    assert out.prompt == "人物参考 {{Mixed 2}}、{{Mixed 3}}"
+    with pytest.raises(BadRequest, match="整组引用"):
+        compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
 
 
-def test_filled_text_may_reference_one_of_several() -> None:
-    """段落里可以写 `{{slot:x.2}}`：只要其中一张。"""
+def test_filled_text_may_not_reference_one_of_several() -> None:
+    """段落里写 `{{slot:x.2}}` → 不再支持：一个槽位只有一张素材。"""
     spec = _spec(
         _source(),
-        _optional(
-            "hero", 1, max_count=3, filled_text="以 {{slot:hero.2}} 为主"
-        ),
+        _optional("hero", 1, filled_text="以 {{slot:hero.2}} 为主"),
         editable="{{slot:hero}}",
     )
-    out = compile_spec(
-        spec, _fills(source=(VIDEO,), hero=(HERO, DETAIL_1, DETAIL_2))
-    )
-    assert out.prompt == "以 {{Mixed 3}} 为主"
+    with pytest.raises(BadRequest, match="第 2 张引用"):
+        compile_spec(spec, _fills(source=(VIDEO,), hero=(HERO,)))
 
 
 def test_filled_text_cannot_reference_an_optional_slot() -> None:
@@ -570,32 +578,23 @@ def test_optional_slot_shifts_later_numbers_when_unfilled() -> None:
     assert out.reference_ids == ("v-src", "i-d1")
 
 
-def test_group_reference_degrades_to_empty_when_unfilled_and_no_fallback() -> None:
-    """整组引用（`{{slot:x*}}`）没填、也没写兜底文案 → **降级为空**，不报错。
-
-    它的语义是「列出这组」，没有就列出空 —— 这是既有行为
-    （`test_short_fill_shifts_later_numbers` 钉着），不能被新能力改掉。
-    """
+def test_group_reference_is_rejected() -> None:
+    """整组引用（`{{slot:x*}}`）不再支持 —— 一个槽位只有一张素材。"""
     spec = _spec(
         _source(),
-        _optional("hero", 1, max_count=2),
+        _optional("hero", 1),
         editable="看 {{slot:hero*}}",
     )
-    out = compile_spec(spec, _fills(source=(VIDEO,)))
-    assert out.prompt == "看"
+    with pytest.raises(BadRequest, match="整组引用"):
+        compile_spec(spec, _fills(source=(VIDEO,)))
 
 
-def test_group_reference_uses_empty_text_when_written() -> None:
-    """整组引用写了兜底文案 → 用它（比降级成空更符合作者意图）。
-
-    降级成空会在句子里留一个空洞：「参考 {{slot:hero*}} 的产品」变成
-    「参考  的产品」—— 句子缺一块，模型照跑、结果不对。作者既然写了
-    兜底文案，就该用上。
-    """
+def test_group_reference_with_empty_text_is_rejected() -> None:
+    """整组引用 + 兜底文案 → 一样不支持（写法本身不存在了）。"""
     spec = _spec(
         _source(),
-        _optional("hero", 1, max_count=2, empty_text="主角是穿红裙的年轻女性"),
+        _optional("hero", 1, empty_text="主角是穿红裙的年轻女性"),
         editable="看 {{slot:hero*}}",
     )
-    out = compile_spec(spec, _fills(source=(VIDEO,)))
-    assert out.prompt == "看 主角是穿红裙的年轻女性"
+    with pytest.raises(BadRequest, match="整组引用"):
+        compile_spec(spec, _fills(source=(VIDEO,)))

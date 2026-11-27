@@ -351,21 +351,24 @@ describe('模板库 · 全是必填槽位时', () => {
 });
 
 /**
- * 可选槽位「让给文案」有个例外：提示词里按「第 N 张」引用了它。
- * 那种槽位不能不传素材（传了编译期必然 400），与档位无关。
+ * 可选槽位「让给文案」有个例外：提示词里**单张引用**了它、而作者没写
+ * 「未选时文案」。那种槽位不能不传素材（不传编译期必然 400），与档位无关。
  */
-describe('模板库 · 被索引引用的例外槽位', () => {
-  it('被「{{slot:copy.1}}」引用：随机档下仍然显示，且算进缺料', async () => {
+describe('模板库 · 被引用且没兜底文案的例外槽位', () => {
+  it('被「{{slot:copy}}」引用：随机档下仍然显示，且算进缺料', async () => {
     const user = userEvent.setup();
     specState.current = {
       ...SPEC,
       latest: {
         ...SPEC.latest!,
-        prompt: '把 {{slot:copy.1}} 里的东西换成 {{Mixed 1}}',
+        prompt: '把 {{slot:copy}} 里的东西换成 {{Mixed 1}}',
         /* 随机档用的是**另一段**提示词，所以「钉住」要在那一段里也有 ——
            只看主提示词会误以为随机档可以省掉它。 */
-        randomPrompt: '夜景：把 {{slot:copy.1}} 里的东西换成 {{Mixed 1}}',
-        slots: SPEC.latest!.slots,
+        randomPrompt: '夜景：把 {{slot:copy}} 里的东西换成 {{Mixed 1}}',
+        /* 没有「未选时文案」→ 这一格不能不传素材（钉住）。 */
+        slots: SPEC.latest!.slots.map(slot =>
+          slot.key === 'copy' ? {...slot, emptyText: ''} : slot,
+        ),
       },
     };
     renderLibrary();
@@ -402,8 +405,10 @@ describe('模板库 · 被索引引用的例外槽位', () => {
       latest: {
         ...SPEC.latest!,
         prompt: '把原片里的商品换成 {{Mixed 1}}',
-        randomPrompt: '夜景：把 {{slot:copy.1}} 里的东西换掉',
-        slots: SPEC.latest!.slots,
+        randomPrompt: '夜景：把 {{slot:copy}} 里的东西换掉',
+        slots: SPEC.latest!.slots.map(slot =>
+          slot.key === 'copy' ? {...slot, emptyText: ''} : slot,
+        ),
       },
     };
     renderLibrary();

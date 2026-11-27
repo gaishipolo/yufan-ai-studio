@@ -64,7 +64,7 @@ def _draft(
         "model": MODEL,
         "params": {},
         "prompt": "8 秒 · 9:16 竖屏\n\n"
-        + (editable or "{{slot:hero}} 与 {{slot:note*}}；原片 {{slot:source}}"),
+        + (editable or "{{slot:hero}} 与 {{slot:note}}；原片 {{slot:source}}"),
         "slots": [
             {
                 "key": "source",
@@ -93,6 +93,11 @@ def _draft(
                 "maxCount": 1,
                 "position": 2,
                 "label": "细节",
+                # 可选槽位被**单张引用**时必须写「未选时文案」（发布闸）。
+                # 以前这里用的是整组引用（不需要兜底），那种写法已经不存在了。
+                "emptyText": "细节图",
+                # 这句兜底文案来自正文里的框选段（2026-11-27 起的新规则）。
+                "emptyTextFromAnchor": True,
             },
         ],
     }
@@ -233,7 +238,7 @@ def test_compile_derives_numbers_and_reference_order(client: TestClient) -> None
     )
     assert body.status_code == 200, body.text
     data = body.json()["data"]
-    # 固定原片是 1 号；user 槽位按 position 依次拿号；`{{slot:note*}}` 展开全部。
+    # 固定原片是 1 号；user 槽位按 position 依次拿号。
     assert data["prompt"].startswith("8 秒 · 9:16 竖屏")
     assert "{{Mixed 2}} 与 {{Mixed 3}}；原片 {{Mixed 1}}" in data["prompt"]
     assert data["referenceLibraryIds"] == [video, first, second]
@@ -571,8 +576,11 @@ def test_slot_tag_limits_the_candidate_set_but_not_the_compile(
         headers=headers,
     )
     assert body.status_code == 200, body.text
-    # 编号与参考序完全不受标签影响
-    assert body.json()["data"]["prompt"] == "8 秒 · 9:16 竖屏\n\n{{Mixed 2}} 与 ；原片 {{Mixed 1}}"
+    # 编号与参考序完全不受标签影响（「细节」没填素材 → 用它的未选时文案）
+    assert (
+        body.json()["data"]["prompt"]
+        == "8 秒 · 9:16 竖屏\n\n{{Mixed 2}} 与 细节图；原片 {{Mixed 1}}"
+    )
 
 
 def test_legacy_single_tag_slot_is_still_readable(client: TestClient) -> None:
@@ -1024,11 +1032,11 @@ def test_optional_slot_publish_is_allowed_with_the_fallback_text(
     assert body.status_code == 200, body.text
 
 
-def test_group_reference_does_not_require_the_fallback_text(client: TestClient) -> None:
-    """整组引用（`{{slot:x*}}`）没填时降级为空 → **不要求**兜底文案。
+def test_group_reference_is_rejected(client: TestClient) -> None:
+    """整组引用（`{{slot:x*}}`）不再支持 —— 一个槽位只有一张素材。
 
-    把整组引用也算进去，会把一堆本来好用的模板拦在发布外 ——
-    而它们的使用者不填素材时根本不会报错（降级成空而已）。
+    多值槽位时代它有意义（「列出这组的编号」）；现在留着只会绕过「选中时文案」
+    （填了素材时直接插编号，作者写的那句措辞被无视）。
     """
     headers = _headers(client)
     video, first, _ = _media(client, headers)
@@ -1037,10 +1045,9 @@ def test_group_reference_does_not_require_the_fallback_text(client: TestClient) 
         first,
         prompt="把 {{slot:source}} 里的内衣替换为 {{slot:hero*}} 的同款产品",
     )
-    _save(client, headers, draft)
-
-    body = client.post(f"{API}/{draft['key']}/publish", headers=headers)
-    assert body.status_code == 200, body.text
+    body = client.post(API, json=draft, headers=headers)
+    assert body.status_code == 400, body.text
+    assert "整组引用" in body.json()["message"]
 
 
 def test_required_slot_with_slot_texts_is_rejected(client: TestClient) -> None:
@@ -1151,27 +1158,22 @@ def test_compile_uses_the_overridden_text_instead_of_the_authors(
     assert body.json()["data"]["referenceLibraryIds"] == [video]
 
 
-def test_compile_override_works_for_a_group_reference(client: TestClient) -> None:
-    """整组引用（`{{slot:hero*}}`）没填素材时也用兜底文案 —— 改的同样生效。
+def test_compile_override_on_a_group_reference_is_rejected(
+    client: TestClient,
+) -> None:
+    """整组引用连保存都过不去 —— 改写更是无从谈起。
 
-    整组引用的「没填」语义与单张不同（降级为空），但只要有兜底文案，
-    `compile` 就用它接管那一块。所以这里不能只认单张引用。
+    以前整组引用是「合法但语义不同」的一档（没填时降级为空），所以改文案
+    也认它。现在这种写法直接不存在了（结构校验就拒）。
     """
     headers = _headers(client)
     video, first, _ = _media(client, headers)
     draft = _optional_draft(
         video, first, prompt="原片 {{slot:source}}；产品参考 {{slot:hero*}}"
     )
-    _save(client, headers, draft)
-    client.post(f"{API}/{draft['key']}/publish", headers=headers)
-
-    body = client.post(
-        f"{API}/{draft['key']}/compile",
-        json={"slotTextOverrides": {"hero": "不带产品，只保留人物"}},
-        headers=headers,
-    )
-    assert body.status_code == 200, body.text
-    assert "不带产品，只保留人物" in body.json()["data"]["prompt"]
+    body = client.post(API, json=draft, headers=headers)
+    assert body.status_code == 400, body.text
+    assert "整组引用" in body.json()["message"]
 
 
 def test_compile_override_recognises_the_mixed_token_form(
@@ -1208,16 +1210,13 @@ def test_compile_override_recognises_the_mixed_token_form(
 def test_compile_override_without_an_insertion_point_is_rejected(
     client: TestClient,
 ) -> None:
-    """提示词只写了第 N 张（`{{slot:hero.1}}`）→ 改文案不生效，所以 400。
+    """提示词里根本没引用这一格 → 改文案不生效，所以 400。
 
-    兜底文案只服务单张 / 整组引用；第 N 张是「第几张图」的编号，套不上一段话。
     静默收下的话，用户改的话没进提示词，而页面一切正常。
     """
     headers = _headers(client)
     video, first, _ = _media(client, headers)
-    draft = _optional_draft(
-        video, first, prompt="原片 {{slot:source}}，只参考第 1 张 {{slot:hero.1}}"
-    )
+    draft = _optional_draft(video, first, prompt="原片 {{slot:source}}")
     _save(client, headers, draft)
     client.post(f"{API}/{draft['key']}/publish", headers=headers)
 
@@ -1243,7 +1242,7 @@ def test_compile_override_checks_the_prompt_actually_being_compiled(
     draft = _optional_draft(
         video,
         first,
-        prompt="原片 {{slot:source}}，只参考第 1 张 {{slot:hero.1}}",
+        prompt="原片 {{slot:source}}",
         emptyText="红裙女性",
     )
     draft["randomPrompt"] = "原片 {{slot:source}}；人物 {{slot:hero}}"

@@ -347,8 +347,8 @@ def _check_optional_slots_have_fallback(spec: TemplateSpec) -> None:
         slot.label.strip() or slot.key
         for slot in spec.slots
         if slot.key in modes
-        # 只有「单张引用」需要兜底：整组引用降级为空，第 N 张必然报错。
-        and "" in modes[slot.key]
+        # 只有**单张引用**这一种写法（整组 / 第 N 张已被结构校验拒），所以
+        # 「被引用」就等于「单张引用」，不需要再分形态。
         and slot.min_count == 0
         and slot.binding == "user"
         and not slot.empty_text.strip()

@@ -157,29 +157,24 @@ def _expander(
     用 `re.sub` 单遍替换而不是逐个 `str.replace`：替换结果里含 `{{Mixed N}}`，
     多遍替换会把新生成的东西再扫一遍。
 
-    ## 三种引用，三种语义
+    ## 只有一种引用写法
 
     | 写法 | 填了素材 | 没填素材（可选槽位） |
     |---|---|---|
     | `{{slot:x}}` | **段落**：插入「选中时文案」，空则插编号 | 插入「未选时文案」，空则报错 |
-    | `{{slot:x*}}` | 这组的编号列表（`、{{Mixed 2}}、{{Mixed 3}}`） | 降级为空（既有语义） |
-    | `{{slot:x.N}}` | 第 N 张的编号 | 报错 |
+
+    「整组」（`{{slot:x*}}`）与「第 N 张」（`{{slot:x.N}}`）在**多值槽位**时代
+    有意义；一槽一素材之后它们不再成立，结构校验直接拒（见
+    `rules.py::_validate_ref_modifier`）—— 留着它们只会绕过「选中时文案」，
+    或者在没填素材时必然报错。
 
     **必填槽位（`min_count >= 1`）只有「填了素材」这一种情况**：
     它的素材一定在（不填在编译期就报错），所以单张引用**直接插编号** ——
     两段文案对它没有意义，结构校验也不允许写（见 `rules._validate_slot_texts`）。
     「选中时 / 未选时」两种说法是**可选槽位**才有的两种状态。
 
-    三种写法**语义不同**，所以兜底规则也不同：
-
-    - 只有**单张引用**走「段落」：`{{slot:x*}}` 的语义是"这组的编号"，
-      套一层段落反而会让人以为整组都进去了（作者写「人物参考 {{slot:x}}」
-      而正文用 `{{slot:x*}}` 时，段落里只会有第一张 —— 另一张悄悄消失）。
-      要在段落里表达整组，就在**段落内部**写 `{{slot:x*}}`。
-    - 整组引用没填时**降级为空**（不报错）：它的语义是「列出这组」，
-      没有就列出空。这是既有行为，`test_short_fill_shifts_later_numbers` 钉着。
-    - 「第 N 张」没填时**报错**：没有「第 N 张」这回事，兜底文案是整段话、
-      不是某个编号，套不上去。
+    只有单张引用这一种写法，所以兜底规则只有一套：填了素材插「选中时文案」，
+    没填插「未选时文案」，都没有就报错。
 
     ## 为什么「没填」要有兜底而不是静默留空
 
@@ -190,7 +185,7 @@ def _expander(
 
     def expand(text: str, where: str) -> str:
         def repl(match: re.Match[str]) -> str:
-            key, modifier = match.group(1), match.group(2) or ""
+            key = match.group(1)
             slot = by_key.get(key)
             if slot is None:
                 raise BadRequest(f"{where}引用了不存在的槽位：{key}")
@@ -200,24 +195,6 @@ def _expander(
                     f"{where}不能引用「{_label(slot)}」：它是附加输入，不参与编号"
                 )
             owned = tokens.get(key, ())
-            if modifier == "*":
-                # **整组引用** = 这组的编号列表（`、{{Mixed 2}}、{{Mixed 3}}`）。
-                # 没填时**降级为空**：它的语义是「列出这组」，没有就列出空 ——
-                # 这是既有行为（`test_short_fill_shifts_later_numbers` 钉着）。
-                # 作者写了「未选时文案」就用它接管这一块。
-                if owned:
-                    return "、".join(owned)
-                return _expand_slot_text(slot.empty_text, slot, where, by_key, tokens)
-            if modifier.startswith("."):
-                # **第 N 张**：没有「第 N 张」这回事，兜底文案也不适用
-                # （兜底是整段话，不是某个编号）。所以只有一句实话：不存在。
-                index = int(modifier[1:])
-                if index < 1 or index > len(owned):
-                    raise BadRequest(
-                        f"{where}引用的「{_label(slot)}」第 {index} 张不存在"
-                        f"（这次填了 {len(owned)} 张）"
-                    )
-                return owned[index - 1]
             # **单张引用** = 段落插入点：
             # - 填了：作者写了「选中时文案」就用它（内部可再引用自己/整组），
             #   没写就插编号（= 旧行为，现有模板一字不改也能继续用）。
@@ -296,7 +273,7 @@ def _expand_slot_text(
     在**未选时文案**里不成立 —— 那一格恰恰没有素材，规则层已经拒了。
     """
     def repl(match: re.Match[str]) -> str:
-        key, modifier = match.group(1), match.group(2) or ""
+        key = match.group(1)
         target = by_key.get(key)
         if target is None:
             raise BadRequest(f"{where}引用了不存在的槽位：{key}")
@@ -311,16 +288,6 @@ def _expand_slot_text(
                 f"{where}引用了「{_label(target)}」，但它这次没有素材："
                 "没有编号可指"
             )
-        if modifier == "*":
-            return "、".join(owned)
-        if modifier.startswith("."):
-            index = int(modifier[1:])
-            if index < 1 or index > len(owned):
-                raise BadRequest(
-                    f"{where}引用的「{_label(target)}」第 {index} 张不存在"
-                    f"（这次填了 {len(owned)} 张）"
-                )
-            return owned[index - 1]
         return owned[0]
 
     result = _SLOT_REF.sub(repl, text)
