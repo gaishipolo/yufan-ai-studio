@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Play, Plus } from 'lucide-react';
 import { KIND_LABEL } from '@/entities/library/model/types';
@@ -46,6 +46,7 @@ import {
   Skeleton,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
+import { idempotencyKeyFor, newIdempotencyIntent } from '@/shared/lib/idempotency';
 import { toast } from '@/shared/lib/toast';
 import { useStickyFitHeight } from '@/shared/hooks/useStickyFitHeight';
 import { toSubmitPayload } from './taskPayload';
@@ -255,6 +256,9 @@ export function SpecLibrary() {
   const generateImage = useGenerateImage();
   const videoModels = useModels('video');
   const imageModels = useModels('image');
+  /* 一次提交意图的幂等串：双击/超时重试复用，成功后换新；不同模板/槽位内容
+     由 payload 指纹自动分开。 */
+  const idempotencyIntent = useRef(newIdempotencyIntent());
 
   const [keyword, setKeyword] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -777,7 +781,10 @@ export function SpecLibrary() {
         return;
       }
       if (plan.kind === 'image') {
-        const job = await generateImage.mutateAsync(plan.payload);
+        const job = await generateImage.mutateAsync({
+          ...plan.payload,
+          idempotencyKey: idempotencyKeyFor(idempotencyIntent.current, plan.payload),
+        });
         /* 任务名已在 `toImagePayload` 里随 payload 传模板名（与视频那条对齐）。
            不读 `job.name` 是因为这里只是「这一刻提交成功了吗」的提示，
            用本地的 spec.name 即可，不必等响应字段。 */
@@ -786,10 +793,14 @@ export function SpecLibrary() {
         // 还要一条会自己消失的反馈，用户才知道「点到了、东西进去了」。
         toast('已提交生图，稍后到资产库查看', 'success');
       } else {
-        const task = await createTask.mutateAsync(plan.payload);
+        const task = await createTask.mutateAsync({
+          ...plan.payload,
+          idempotencyKey: idempotencyKeyFor(idempotencyIntent.current, plan.payload),
+        });
         setNote(`已提交：${task.title || task.id}`);
         toast('任务已提交，可在任务中心查看进度', 'success');
       }
+      idempotencyIntent.current = newIdempotencyIntent();
       setConfirming(false);
     } catch (reason) {
       /* 失败时也关掉确认框：错误显示在右栏底部，弹窗盖着就看不见 ——

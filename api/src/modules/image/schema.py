@@ -6,7 +6,9 @@ from typing import Any
 
 from pydantic import Field
 
+from core.idempotency import IDEMPOTENCY_KEY_MAX, IDEMPOTENCY_KEY_PATTERN
 from core.schema import CamelModel, UtcDateTime
+from core.template_spec.models import PROMPT_LIMITS_BY_CAPABILITY
 
 
 class ImageJobOut(CamelModel):
@@ -96,7 +98,22 @@ class DeleteImagesOut(CamelModel):
 
 
 class GenerateImageIn(CamelModel):
-    prompt: str = Field(min_length=1, max_length=2000, description="画面描述")
+    prompt: str = Field(
+        min_length=1,
+        max_length=PROMPT_LIMITS_BY_CAPABILITY["image"],
+        description="画面描述",
+    )
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=IDEMPOTENCY_KEY_MAX,
+        pattern=IDEMPOTENCY_KEY_PATTERN,
+        description=(
+            "客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。"
+            "同键同内容重试返回原记录、不重复提交供应商；同键不同内容 409。"
+            "不同键可以并发提交，不受“等上一条完成”限制"
+        ),
+    )
     name: str = Field(
         default="",
         max_length=200,

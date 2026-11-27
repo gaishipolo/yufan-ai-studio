@@ -90,6 +90,8 @@ export interface TaskRetryResult {
 export interface CreateTaskPayload {
   title?: string;
   prompt: string;
+  /** 一次提交意图的幂等键：双击/超时重试只创建一条，不重复计费。 */
+  idempotencyKey?: string;
   model: string;
   /**
    * 视频时长（秒）。

@@ -9,6 +9,8 @@
 - `library repreview`：重建缺失的缩略图。原图在 `blobs/`、封面在 `previews/`，
   是两套字节一条记录；封面对象丢了原图仍然完好，但界面只剩占位与裂图。
   默认试运行，只报告有几条需要重建。
+- `library prune-blobs`：列出「对象存储里有、库里无引用」的孤儿字节；默认只报告，
+  加 `--execute` 才删。保护期默认 24 小时，避免误删刚写入、尚未落库的对象。
 - `library init-tag-tree`：把存量扁平词表按内置映射归成两级（产品 → 3030/T35、
   角色 → 菜菜，其余留一级）。迁移只加列，环境之间词表不同，归层由命令按名字
   匹配；幂等，默认试运行。
@@ -73,6 +75,23 @@ def cmd_preview_repair(args: argparse.Namespace) -> None:
         raise SystemExit(1)
 
 
+def cmd_blob_prune(args: argparse.Namespace) -> None:
+    from modules.library.maintenance import run_blob_prune
+
+    report = asyncio.run(
+        run_blob_prune(
+            prefix=args.prefix,
+            min_age_hours=args.min_age_hours,
+            limit=args.limit,
+            execute=args.execute,
+        )
+    )
+    for line in report.lines():
+        print(line)
+    if report.errors:
+        raise SystemExit(1)
+
+
 def cmd_tag_tree_init(args: argparse.Namespace) -> None:
     from modules.library.maintenance import run_tag_tree_init
 
@@ -130,6 +149,30 @@ def register(sub: argparse._SubParsersAction[argparse.ArgumentParser]) -> None:
         help="最多处理多少条（0 = 用默认批大小，不会整表读进内存）",
     )
     previews.add_argument("--owner", default="", help="只修指定 owner_id 的素材")
+
+    prune = actions.add_parser(
+        "prune-blobs",
+        help="列出并清理对象存储里的孤儿字节（默认只报告）",
+    )
+    prune.add_argument("--prefix", default="library/blobs/", help="要扫描的对象前缀")
+    prune.add_argument(
+        "--min-age-hours",
+        type=int,
+        default=24,
+        help="只处理最后修改时间早于 N 小时的对象（防止误删刚写入、尚未落库的字节）",
+    )
+    prune.add_argument(
+        "--limit",
+        type=int,
+        default=1000,
+        help="单轮最多删除多少个（0 = 不限制）",
+    )
+    prune.add_argument(
+        "--execute",
+        action="store_true",
+        help="真的删除；不传时只报告，不会改动任何字节",
+    )
+    prune.set_defaults(func=cmd_blob_prune)
 
     tag_tree = actions.add_parser(
         "init-tag-tree",

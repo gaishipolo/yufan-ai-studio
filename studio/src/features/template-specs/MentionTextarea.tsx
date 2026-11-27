@@ -74,6 +74,7 @@ export const MentionTextarea = forwardRef<
     onInsert: (text: string) => void;
     placeholder?: string;
     rows?: number;
+    maxLength?: number;
     className?: string;
     id?: string;
     'aria-label'?: string;
@@ -90,6 +91,7 @@ export const MentionTextarea = forwardRef<
     onInsert,
     placeholder,
     rows = 2,
+    maxLength,
     className,
     id,
     'aria-label': ariaLabel,
@@ -193,6 +195,7 @@ export const MentionTextarea = forwardRef<
           aria-label={ariaLabel}
           value={value}
           rows={rows}
+          maxLength={maxLength}
           placeholder={placeholder}
           onChange={event => {
             const text = event.target.value;

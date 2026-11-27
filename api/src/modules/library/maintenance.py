@@ -22,7 +22,7 @@ from __future__ import annotations
 import asyncio
 import tempfile
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import cast
 
@@ -32,12 +32,13 @@ from core.audit import record as audit
 from core.config import settings
 from core.logging import get_logger
 from core.scheduler import periodic
+from db.base import utcnow
 from db.session import get_session_factory
 from infra import get_storage
 from infra.media_probe import create_preview
 from infra.storage.base import ObjectStorage, StorageError
 from modules.library.lifecycle import LifecycleService
-from modules.library.models import LibraryAsset, LibraryTag
+from modules.library.models import LibraryAsset, LibraryDownloadJob, LibraryTag
 from modules.library.service import preview_key
 
 logger = get_logger(__name__)
@@ -54,10 +55,12 @@ PREVIEW_REPAIR_BATCH = 200
 TAG_TREE_BATCH = 50
 
 __all__ = [
+    "BlobPruneReport",
     "PreviewReport",
     "TAG_TREE_SEED",
     "TagTreeReport",
     "TrashGcReport",
+    "run_blob_prune",
     "run_preview_repair",
     "run_tag_tree_init",
     "run_trash_gc",
@@ -75,6 +78,39 @@ class TrashGcReport:
     @property
     def blocked_count(self) -> int:
         return len(self.blocked)
+
+
+@dataclass
+class BlobPruneReport:
+    prefix: str = ""
+    scanned: int = 0
+    orphans: list[tuple[str, int]] = field(default_factory=list)
+    young: int = 0
+    remaining: int = 0
+    deleted: int = 0
+    bytes_freed: int = 0
+    errors: list[str] = field(default_factory=list)
+    dry_run: bool = True
+
+    @property
+    def orphan_bytes(self) -> int:
+        return sum(size for _, size in self.orphans)
+
+    def lines(self) -> list[str]:
+        if self.dry_run:
+            return [
+                f"试运行：前缀 {self.prefix} 下 {self.scanned} 个对象，"
+                f"可清理孤儿 {len(self.orphans)} 个（{self.orphan_bytes} 字节）",
+                f"保护期内 {self.young} 个已跳过；"
+                f"还有 {self.remaining} 个超出本轮上限",
+            ]
+        return [
+            f"前缀 {self.prefix} 下 {self.scanned} 个对象，"
+            f"疑似孤儿 {len(self.orphans)} 个",
+            f"已删 {self.deleted} 个（{self.bytes_freed} 字节），"
+            f"保护期跳过 {self.young} 个，剩余 {self.remaining} 个",
+            *[f"删除失败：{line}" for line in self.errors[:20]],
+        ]
 
 
 async def run_trash_gc(
@@ -139,6 +175,89 @@ async def trash_gc() -> None:
         logger.debug("回收站 GC 未启用（LIBRARY_TRASH_GC_ENABLED=false），本轮跳过")
         return
     await run_trash_gc()
+
+
+async def _referenced_object_keys() -> set[str]:
+    """库里还在引用的对象 key。
+
+    资产行按全量算（草稿 / 回收站也算）：只要行还在，字节就不能删。
+    打包 zip 同样是对象，过期清理由 download-gc 负责，这里不能抢。
+    """
+    async with get_session_factory()() as session:
+        keys: set[str] = set()
+        for storage_key, cover_key in await session.execute(
+            select(LibraryAsset.storage_key, LibraryAsset.cover_key)
+        ):
+            if storage_key:
+                keys.add(storage_key)
+            if cover_key:
+                keys.add(cover_key)
+        for storage_key in await session.scalars(
+            select(LibraryDownloadJob.storage_key)
+        ):
+            if storage_key:
+                keys.add(storage_key)
+        return keys
+
+
+async def run_blob_prune(
+    *,
+    prefix: str = "library/blobs/",
+    min_age_hours: int = 24,
+    limit: int = 1000,
+    execute: bool = False,
+) -> BlobPruneReport:
+    """列出「对象存储里有、库里无引用」的字节；默认只列，不删。
+
+    保护期按对象的 `last_modified` 算：写字节与落库之间有一个窗口，
+    刚写入的对象不能被巡检当成孤儿。
+    """
+    storage = get_storage()
+    objects = await storage.list_objects(prefix)
+    referenced = await _referenced_object_keys()
+    cutoff = utcnow() - timedelta(hours=max(1, min_age_hours))
+    candidates = [item for item in objects if item.key not in referenced]
+    old = [item for item in candidates if item.last_modified <= cutoff]
+    report = BlobPruneReport(
+        prefix=prefix,
+        scanned=len(objects),
+        young=len(candidates) - len(old),
+        dry_run=not execute,
+    )
+    selected = old[:limit] if limit > 0 else old
+    report.remaining = max(0, len(old) - len(selected))
+    report.orphans = [(item.key, item.size) for item in selected]
+    if not execute:
+        return report
+
+    # 删除前再查一次引用：列举到删除之间可能刚好有新的行引用了同一个
+    # 内容寻址 key。多这一条 SELECT 换的是「不误删刚被复用的字节」。
+    referenced_now = await _referenced_object_keys()
+    for item in selected:
+        if item.key in referenced_now:
+            report.remaining += 1
+            continue
+        try:
+            await storage.delete(item.key)
+        except StorageError as exc:
+            report.errors.append(f"{item.key}：{exc}")
+            continue
+        report.deleted += 1
+        report.bytes_freed += item.size
+    # 删除后重算：被引用而跳过的项不该留在 orphans 里。
+    report.orphans = [
+        (key, size)
+        for key, size in report.orphans
+        if key not in referenced_now
+    ]
+    logger.info(
+        "孤儿字节巡检：扫描 %s，删除 %s（%s 字节），跳过 %s",
+        report.scanned,
+        report.deleted,
+        report.bytes_freed,
+        report.young,
+    )
+    return report
 
 
 @dataclass

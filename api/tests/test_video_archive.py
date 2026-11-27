@@ -406,6 +406,47 @@ def test_persist_output_reports_missing_run() -> None:
 
 # ---------- 终态保护：迟到的回调不许改写已经结束的任务 ----------
 
+def test_terminal_guard_is_a_status_predicate_in_the_update_sql() -> None:
+    """终态保护必须写进 UPDATE 的 WHERE，而不是只在 Python 里判。
+
+    只判「读到的状态」挡不住「读完到写完之间别人提交了终态」——那正是这次
+    审查的问题 2。这里直接看 SQL：更新语句里必须带 `status NOT IN (...)`。
+    """
+    from sqlalchemy import event
+
+    from db.session import get_engine
+    from modules.task.pipeline import VideoTaskStore
+
+    task_id = _create_task(status=TaskStatus.RUNNING.value, progress=40)
+    seen: list[str] = []
+    engine = get_engine().sync_engine
+
+    def capture(
+        conn: object,
+        cursor: object,
+        statement: str,
+        params: object,
+        context: object,
+        executemany: bool,
+    ) -> None:
+        if statement.lstrip().upper().startswith("UPDATE") and "video_tasks" in statement:
+            seen.append(statement)
+
+    async def run() -> None:
+        async with get_session_factory()() as session:
+            await VideoTaskStore(session).mark_progress(task_id, 60)
+            await session.commit()
+
+    event.listen(engine, "before_cursor_execute", capture)
+    try:
+        asyncio.run(run())
+    finally:
+        event.remove(engine, "before_cursor_execute", capture)
+
+    assert seen, "mark_progress 没有发出 UPDATE"
+    assert any("STATUS NOT IN" in sql.upper() for sql in seen), seen
+
+
 def test_late_progress_cannot_reopen_a_completed_task() -> None:
     """另一个进程已经把它标成 completed，本会话缓存的还是 running。
 

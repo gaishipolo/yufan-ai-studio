@@ -9,9 +9,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.guarded_update import update_unless_terminal
 from generation.spec import (
     STATUS_FAILED,
     STATUS_QUEUED,
@@ -26,21 +27,6 @@ from modules.model_driver.models import (
     DriverJob,
     decode_request,
 )
-
-
-async def _guard(session: AsyncSession, record_id: str) -> DriverJob | None:
-    """终态保护：迟到的回调不许改写已结束（含已取消）的记录。
-
-    先 flush 再 refresh，与 `modules/image/pipeline.py::guard` 同一口径：
-    不刷新会读到 identity map 里的旧对象，刷新不 flush 会丢掉本会话刚写的
-    「提交意图已清除」标记。
-    """
-    job = await session.get(DriverJob, record_id)
-    if job is None:
-        return None
-    await session.flush()
-    await session.refresh(job)
-    return None if job.status in TERMINAL_STATUSES else job
 
 
 class DriverJobStore:
@@ -92,31 +78,47 @@ class DriverJobStore:
         return [self._to_record(row) for row in rows]
 
     async def mark_submitting(self, record_id: str) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.submit_attempts += 1
-        job.started_at = datetime.now(tz=UTC)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            DriverJob,
+            record_id,
+            TERMINAL_STATUSES,
+            {
+                "submit_attempts": DriverJob.submit_attempts + 1,
+                "started_at": datetime.now(tz=UTC),
+            },
+        )
 
     async def clear_submit_attempt(self, record_id: str) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.submit_attempts = 0
-        return True
+        return await update_unless_terminal(
+            self.session,
+            DriverJob,
+            record_id,
+            TERMINAL_STATUSES,
+            {"submit_attempts": 0},
+        )
 
     async def mark_submitted(self, record_id: str, external_id: str) -> bool:
-        job = await _guard(self.session, record_id)
+        job = await self.session.get(DriverJob, record_id)
         if job is None:
             return False
-        job.external_id = external_id
-        job.status = STATUS_RUNNING
-        job.started_at = datetime.now(tz=UTC)
-        job.progress = max(job.progress, 1)
-        job.submit_attempts = 0
-        job.submit_mode = self._snapshot_submit_mode(job)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            DriverJob,
+            record_id,
+            TERMINAL_STATUSES,
+            {
+                "external_id": external_id,
+                "status": STATUS_RUNNING,
+                "started_at": datetime.now(tz=UTC),
+                "progress": case(
+                    (DriverJob.progress < 1, 1),
+                    else_=DriverJob.progress,
+                ),
+                "submit_attempts": 0,
+                "submit_mode": self._snapshot_submit_mode(job),
+            },
+        )
 
     @staticmethod
     def _snapshot_submit_mode(job: DriverJob) -> str | None:
@@ -133,20 +135,30 @@ class DriverJobStore:
         return "async" if isinstance(provider, PollCapable) and provider.supports_poll else "sync"
 
     async def mark_progress(self, record_id: str, progress: int) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.progress = min(99, max(job.progress, progress))
-        job.status = STATUS_RUNNING
-        return True
+        next_progress = case(
+            (DriverJob.progress < progress, progress),
+            else_=DriverJob.progress,
+        )
+        return await update_unless_terminal(
+            self.session,
+            DriverJob,
+            record_id,
+            TERMINAL_STATUSES,
+            {
+                "progress": case((next_progress > 99, 99), else_=next_progress),
+                "status": STATUS_RUNNING,
+            },
+        )
 
     async def extend_deadline(self, record_id: str) -> bool:
         """上游还在排队：顺延墙钟起点（与 `modules/task/pipeline.py` 同口径）。"""
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.started_at = datetime.now(tz=UTC)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            DriverJob,
+            record_id,
+            TERMINAL_STATUSES,
+            {"started_at": datetime.now(tz=UTC)},
+        )
 
     async def list_claimed_external_ids(self) -> set[str]:
         rows = (
@@ -164,23 +176,28 @@ class DriverJobStore:
         cover_url: str | None,
         progress: int = 100,
     ) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.status = STATUS_SUCCEEDED
-        job.progress = 100
-        job.output_url = output_url
+        values: dict[str, object] = {
+            "status": STATUS_SUCCEEDED,
+            "progress": 100,
+            "output_url": output_url,
+            "error_message": None,
+            "finished_at": datetime.now(tz=UTC),
+        }
         if cover_url:
-            job.cover_url = cover_url
-        job.error_message = None
-        job.finished_at = datetime.now(tz=UTC)
-        return True
+            values["cover_url"] = cover_url
+        return await update_unless_terminal(
+            self.session, DriverJob, record_id, TERMINAL_STATUSES, values
+        )
 
     async def mark_failed(self, record_id: str, error: str) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.status = STATUS_FAILED
-        job.error_message = error
-        job.finished_at = datetime.now(tz=UTC)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            DriverJob,
+            record_id,
+            TERMINAL_STATUSES,
+            {
+                "status": STATUS_FAILED,
+                "error_message": error,
+                "finished_at": datetime.now(tz=UTC),
+            },
+        )

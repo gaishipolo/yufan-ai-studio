@@ -43,6 +43,8 @@ export type TokenResult = TokenFields & {
 export interface ProfilePatch {
   displayName?: string;
   email?: string | null;
+  /** 改邮箱（含清空）时必填：邮箱是找回入口，后端要再验一次当前口令。 */
+  currentPassword?: string;
   avatarUrl?: string | null;
 }
 

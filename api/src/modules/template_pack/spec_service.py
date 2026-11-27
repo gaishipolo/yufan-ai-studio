@@ -23,7 +23,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
-from sqlalchemy import ColumnElement, and_, false, func, select, true
+from sqlalchemy import ColumnElement, and_, false, func, select, true, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
@@ -50,6 +50,7 @@ from core.template_spec import (
     inline_slot_ref,
     normalize_refs,
     normalize_text_refs,
+    prompt_limit_for_capability,
     slot_ref_modes,
     slot_refs,
     strip_valid_refs,
@@ -270,24 +271,101 @@ async def _spec_out_of(session: AsyncSession, head: SpecRow) -> TemplateSpecOut:
     return _spec_out(head, latest, slots)
 
 
+async def _spec_outs_of(
+    session: AsyncSession, heads: Sequence[SpecRow]
+) -> list[TemplateSpecOut]:
+    """列表用：按页内 id 批量取当前版本与槽位，不再逐行 2N 查询。
+
+    只取「每个 head 的 current_version」对应的版本行；版本表可能有很多历史，
+    宁可多取几行再在 Python 里按 (spec_id, current_version) 过滤，也不做
+    `(spec_id, version) IN (...)` 这种方言敏感的行值比较。
+    """
+    wanted = [head for head in heads if head.current_version > 0]
+    if not wanted:
+        return [_spec_out(head, None, []) for head in heads]
+
+    latest_by_spec: dict[str, TemplateSpecVersion] = {}
+    version_rows = await session.scalars(
+        select(TemplateSpecVersion).where(
+            TemplateSpecVersion.spec_id.in_([head.id for head in wanted])
+        )
+    )
+    current = {head.id: head.current_version for head in wanted}
+    for version in version_rows:
+        if version.version == current.get(version.spec_id):
+            latest_by_spec[version.spec_id] = version
+
+    slots_by_version: dict[str, list[TemplateSpecSlot]] = {}
+    version_ids = [row.id for row in latest_by_spec.values()]
+    if version_ids:
+        slot_rows = await session.scalars(
+            select(TemplateSpecSlot)
+            .where(TemplateSpecSlot.version_id.in_(version_ids))
+            .order_by(
+                TemplateSpecSlot.version_id,
+                TemplateSpecSlot.position,
+                TemplateSpecSlot.slot_key,
+            )
+        )
+        for slot in slot_rows:
+            slots_by_version.setdefault(slot.version_id, []).append(slot)
+
+    out: list[TemplateSpecOut] = []
+    for head in heads:
+        latest = latest_by_spec.get(head.id)
+        slots = slots_by_version.get(latest.id, []) if latest is not None else []
+        out.append(_spec_out(head, latest, slots))
+    return out
+
+
 # --------------------------------------------------------------------------- #
 # 预检：结构（core） + 现实（模型目录 / 资产库）
 # --------------------------------------------------------------------------- #
+def _spec_prompt_limit(spec: TemplateSpec) -> tuple[int, str]:
+    """这份模板可能落到的执行端点里最严的上限。
+
+    作者可以给模板配多款允许模型；使用者挑到哪一款都不该在提交时 422，
+    所以按**全部可选模型**取最小值。模板固定模型永远在清单里，正常情况下
+    各模型同能力；混了图片模型时按图片上限判，正是要的效果。
+    """
+    catalog = _model_catalog()
+    limits = [
+        (prompt_limit_for_capability(model.capability), model.capability)
+        for model_id in effective_model_ids(spec.model, spec.allowed_models)
+        if (model := catalog.get(model_id)) is not None
+    ]
+    if not limits:
+        return EXECUTION_PROMPT_LIMIT, "video"
+    return min(limits)
+
+
+def _capability_label(capability: str) -> str:
+    return {"video": "视频", "image": "生图", "audio": "音频"}.get(
+        capability, capability
+    )
+
+
+def _model_capability(model_id: str) -> str:
+    model = _model_catalog().get(model_id)
+    return model.capability if model is not None else "video"
+
+
 def _check_executable(spec: TemplateSpec) -> None:
     """发布前判「这份模板跑得起来吗」：提示词长度 + 素材候选集够不够明确。
 
-    提示词部分只是**早提醒**：`{{slot:key*}}` 展开后可能比原文更长，真正的判据在
-    `compile_for()` 里按展开后的成品长度算。两处同一个常量，改上限只改
-    `EXECUTION_PROMPT_LIMIT`。
+    提示词部分只是**早提醒**：槽位文案展开后可能比原文更长，真正的判据在
+    `compile_for()` 里按展开后的成品长度算。两处都按模板模型所属能力取上限
+    （`PROMPT_LIMITS_BY_CAPABILITY`），图片模板不会按视频的 7000 放过。
     """
     # 只认一种写法：作者写的 `{{Mixed N}}` 先换算成 key，
     # 不然后面按 prompt 判「哪些可选槽位被单张引用」会一个都判不到。
     spec = normalize_refs(spec)
     total = len(spec.prompt)
-    if total > EXECUTION_PROMPT_LIMIT:
+    limit, capability = _spec_prompt_limit(spec)
+    if total > limit:
         raise BadRequest(
-            f"提示词共 {total} 字，超过执行层上限 {EXECUTION_PROMPT_LIMIT} 字"
-            "（通用生成任务的 prompt 上限）"
+            f"提示词共 {total} 字，超过执行层上限 {limit} 字"
+            f"（{_capability_label(capability)}模型）"
         )
 
     # 模板库的填表区按「标签 · 槽位名」分组展示候选素材，所以**要让用户填的
@@ -318,11 +396,9 @@ def _check_optional_slots_have_fallback(spec: TemplateSpec) -> None:
     没有它的话，使用者在模板库不填素材就会在点生成时被 400 打回，而那句话
     与「我刚才没选素材」看不出关系。
 
-    只看**单张引用**（`{{slot:x}}`）：三种写法的「没填」语义不同（见
-    `core/template_spec/compile.py`）—— 整组引用（`{{slot:x*}}`）没填时降级
-    为空（既有语义，不报错），第 N 张（`{{slot:x.N}}`）没填时必然报错
-    （没有「第 N 张」这回事，兜底文案套不上去）。所以**只有单张引用**
-    才需要兜底文案 —— 把整组引用也算进来，会把一堆本来好用的模板拦在发布外。
+    只看**单张引用**（`{{slot:x}}`）：一槽一素材后，整组（`{{slot:x*}}`）与
+    第 N 张（`{{slot:x.N}}`）已由结构校验直接拒，不再是「另一种没填时的语义」。
+    所以「被引用」就等于「单张引用」，没有别的形态要排除。
 
     放在**发布**这一道闸（而不是编译）：作者在封装页把槽位改成可选、还没写
     兜底文案时，草稿能存（`validate_spec` 也被保存草稿调用，拦了会逼作者
@@ -622,6 +698,7 @@ async def save(
     """保存草稿。同 key 同内容幂等；`revision` 不匹配则 409。"""
     await validate_draft(session, actor, payload, executable=False)
     fingerprint = fingerprint_of(payload)
+    draft = payload.model_dump(mode="json", by_alias=True, exclude={"revision"})
     head = await _find(session, payload.key)
 
     if head is None:
@@ -631,7 +708,7 @@ async def save(
             description=payload.description,
             owner_id=actor.id,
             status="draft",
-            draft=payload.model_dump(mode="json", by_alias=True, exclude={"revision"}),
+            draft=draft,
             revision=1,
             fingerprint=fingerprint,
             current_version=0,
@@ -641,21 +718,46 @@ async def save(
     else:
         if head.owner_id != actor.id:
             raise Conflict(f"配置 {payload.key} 属于其他用户")
-        if payload.revision is not None and payload.revision != head.revision:
+        expected = payload.revision
+        if expected is not None and expected != head.revision:
             raise StateChanged(
                 f"配置已被更新（当前第 {head.revision} 次修订），请刷新后重试",
-                details={"expectedRevision": payload.revision, "currentRevision": head.revision},
+                details={"expectedRevision": expected, "currentRevision": head.revision},
             )
         if head.fingerprint == fingerprint:
             # 幂等：内容没变就不加修订号，也不把已发布状态打回草稿。
             out = await _spec_out_of(session, head)
             await session.commit()
             return out
-        head.name = payload.name
-        head.description = payload.description
-        head.draft = payload.model_dump(mode="json", by_alias=True, exclude={"revision"})
-        head.fingerprint = fingerprint
-        head.revision += 1
+        # 修订号校验必须和写入是同一条 SQL：读到的 revision 与随后的 UPDATE
+        # 之间隔着 await，两个请求带同一个 revision 都能通过旧校验，后写者
+        # 覆盖先写者且版本号只 +1（前端无法区分谁覆盖了谁）。
+        conditions = [SpecRow.id == head.id]
+        if expected is not None:
+            conditions.append(SpecRow.revision == expected)
+        result = await session.execute(
+            update(SpecRow)
+            .where(*conditions)
+            .values(
+                name=payload.name,
+                description=payload.description,
+                draft=draft,
+                fingerprint=fingerprint,
+                revision=SpecRow.revision + 1,
+            )
+        )
+        if result.rowcount == 0:
+            current = await session.scalar(
+                select(SpecRow.revision).where(SpecRow.id == head.id)
+            )
+            raise StateChanged(
+                "配置已被更新，请刷新后重试",
+                details={
+                    "expectedRevision": expected,
+                    "currentRevision": current,
+                },
+            )
+        await session.refresh(head)
 
     out = await _spec_out_of(session, head)
     # `get_session()` 只在异常回滚，提交由 service 显式控制；漏了就是 201 后读 404。
@@ -721,7 +823,32 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         await session.commit()
         return SpecPublishOut(version=latest.version, spec=out)
 
+    # 版本号抢占也必须是条件 UPDATE：两个并发发布会算出同一个
+    # `current_version + 1`，后插入者撞唯一约束 → 500。先原子把 head 推进到
+    # 新版本，抢不到的那一方重查：同一份草稿就按幂等返回它，否则明确 409。
     version = head.current_version + 1
+    claimed = await session.execute(
+        update(SpecRow)
+        .where(
+            SpecRow.id == head.id,
+            SpecRow.current_version == head.current_version,
+        )
+        .values(current_version=version)
+    )
+    if claimed.rowcount == 0:
+        await session.refresh(head)
+        latest_now = await _latest(session, head)
+        if (
+            latest_now is not None
+            and latest_now.fingerprint == fingerprint
+            and latest_now.prompt == prompt
+            and (latest_now.random_prompt or "") == random_prompt
+        ):
+            out = await _spec_out_of(session, head)
+            await session.commit()
+            return SpecPublishOut(version=latest_now.version, spec=out)
+        raise Conflict("模板正在被其他请求发布，请刷新后重试")
+
     row = TemplateSpecVersion(
         spec_id=head.id,
         version=version,
@@ -967,7 +1094,7 @@ async def list_out(
                 )
             ).all()
         )
-    items = [await _spec_out_of(session, row) for row in rows]
+    items = await _spec_outs_of(session, rows)
     return TemplateSpecListOut(items=items, total=total)
 
 
@@ -999,15 +1126,15 @@ def _apply_slot_text_overrides(
     2. 必填或固定槽位：没有「没选」这个状态，兜底文案本来就用不上
     3. 同一格既挑了素材又改了文案：两者都在回答「这一格是什么」，
        取谁都是替使用者做决定
-    4. 提示词里没有插入点：只有单张引用 `{{slot:x}}` 与整组引用
-       `{{slot:x*}}` 会用兜底文案，第 N 张 `{{slot:x.2}}` 不用
+    4. 提示词里没有插入点：只有单张引用 `{{slot:x}}` 会用兜底文案；
+       整组 / 第 N 张已由结构校验拒，不是另一种插入点
     5. 文案为空或含 `{{`：空的到编译期必报错（且报的是「作者没写文案」，
        与眼前的情况对不上）；占位符放进去会在编译期炸成一句看不懂的话
     """
     if not overrides:
         return spec
     by_key = {slot.key: slot for slot in spec.slots}
-    # 与发布闸同一个判据（`slot_ref_modes`）：只认**单张**与**整组**引用。
+    # 与发布闸同一个判据（`slot_ref_modes`）：只认**单张**引用。
     modes = slot_ref_modes(spec.prompt)
     replaced: dict[str, InputSlot] = {}
     for key, raw in overrides.items():
@@ -1023,11 +1150,10 @@ def _apply_slot_text_overrides(
             )
         if any(item for item in slot_values.get(key, ())):
             raise BadRequest(f"「{name}」既挑了素材又改了文案：一格只有一种说法，请二选一")
-        if not ({"", "*"} & modes.get(key, set())):
+        if "" not in modes.get(key, set()):
             raise BadRequest(
                 f"「{name}」在这份模板的提示词里没有插入点"
-                "（要写成 {{slot:" + key + "}} 或 {{slot:" + key + "*}}），"
-                "改的文案不会进提示词"
+                "（要写成 {{slot:" + key + "}}），改的文案不会进提示词"
             )
         if not text:
             raise BadRequest(f"「{name}」改写的提示词不能为空")
@@ -1148,11 +1274,15 @@ async def compile_for(
                 **_checked_overrides(chosen, payload.param_overrides),
             },
         )
-    # 展开后的成品才是真正要发出去的那段：`{{slot:key*}}` 一次展开可能多出几十字。
-    if len(compiled.prompt) > EXECUTION_PROMPT_LIMIT:
+    # 展开后的成品才是真正要发出去的那段，按**使用者选中的模型**所属能力判：
+    # 同一模板的允许清单里可能有不同能力，选图就按图片上限。
+    capability = _model_capability(chosen)
+    limit = prompt_limit_for_capability(capability)
+    if len(compiled.prompt) > limit:
         raise BadRequest(
             f"编译后的提示词 {len(compiled.prompt)} 字，超过执行层上限 "
-            f"{EXECUTION_PROMPT_LIMIT} 字；少填几张参考图或缩短描述"
+            f"{limit} 字（{_capability_label(capability)}模型）；"
+            "少填几张参考图或缩短描述"
         )
     return _compile_out(version_no, compiled, spec, fills)
 

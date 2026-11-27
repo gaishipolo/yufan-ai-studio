@@ -24,6 +24,20 @@ def storage(tmp_path: Path) -> LocalStorage:
     return LocalStorage(root=str(tmp_path / "storage"))
 
 
+def test_list_objects_returns_metadata(storage: LocalStorage) -> None:
+    async def run() -> list:
+        await storage.put("library/blobs/aa/one.png", b"123")
+        await storage.put("library/blobs/bb/two.png", b"45")
+        return await storage.list_objects("library/blobs/")
+
+    rows = asyncio.run(run())
+    assert {row.key: row.size for row in rows} == {
+        "library/blobs/aa/one.png": 3,
+        "library/blobs/bb/two.png": 2,
+    }
+    assert all(row.last_modified.tzinfo is not None for row in rows)
+
+
 @pytest.mark.parametrize(
     "bad_key",
     [

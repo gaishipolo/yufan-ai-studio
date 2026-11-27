@@ -28,7 +28,7 @@ from botocore.exceptions import BotoCoreError, ClientError
 from core.logging import get_logger
 from infra.blob import s3_client
 from infra.driver_config import DriverSettings, driver_config
-from infra.storage.base import StorageError
+from infra.storage.base import StorageError, StoredObject
 
 logger = get_logger(__name__)
 
@@ -172,6 +172,31 @@ class S3Storage:
         except BotoCoreError as exc:
             raise StorageError(f"S3 探测失败（{key}）：{exc}") from exc
         return True
+
+    async def list_objects(self, prefix: str = "") -> list[StoredObject]:
+        """按前缀列出对象；分页交给 boto3 paginator。"""
+        normalized = self._key(prefix) if prefix else ""
+
+        def _list() -> list[StoredObject]:
+            paginator = self._client.get_paginator("list_objects_v2")
+            found: list[StoredObject] = []
+            for page in paginator.paginate(
+                Bucket=self.settings.bucket, Prefix=normalized
+            ):
+                for item in page.get("Contents", []):
+                    found.append(
+                        StoredObject(
+                            key=str(item["Key"]),
+                            size=int(item.get("Size") or 0),
+                            last_modified=item["LastModified"],
+                        )
+                    )
+            return found
+
+        try:
+            return await asyncio.to_thread(_list)
+        except (ClientError, BotoCoreError) as exc:
+            raise StorageError(f"S3 列举失败（{prefix}）：{exc}") from exc
 
     async def get(self, key: str) -> bytes:
         key = self._key(key)

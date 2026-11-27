@@ -12,7 +12,7 @@ from collections.abc import Mapping, Sequence
 from datetime import datetime
 from typing import Any
 
-from sqlalchemy import DateTime, Integer, String, Text
+from sqlalchemy import DateTime, Index, Integer, String, Text
 from sqlalchemy.orm import Mapped, mapped_column
 
 from core.library_text import parse_text_refs, text_ref_bindings
@@ -66,6 +66,10 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
     error_message: Mapped[str | None] = mapped_column(String(512), nullable=True)
 
     owner_id: Mapped[str] = mapped_column(String(32), nullable=False, index=True)
+    #: 客户端为「一次提交意图」生成的键；同键重试不会重复落库/提交供应商。
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: 这次请求的规范化指纹：同键不同指纹必须 409，不能返回错的任务。
+    idempotency_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
     # 供应商侧任务标识；同步供应商（Agnes）也会写，便于对账
     external_id: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
@@ -85,6 +89,16 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
 
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+    __table_args__ = (
+        # 同一次提交意图只能落一条；NULL 键不参与约束（老客户端照旧）。
+        Index(
+            "ux_image_jobs_owner_idempotency",
+            "owner_id",
+            "idempotency_key",
+            unique=True,
+        ),
+    )
 
     @property
     def previous_external_ids(self) -> list[str]:

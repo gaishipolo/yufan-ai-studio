@@ -50,12 +50,16 @@ AND 语义成立的前提 —— 一个素材在每个维度里只取一个值�
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
+from typing import Any
 
 from sqlalchemy import and_, delete, exists, func, select, update
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import aliased
 from sqlalchemy.sql.elements import ColumnElement
 
+from core.config import get_settings
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound
 from modules.library import access
@@ -391,19 +395,38 @@ async def tag_ids_by_asset(
     return result
 
 
+async def _insert_asset_tags(
+    session: AsyncSession, asset_id: str, tag_ids: Sequence[str]
+) -> None:
+    """把绑定插进去；已存在的 (asset_id, tag_id) 由数据库忽略。
+
+    不能「先 SELECT 当前再 INSERT 缺失项」：两个并发请求会同时判定缺失，
+    后提交者撞唯一索引 → 500（PostgreSQL 还会作废整个事务）。
+    """
+    if not tag_ids:
+        return
+    statement: Any = (
+        sqlite_insert(LibraryAssetTag)
+        if get_settings().is_sqlite
+        else pg_insert(LibraryAssetTag)
+    )
+    await session.execute(
+        statement.values(
+            [{"asset_id": asset_id, "tag_id": tag_id} for tag_id in tag_ids]
+        ).on_conflict_do_nothing(
+            index_elements=[LibraryAssetTag.asset_id, LibraryAssetTag.tag_id]
+        )
+    )
+
+
 async def add_asset_tags(
     session: AsyncSession, asset_id: str, tag_ids: Sequence[str]
 ) -> None:
     """幂等追加。已存在的绑定跳过——批量打标时同一批里重复点一次很常见。"""
     await _ensure_tags_exist(session, tag_ids, reject_groups=True)
-    current = set(
-        await session.scalars(
-            select(LibraryAssetTag.tag_id).where(LibraryAssetTag.asset_id == asset_id)
-        )
+    await _insert_asset_tags(
+        session, asset_id, [tag_id for tag_id in dict.fromkeys(tag_ids) if tag_id]
     )
-    for tag_id in dict.fromkeys(tag_ids):
-        if tag_id and tag_id not in current:
-            session.add(LibraryAssetTag(asset_id=asset_id, tag_id=tag_id))
 
 
 async def remove_asset_tags(
@@ -445,14 +468,7 @@ async def set_asset_tags(
         await session.execute(
             delete(LibraryAssetTag).where(LibraryAssetTag.asset_id == asset_id)
         )
-    current = set(
-        await session.scalars(
-            select(LibraryAssetTag.tag_id).where(LibraryAssetTag.asset_id == asset_id)
-        )
-    )
-    for tag_id in kept:
-        if tag_id not in current:
-            session.add(LibraryAssetTag(asset_id=asset_id, tag_id=tag_id))
+    await _insert_asset_tags(session, asset_id, kept)
 
 
 class TagService:

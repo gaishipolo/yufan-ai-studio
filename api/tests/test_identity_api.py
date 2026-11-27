@@ -444,6 +444,41 @@ def test_update_own_profile(client: TestClient) -> None:
     assert client.get(f"{API}/me", headers=headers).json()["data"]["displayName"] == "新昵称"
 
 
+def test_changing_email_requires_the_current_password(client: TestClient) -> None:
+    """邮箱是找回入口：只凭登录态不能改绑。"""
+    admin = _admin(client)
+    _, headers, _ = _make_user(client, admin, "email_user", ["task:read"])
+
+    missing = client.patch(
+        f"{API}/me", json={"email": "new@example.com"}, headers=headers
+    )
+    assert missing.status_code == 400
+    assert "当前密码" in missing.json()["message"]
+
+    wrong = client.patch(
+        f"{API}/me",
+        json={"email": "new@example.com", "currentPassword": "wrong-pass"},
+        headers=headers,
+    )
+    assert wrong.status_code == 400
+    assert "原密码" in wrong.json()["message"]
+    assert client.get(f"{API}/me", headers=headers).json()["data"]["email"] is None
+
+    ok = client.patch(
+        f"{API}/me",
+        json={"email": "new@example.com", "currentPassword": "pass-12345"},
+        headers=headers,
+    )
+    assert ok.status_code == 200, ok.text
+    assert ok.json()["data"]["email"] == "new@example.com"
+
+    # 纯展示字段不要求口令：不能让改昵称也被这道闸挡住。
+    nickname = client.patch(
+        f"{API}/me", json={"displayName": "只改昵称"}, headers=headers
+    )
+    assert nickname.status_code == 200
+
+
 # --------------------------------------------------------------------------- #
 # 列表与筛选
 # --------------------------------------------------------------------------- #

@@ -11,7 +11,7 @@ import tempfile
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.config import settings
@@ -20,9 +20,10 @@ from core.library_text import inject_text_refs
 from core.naming import generated_file_name
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
+from db.guarded_update import update_unless_terminal
 from db.session import get_session_factory
 from generation.pipeline import register_pipeline
-from generation.spec import STATUS_QUEUED, STATUS_RUNNING, GenerationRecord
+from generation.spec import GenerationRecord
 from infra import get_model_router, get_storage
 from infra.ai.base import Capability, GenerationRequest
 from infra.archive import get_archive_storage
@@ -77,27 +78,6 @@ _SUPPORTED_CHANNELS = frozenset(
 # 任务表的终态用 completed/failed（前端契约），与框架默认的 succeeded 不同，
 # 因此显式声明终态集合。
 _TERMINAL = (TaskStatus.COMPLETED.value, TaskStatus.FAILED.value)
-
-
-async def _guard(session: AsyncSession, record_id: str) -> VideoTask | None:
-    """终态保护：迟到的回调不许把已经结束的任务改回去。
-
-    必须先 `refresh` 再判断：SQLAlchemy 的 identity map 会直接返回本 session
-    缓存的旧对象，另一个 worker 刚提交的 `completed` / `failed` 在这里读不到，
-    不刷新等于没有保护。刷新前先 `flush()`：`refresh` 会 expire 并重载，
-    本会话尚未提交的改动（比如 `clear_submit_attempt`）会被一起丢弃。
-
-    没有这道守卫的症状很具体：`mark_progress` 无条件写 `RUNNING`，于是
-    「已经出片的任务被一条迟到的进度回调拖回生成中」，进度条永远停在 99%。
-    兄弟链路（`modules/image/pipeline.py`、`modules/model_driver/store.py`）
-    都有这道 guard，视频这条接生成框架时漏了。
-    """
-    task = await session.get(VideoTask, record_id)
-    if task is None:
-        return None
-    await session.flush()
-    await session.refresh(task)
-    return None if task.status in _TERMINAL else task
 
 
 class VideoTaskStore:
@@ -198,51 +178,76 @@ class VideoTaskStore:
 
     async def mark_submitting(self, record_id: str) -> bool:
         """调用供应商前先落一次「提交意图」，崩在中途时重启能识别出来。"""
-        task = await _guard(self.session, record_id)
-        if task is None:
-            return False
-        task.submit_attempts += 1
-        return True
+        return await update_unless_terminal(
+            self.session,
+            VideoTask,
+            record_id,
+            _TERMINAL,
+            {
+                "submit_attempts": VideoTask.submit_attempts + 1,
+                "started_at": datetime.now(tz=UTC),
+            },
+        )
 
     async def clear_submit_attempt(self, record_id: str) -> bool:
-        task = await _guard(self.session, record_id)
-        if task is None:
-            return False
-        task.submit_attempts = 0
-        return True
+        return await update_unless_terminal(
+            self.session,
+            VideoTask,
+            record_id,
+            _TERMINAL,
+            {"submit_attempts": 0},
+        )
 
     async def mark_submitted(self, record_id: str, external_id: str) -> bool:
-        task = await _guard(self.session, record_id)
-        if task is None:
-            return False
-        task.external_id = external_id
-        task.status = STATUS_RUNNING if task.status != STATUS_QUEUED else TaskStatus.RUNNING.value
-        task.started_at = datetime.now(tz=UTC)
-        task.progress = max(task.progress, 1)
-        # 提交意图已完成使命：不复位的话，「attempts>0」会一直残留，
-        # 此后任何一次失败后的重试都会被误判为「提交结果未知」（R3-01）
-        task.submit_attempts = 0
-        return True
+        progress = case(
+            (VideoTask.progress < 1, 1),
+            else_=VideoTask.progress,
+        )
+        return await update_unless_terminal(
+            self.session,
+            VideoTask,
+            record_id,
+            _TERMINAL,
+            {
+                "external_id": external_id,
+                "status": TaskStatus.RUNNING.value,
+                "started_at": datetime.now(tz=UTC),
+                "progress": progress,
+                # 提交意图已完成使命：不复位的话，「attempts>0」会一直残留，
+                # 此后任何一次失败后的重试都会被误判为「提交结果未知」（R3-01）
+                "submit_attempts": 0,
+            },
+        )
 
     async def mark_progress(self, record_id: str, progress: int) -> bool:
-        task = await _guard(self.session, record_id)
-        if task is None:
-            return False
         # 进度只增不减，且不提前到达 100（终态才置 100）
-        task.progress = min(99, max(task.progress, progress))
-        task.status = TaskStatus.RUNNING.value
-        return True
+        next_progress = case(
+            (VideoTask.progress < progress, progress),
+            else_=VideoTask.progress,
+        )
+        return await update_unless_terminal(
+            self.session,
+            VideoTask,
+            record_id,
+            _TERMINAL,
+            {
+                "progress": case((next_progress > 99, 99), else_=next_progress),
+                "status": TaskStatus.RUNNING.value,
+            },
+        )
 
     async def extend_deadline(self, record_id: str) -> bool:
         """上游还在排队：把墙钟起点挪到现在（`started_at` 就是 `_timed_out` 的锚点）。
 
         只动起点，不动 `created_at`：真正的硬上限按建单时间算，挪起点不能绕过它。
         """
-        task = await _guard(self.session, record_id)
-        if task is None:
-            return False
-        task.started_at = datetime.now(tz=UTC)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            VideoTask,
+            record_id,
+            _TERMINAL,
+            {"started_at": datetime.now(tz=UTC)},
+        )
 
     async def list_claimed_external_ids(self) -> set[str]:
         rows = (
@@ -260,27 +265,32 @@ class VideoTaskStore:
         cover_url: str | None,
         progress: int = 100,
     ) -> bool:
-        task = await _guard(self.session, record_id)
-        if task is None:
-            return False
-        task.status = TaskStatus.COMPLETED.value
-        task.progress = 100
-        task.downloadable = True
-        task.output_url = output_url
+        values: dict[str, object] = {
+            "status": TaskStatus.COMPLETED.value,
+            "progress": 100,
+            "downloadable": True,
+            "output_url": output_url,
+            "error_message": None,
+            "finished_at": datetime.now(tz=UTC),
+        }
         if cover_url:
-            task.cover_url = cover_url
-        task.error_message = None
-        task.finished_at = datetime.now(tz=UTC)
-        return True
+            values["cover_url"] = cover_url
+        return await update_unless_terminal(
+            self.session, VideoTask, record_id, _TERMINAL, values
+        )
 
     async def mark_failed(self, record_id: str, error: str) -> bool:
-        task = await _guard(self.session, record_id)
-        if task is None:
-            return False
-        task.status = TaskStatus.FAILED.value
-        task.error_message = error
-        task.finished_at = datetime.now(tz=UTC)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            VideoTask,
+            record_id,
+            _TERMINAL,
+            {
+                "status": TaskStatus.FAILED.value,
+                "error_message": error,
+                "finished_at": datetime.now(tz=UTC),
+            },
+        )
 
 
 @register_pipeline

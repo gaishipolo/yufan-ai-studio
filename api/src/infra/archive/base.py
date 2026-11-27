@@ -176,7 +176,7 @@ class ArchiveStorage(Protocol):
     def modified_at(self, location: Location) -> datetime | None:
         """对象最后修改时间；不存在返回 `None`。
 
-        目前只有 `app prune-blobs` 用它给回收加保护期：登记流程是「先写字节、
+        目前只有回收脚本用它给回收加保护期：登记流程是「先写字节、
         再写库行」，两件事之间有一小段窗口，此期间 blob 没有任何引用。
         没有时间维度就只能靠"别在上传时跑回收"这种口头约定。
         """

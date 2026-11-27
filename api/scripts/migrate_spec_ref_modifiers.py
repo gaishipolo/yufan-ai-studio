@@ -57,9 +57,10 @@ from modules.template_pack.models import (  # noqa: E402
 )
 
 #: 带修饰符的引用：整组（*）与第 N 张（.N）。两种形态都要降级成单个引用。
+# 修饰符前允许空格：`{{Mixed 2 *}}` 也会原样进提示词，迁移必须一起清掉。
 MODIFIER_REF = re.compile(
     r"\{\{\s*(Mixed\s+\d+|slot:[a-z][a-z0-9_]{0,39})"
-    r"(?:\*|\.\d+)\s*\}\}"
+    r"\s*(?:\*|\.\d+)\s*\}\}"
 )
 
 

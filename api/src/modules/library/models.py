@@ -358,7 +358,7 @@ class LibraryTextVersion(Base, UUIDMixin):
     """文本资产的**不可变**版本快照。
 
     为什么把整份正文再存一遍（而不是只存 `storage_key`）：blob 的 GC
-    （`app prune-blobs`）按 `library_assets.storage_key` / `cover_key` 数引用，
+    （`app library prune-blobs`）按 `library_assets.storage_key` / `cover_key` 数引用，
     编辑会换 key，旧版本若只剩一个版本行里的 key，那块字节会被当成孤儿删掉，
     历史就再也读不回来。文本上限 1MB，行内留一份是最省心的做法。
 

@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from typing import Any
 
+import pytest
 from fastapi.testclient import TestClient
 from library_support import LIB_RW, admin_headers, make_user, set_visibility, suffix
 from tests_template_helpers import png_bytes, upload, upload_shared, video_bytes
@@ -436,6 +437,31 @@ def test_text_literal_is_rejected_like_mixed(client: TestClient) -> None:
     assert "不要直接写" in response.json()["message"]
 
 
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "主图 {{Mixed 1}}，再加一张 {{slot:Hero}}",  # key 大写
+        "主图 {{Mixed 2 *}}",  # 修饰符前有空格
+        "主图 {{Mixed2}}",  # 少空格
+        "主图 {{Mixed}}",  # 没有编号
+    ],
+)
+def test_unparseable_placeholders_are_rejected_at_validate(
+    client: TestClient, bad: str
+) -> None:
+    """坏占位符不能等到别人点生成才 400。
+
+    `validate_spec` 过去只摘 `{{slot:` 残留：大写 key、畸形 Mixed 一个都
+    认不出，发布绿、编译期才报「无法解析」。这条把发布闸钉在 `validate`。
+    """
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    draft = _draft(video, first, second, editable=bad)
+    response = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert response.status_code == 400, response.text
+    assert "无法解析的占位符" in response.json()["message"]
+
+
 def test_demo_asset_round_trips_but_never_enters_the_snapshot(
     client: TestClient,
 ) -> None:
@@ -712,22 +738,30 @@ def test_text_slot_is_the_only_way_to_make_prompt_variable(client: TestClient) -
 
 
 def test_execution_prompt_limit_matches_task_schema() -> None:
-    """提示词上限是**执行端点**的属性：常量必须和 `CreateTaskIn.prompt` 的 `max_length` 一致。
+    """提示词上限是**执行端点**的属性：每个能力的 schema 都要和声明表一致。
 
-    两处各写一个数字，漂移的表现是「模板能发布、填表能编译、点生成才 422」——
-    用户已经把素材填完了，错却出在别处。所以钉成一条断言，改哪边都会先红。
+    只钉视频端点会漏掉生图端点：图片模板能发布、填表能编译、点生成才 422，
+    用户已经把素材填完了，错却出在别处。这里遍历全部执行端点，两个方向都判：
+    表里多一个能力（没有端点）或端点用了别的数字，都会先红。
     """
     from annotated_types import MaxLen
 
-    from core.template_spec import EXECUTION_PROMPT_LIMIT
+    from core.template_spec import PROMPT_LIMITS_BY_CAPABILITY
+    from modules.image.schema import GenerateImageIn
     from modules.task.schema import CreateTaskIn
 
-    limits = [
-        item.max_length
-        for item in CreateTaskIn.model_fields["prompt"].metadata
-        if isinstance(item, MaxLen)
-    ]
-    assert limits == [EXECUTION_PROMPT_LIMIT]
+    endpoints = {
+        "video": CreateTaskIn,
+        "image": GenerateImageIn,
+    }
+    assert set(endpoints) == set(PROMPT_LIMITS_BY_CAPABILITY)
+    for capability, schema in endpoints.items():
+        limits = [
+            item.max_length
+            for item in schema.model_fields["prompt"].metadata
+            if isinstance(item, MaxLen)
+        ]
+        assert limits == [PROMPT_LIMITS_BY_CAPABILITY[capability]], capability
 
 
 def test_draft_can_be_long_but_publish_checks_execution_limit(client: TestClient) -> None:
@@ -754,6 +788,46 @@ def test_draft_can_be_long_but_publish_checks_execution_limit(client: TestClient
     assert publish.status_code == 400
     assert "执行层上限" in publish.json()["message"]
 
+
+def test_image_template_publishes_against_image_prompt_limit(client: TestClient) -> None:
+    """图片模板按生图端点 2000 字判，而不是视频任务的 7000。
+
+    只要发布闸放过，使用者就一定会在「生成图片」时被 422 —— 那时素材已经
+    填完，错却落在提示词长度上。这里直接钉住发布这一道。
+    """
+    from core.template_spec import PROMPT_LIMITS_BY_CAPABILITY
+
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    image_limit = PROMPT_LIMITS_BY_CAPABILITY["image"]
+    draft = _draft(
+        video,
+        first,
+        second,
+        model="agnes-image-2.5-flash",
+        slots=[],
+        prompt="长" * (image_limit + 1),
+    )
+    assert client.post(API, json=draft, headers=headers).status_code == 200
+
+    publish = client.post(f"{API}/{draft['key']}/publish", headers=headers)
+    assert publish.status_code == 400
+    assert "执行层上限" in publish.json()["message"]
+    assert str(image_limit) in publish.json()["message"]
+
+    # 视频模板用同一段字不受影响：上限是按能力取的，不是一刀切。
+    video_draft = _draft(
+        video,
+        first,
+        second,
+        slots=[],
+        prompt="长" * (image_limit + 1),
+    )
+    assert client.post(API, json=video_draft, headers=headers).status_code == 200
+    assert (
+        client.post(f"{API}/{video_draft['key']}/publish", headers=headers).status_code
+        == 200
+    )
 
 
 def test_models_expose_replacement_declaration(client: TestClient) -> None:

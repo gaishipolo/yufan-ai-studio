@@ -9,6 +9,8 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -25,6 +27,15 @@ class StorageError(UpstreamError):
 
     归档层（`infra/archive/`）早就是 `UpstreamError`，两套存储的语义现在一致。
     """
+
+
+@dataclass(frozen=True, slots=True)
+class StoredObject:
+    """列举结果的元数据：孤儿巡检要按年龄过滤，不能只看 key。"""
+
+    key: str
+    size: int
+    last_modified: datetime
 
 
 @runtime_checkable
@@ -55,6 +66,15 @@ class ObjectStorage(Protocol):
         语义与 `delete` 相反：非空 key 但对象不存在 → `False`；
         key 本身非法（含 `..`、绝对路径）→ 抛 `StorageError`，别把「路径有问题」
         混进「东西不在」。
+        """
+        ...
+
+    async def list_objects(self, prefix: str = "") -> list[StoredObject]:
+        """列举前缀下的对象（含 key / 大小 / 最后修改时间）。
+
+        只给对账类命令用：孤儿字节没有任何数据库行，不列举就永远发现不了。
+        带 `last_modified` 是为了保护期——「刚写入、还没落库」的对象不能在
+        巡检里被误删。
         """
         ...
 

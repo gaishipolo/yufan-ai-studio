@@ -18,7 +18,7 @@ from typing import ClassVar
 from urllib.parse import urljoin, urlparse
 
 import httpx
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.library_text import inject_text_refs
@@ -27,6 +27,7 @@ from core.naming import generated_file_name
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind
 from core.ports.org_directory import user_names
+from db.guarded_update import update_unless_terminal
 from generation.pipeline import register_pipeline
 from generation.spec import (
     STATUS_FAILED,
@@ -114,27 +115,6 @@ class ImageAssetSettings(DriverSettings):
 get_image_asset_settings = vendor_settings(ImageAssetSettings, env_prefix="IMAGE_ASSET")
 
 
-async def _guard(session: AsyncSession, record_id: str) -> ImageJob | None:
-    """终态保护：迟到的回调不许改写已经 concluded 的记录。
-
-    必须先 `refresh` 再判断：SQLAlchemy 的 identity map 会直接返回本 session
-    缓存的旧对象，另一个 worker 已经提交的 `failed` 在这里是读不到的，
-    不刷新就等于没有保护（R11-02 现象 C 的状态来回跳正是这么发生的）。
-
-    但 `refresh()` 会 expire 并从库里重载，**把本会话尚未提交的改动一并丢弃**。
-    `handle_submit` 的「确定没送达」分支正好是两次连续写
-    （`clear_submit_attempt` → `_fail`），第二次 `_guard` 会把第一次清掉的标记
-    又读回来（R12-02）。所以刷新前先 `flush()`：本会话的改动写进当前事务，
-    `refresh` 在同一事务里读得到它，同时也读得到别的 worker 已提交的终态。
-    """
-    job = await session.get(ImageJob, record_id)
-    if job is None:
-        return None
-    await session.flush()
-    await session.refresh(job)
-    return None if job.status in _TERMINAL else job
-
-
 class ImageJobStore:
     """`image_jobs` ↔ `GenerationRecord` 的映射。不负责 commit，由框架统一提交。"""
 
@@ -205,19 +185,25 @@ class ImageJobStore:
         同时记下 `started_at`：巡检按「什么时候开始提交」判陈旧，
         才不会把排队很久、其实刚开始干活的任务当成孤儿（见 maintenance）。
         """
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.submit_attempts += 1
-        job.started_at = datetime.now(tz=UTC)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            ImageJob,
+            record_id,
+            _TERMINAL,
+            {
+                "submit_attempts": ImageJob.submit_attempts + 1,
+                "started_at": datetime.now(tz=UTC),
+            },
+        )
 
     async def clear_submit_attempt(self, record_id: str) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.submit_attempts = 0
-        return True
+        return await update_unless_terminal(
+            self.session,
+            ImageJob,
+            record_id,
+            _TERMINAL,
+            {"submit_attempts": 0},
+        )
 
     @staticmethod
     def _snapshot_submit_mode(job: ImageJob) -> str | None:
@@ -239,18 +225,28 @@ class ImageJobStore:
         return "async" if isinstance(provider, PollCapable) and provider.supports_poll else "sync"
 
     async def mark_submitted(self, record_id: str, external_id: str) -> bool:
-        job = await _guard(self.session, record_id)
+        job = await self.session.get(ImageJob, record_id)
         if job is None:
             return False
-        job.external_id = external_id
-        job.status = STATUS_RUNNING
-        job.started_at = datetime.now(tz=UTC)
-        job.progress = max(job.progress, 1)
-        # 提交意图已完成使命，必须复位：否则后续任何失败后的重试
-        # 都会被误判成「提交结果未知」而拒绝重提
-        job.submit_attempts = 0
-        job.submit_mode = self._snapshot_submit_mode(job)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            ImageJob,
+            record_id,
+            _TERMINAL,
+            {
+                "external_id": external_id,
+                "status": STATUS_RUNNING,
+                "started_at": datetime.now(tz=UTC),
+                "progress": case(
+                    (ImageJob.progress < 1, 1),
+                    else_=ImageJob.progress,
+                ),
+                # 提交意图已完成使命，必须复位：否则后续任何失败后的重试
+                # 都会被误判成「提交结果未知」而拒绝重提
+                "submit_attempts": 0,
+                "submit_mode": self._snapshot_submit_mode(job),
+            },
+        )
 
     async def set_external_id(self, record_id: str, external_id: str) -> bool:
         """回填提交凭证（崩溃恢复用；语义见 `generation/store.py::ExternalIdRecoverable`）。
@@ -267,24 +263,41 @@ class ImageJobStore:
         find_recoverable_external_id` 只回填这种行）→ 这里的信息比目录权威。
         已有快照不动：它说明「这条记录提交时的形态」已定，不能被今天的目录覆盖。
         """
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.external_id = external_id
-        job.status = STATUS_RUNNING
-        job.started_at = datetime.now(tz=UTC)
-        job.progress = max(job.progress, 1)
-        if job.submit_mode is None:
-            job.submit_mode = "async"
-        return True
+        return await update_unless_terminal(
+            self.session,
+            ImageJob,
+            record_id,
+            _TERMINAL,
+            {
+                "external_id": external_id,
+                "status": STATUS_RUNNING,
+                "started_at": datetime.now(tz=UTC),
+                "progress": case(
+                    (ImageJob.progress < 1, 1),
+                    else_=ImageJob.progress,
+                ),
+                "submit_mode": case(
+                    (ImageJob.submit_mode.is_(None), "async"),
+                    else_=ImageJob.submit_mode,
+                ),
+            },
+        )
 
     async def mark_progress(self, record_id: str, progress: int) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.progress = min(99, max(job.progress, progress))
-        job.status = STATUS_RUNNING
-        return True
+        next_progress = case(
+            (ImageJob.progress < progress, progress),
+            else_=ImageJob.progress,
+        )
+        return await update_unless_terminal(
+            self.session,
+            ImageJob,
+            record_id,
+            _TERMINAL,
+            {
+                "progress": case((next_progress > 99, 99), else_=next_progress),
+                "status": STATUS_RUNNING,
+            },
+        )
 
     async def mark_succeeded(
         self,
@@ -294,27 +307,32 @@ class ImageJobStore:
         cover_url: str | None,
         progress: int = 100,
     ) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.status = STATUS_SUCCEEDED
-        job.progress = 100
-        job.output_url = output_url
+        values: dict[str, object] = {
+            "status": STATUS_SUCCEEDED,
+            "progress": 100,
+            "output_url": output_url,
+            "error_message": None,
+            "finished_at": datetime.now(tz=UTC),
+        }
         # 图片的封面就是它自己；供应商没给 cover 时不要用旧的空串覆盖
         if cover_url:
-            job.cover_url = cover_url
-        job.error_message = None
-        job.finished_at = datetime.now(tz=UTC)
-        return True
+            values["cover_url"] = cover_url
+        return await update_unless_terminal(
+            self.session, ImageJob, record_id, _TERMINAL, values
+        )
 
     async def mark_failed(self, record_id: str, error: str) -> bool:
-        job = await _guard(self.session, record_id)
-        if job is None:
-            return False
-        job.status = STATUS_FAILED
-        job.error_message = error
-        job.finished_at = datetime.now(tz=UTC)
-        return True
+        return await update_unless_terminal(
+            self.session,
+            ImageJob,
+            record_id,
+            _TERMINAL,
+            {
+                "status": STATUS_FAILED,
+                "error_message": error,
+                "finished_at": datetime.now(tz=UTC),
+            },
+        )
 
 
 def _allowed_hosts(raw: str) -> frozenset[str]:

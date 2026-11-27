@@ -328,6 +328,8 @@ def test_every_irreversible_migration_carries_the_marker() -> None:
     known_irreversible = {
         "b8e4c1f90d27",  # 下线替换链：11 张表随能力一起下线
         "c3d8e1f04a7b",  # 下线素材封装(pack)：表、资产行与封装槽位一并退场
+        "f5b2d8c4a173",  # 删除 v1 assets 表：行没有备份
+        "c6f0a2d7e813",  # 删除旧封装模板两张表：行没有备份
     }
     missing = known_irreversible - marked
     assert not missing, f"这些不可逆迁移漏了 `irreversible = True` 标记：{sorted(missing)}"

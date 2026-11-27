@@ -895,6 +895,20 @@ export function hasSingleSlotRef(
   return slotRefModes(text, slots)[key]?.has('') ?? false;
 }
 
+/** 每个槽位被**单张引用**了几次（只数 `{{slot:key}}`，不数修饰符写法）。 */
+export function singleSlotRefCounts(
+  text: string,
+  slots: SpecSlotIn[] = [],
+): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const match of toSlotTokens(text, slots).matchAll(slotRefPattern())) {
+    if (match[2]) continue;
+    const key = match[1];
+    counts[key] = (counts[key] ?? 0) + 1;
+  }
+  return counts;
+}
+
 /**
  * 「选中时文案」里能引用的**自身**候选。
  *

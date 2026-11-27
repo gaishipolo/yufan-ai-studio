@@ -5,6 +5,7 @@ import {
   assignDefaultText,
   defaultTextRefError,
   hydrateAnchors,
+  optionalSlotRefCountError,
   optionalSlotRefError,
   parseAnchors,
   readDefaultText,
@@ -278,6 +279,14 @@ describe('可选槽位只能被框选（2026-11-27）', () => {
   it('必填槽位的引用不受影响', () => {
     const slots = [slot('image_1', {minCount: 1, label: '正面图'})];
     expect(optionalSlotRefError('主图 {{Mixed 1}}', slots)).toBeNull();
+  });
+
+  it('随机档没有框选段：同一可选槽位最多引用一次', () => {
+    const slots = [optional('image_1', {label: '角色'})];
+    expect(optionalSlotRefCountError('角色 {{Mixed 1}}', slots)).toBeNull();
+    expect(
+      optionalSlotRefCountError('角色 {{Mixed 1}}，再来 {{Mixed 1}}', slots),
+    ).toContain('最多引用一次');
   });
 
   it('老数据（没有「来自框选段」的标记）不还原：作者原话不被顶掉', () => {

@@ -17,6 +17,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
   const [displayName, setDisplayName] = useState('');
   const [email, setEmail] = useState('');
   const [avatarUrl, setAvatarUrl] = useState('');
+  const [currentPassword, setCurrentPassword] = useState('');
   const [formError, setFormError] = useState<string | null>(null);
 
   /* 只在拿到 me 的那一次回填，避免后台刷新把用户正在输入的内容冲掉 */
@@ -24,6 +25,7 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
   useEffect(() => {
     if (!open) {
       filledRef.current = false;
+      setCurrentPassword('');
       return;
     }
     if (filledRef.current || !me) return;
@@ -48,15 +50,22 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
       setFormError(avatarError);
       return;
     }
+    const emailChanged = (me?.email ?? '') !== (email.trim() || '');
+    if (emailChanged && !currentPassword) {
+      setFormError('修改邮箱需要输入当前密码');
+      return;
+    }
 
     updateProfile.mutate(
       {
         displayName: displayName.trim(),
         email: email.trim() || null,
         avatarUrl: avatarUrl.trim() || null,
+        ...(emailChanged ? { currentPassword } : {}),
       },
       {
         onSuccess: () => {
+          setCurrentPassword('');
           toast('资料已更新', 'success');
           onClose();
         },
@@ -103,6 +112,20 @@ export function ProfileModal({ open, onClose }: { open: boolean; onClose: () => 
             placeholder="name@example.com"
           />
         </FormField>
+
+        {(me?.email ?? '') !== (email.trim() || '') && (
+          <FormField label="当前密码" htmlFor="profile-current-password">
+            <TextInput
+              id="profile-current-password"
+              type="password"
+              autoComplete="current-password"
+              value={currentPassword}
+              maxLength={128}
+              onChange={(event) => setCurrentPassword(event.target.value)}
+              placeholder="改邮箱前请确认是你本人"
+            />
+          </FormField>
+        )}
 
         {/* 头像旁边就有一张实时预览图：留空时预览画的就是昵称首字，
             不用文字再说一遍。 */}

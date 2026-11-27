@@ -8,13 +8,14 @@ import os
 import re
 from collections.abc import AsyncIterator
 from contextlib import suppress
+from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
 from typing import BinaryIO
 from uuid import uuid4
 
 from core.config import settings
-from infra.storage.base import StorageError
+from infra.storage.base import StorageError, StoredObject
 
 # 对象 key 的合法字符集：路径分隔符只允许 `/`，天然挡掉 `C:\`、`..\` 之类
 _KEY_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
@@ -170,6 +171,29 @@ class LocalStorage:
     async def exists(self, key: str) -> bool:
         """本地实现就是问一次文件系统；非法 key 仍由 `_resolve` 抛错。"""
         return await asyncio.to_thread(self._resolve(key).is_file)
+
+    async def list_objects(self, prefix: str = "") -> list[StoredObject]:
+        """本地目录树列举；prefix 为空时列整个根。"""
+        base = self._resolve(prefix.rstrip("/")) if prefix else self.root
+        if not base.is_dir():
+            return []
+
+        def _scan() -> list[StoredObject]:
+            found: list[StoredObject] = []
+            for path in base.rglob("*"):
+                if not path.is_file():
+                    continue
+                stat = path.stat()
+                found.append(
+                    StoredObject(
+                        key=path.relative_to(self.root).as_posix(),
+                        size=stat.st_size,
+                        last_modified=datetime.fromtimestamp(stat.st_mtime, tz=UTC),
+                    )
+                )
+            return found
+
+        return await asyncio.to_thread(_scan)
 
     async def delete(self, key: str) -> None:
         """删除对象；不存在时幂等返回（协议承诺）。

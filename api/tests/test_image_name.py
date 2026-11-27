@@ -50,6 +50,28 @@ def _cleanup(job_id: str) -> None:
     asyncio.run(run())
 
 
+def test_same_idempotency_key_replays_the_same_image_job(
+    client: TestClient,
+) -> None:
+    """双击/超时重试只创建一条生图；同键换参数必须 409。"""
+    from uuid import uuid4
+
+    headers = _login(client)
+    key = f"image-{uuid4().hex}"
+    body = {"prompt": "幂等测试：一只白猫", "idempotencyKey": key}
+    first = _submit(client, headers, body)
+    second = _submit(client, headers, body)
+    assert first == second
+
+    changed = client.post(
+        f"{API}/generations/image",
+        json={**body, "prompt": "同键但换了提示词"},
+        headers=headers,
+    )
+    assert changed.status_code == 409, changed.text
+    _cleanup(first)
+
+
 def _submit(client: TestClient, headers: dict[str, str], body: dict[str, Any]) -> str:
     resp = client.post(f"{API}/generations/image", json=body, headers=headers)
     assert resp.status_code == 201, resp.text

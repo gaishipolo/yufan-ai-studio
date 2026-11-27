@@ -256,10 +256,10 @@ export function MultiSelect({
               ? { bottom: window.innerHeight - anchorRect.top + 4 }
               : { top: anchorRect.bottom + 4 }),
           } satisfies CSSProperties}
-          className="overflow-hidden rounded-lg border border-line bg-panel shadow-pop"
+          className="flex flex-col overflow-hidden rounded-lg border border-line bg-panel shadow-pop"
         >
           {searchable && options.length > 0 && (
-            <div className="border-b border-line-soft p-1.5">
+            <div className="shrink-0 border-b border-line-soft p-1.5">
               <SearchInput
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
@@ -280,7 +280,7 @@ export function MultiSelect({
               )}
             </div>
           ) : (
-            <ul className="max-h-[196px] space-y-0.5 overflow-auto p-1.5">
+            <ul className="min-h-0 flex-1 space-y-0.5 overflow-auto p-1.5">
               {visible.map((option) => {
                 const checked = value.includes(option.value);
                 return (

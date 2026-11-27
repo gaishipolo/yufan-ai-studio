@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from 'react';
+import { useMemo, useRef, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Wand2 } from 'lucide-react';
 import {
@@ -15,6 +15,7 @@ import {
   type ReferenceItem,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
+import { idempotencyKeyFor, newIdempotencyIntent } from '@/shared/lib/idempotency';
 import { toast } from '@/shared/lib/toast';
 import { useCreateTask, useTaskList } from '@/entities/task/api/task.queries';
 import {
@@ -77,6 +78,9 @@ export default function StudioPage() {
      下拉框换了值，图没了，界面不说发生了什么。丢东西该问一声。
      参考图为空时不问，直接换。 */
   const [pendingModelId, setPendingModelId] = useState<string | null>(null);
+  /* 一次提交意图的随机串；payload 指纹由 `idempotencyKeyFor` 拼上。
+     请求失败/超时重试复用同一个键；成功后才换新的（下一条任务允许并发）。 */
+  const idempotencyIntent = useRef(newIdempotencyIntent());
 
   const recentLibtvIds = useMemo(
     () => inFlightLibtvIds(recent?.items ?? []),
@@ -272,9 +276,11 @@ export default function StudioPage() {
       {
         ...plan.payload,
         prompt: plan.payload.prompt,
+        idempotencyKey: idempotencyKeyFor(idempotencyIntent.current, plan.payload),
       },
       {
         onSuccess: () => {
+          idempotencyIntent.current = newIdempotencyIntent();
           // 参考图跟着这次请求走了，留着会让下一个任务莫名其妙沿用旧图
           setReferences([]);
           setTextRefs([]);

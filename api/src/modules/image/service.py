@@ -11,6 +11,7 @@ from datetime import UTC, datetime
 from pathlib import PurePosixPath
 
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
@@ -18,11 +19,13 @@ from core.config import get_settings
 from core.context import CurrentUser
 from core.exceptions import (
     BadRequest,
+    Conflict,
     Forbidden,
     InvalidState,
     RateLimited,
     UpstreamError,
 )
+from core.idempotency import fingerprint_matches, request_fingerprint
 from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs, inject_text_refs
 from core.logging import get_logger
@@ -206,12 +209,41 @@ class ImageService:
                 "等其中几条跑完再提交，否则会挤占别人的排队时间"
             )
 
+    async def _idempotent_job(
+        self, actor_id: str, key: str, fingerprint: str
+    ) -> ImageJob | None:
+        """同键重放：同内容返回原记录，不同内容 409。"""
+        row = await self.session.scalar(
+            select(ImageJob).where(
+                ImageJob.owner_id == actor_id,
+                ImageJob.idempotency_key == key,
+            )
+        )
+        if row is None:
+            return None
+        if not fingerprint_matches(row.idempotency_fingerprint, fingerprint):
+            raise Conflict(
+                "该幂等键已经用于另一份生图请求：同一次提交请复用原键，"
+                "新的提交请生成新的幂等键"
+            )
+        return row
+
     async def generate(self, actor: CurrentUser, payload: GenerateImageIn) -> ImageJob:
         """建记录并投递到生成队列，接口立即返回 `queued`。
 
         模型**在受理时就校验**，而不是等异步任务跑起来才发现写错：
         供应商没配置、模型名写错这类问题应当是 400，不是「提交成功但任务失败」。
+
+        带 `idempotencyKey` 时，同键同内容直接返回原记录（不重复提交供应商）；
+        不同键仍是两次独立提交，可以并发。
         """
+        key = payload.idempotency_key
+        fingerprint = request_fingerprint(payload) if key else ""
+        if key:
+            # 放在容量检查之前：已经受理过的重放不该被“在途已满”挡住。
+            existing = await self._idempotent_job(actor.id, key, fingerprint)
+            if existing is not None:
+                return existing
         # 在途上限放在最前面：这一步不依赖 payload，被挡住时不该先花时间做
         # 模型解析与参考图解析（那是「提交被拒」时最不该付的代价）。
         await self._assert_in_flight_room(actor)
@@ -269,9 +301,20 @@ class ImageService:
             model=spec.label,
             model_id=spec.id,
             owner_id=actor.id,
+            idempotency_key=key or None,
+            idempotency_fingerprint=fingerprint or None,
         )
         self.session.add(job)
-        await self.session.commit()
+        try:
+            await self.session.commit()
+        except IntegrityError:
+            # 并发同键：唯一索引兜底；回读那一条并按指纹决定重放还是 409。
+            await self.session.rollback()
+            if key:
+                raced = await self._idempotent_job(actor.id, key, fingerprint)
+                if raced is not None:
+                    return raced
+            raise
 
         # 操作留痕：日志是给排障的，这条是给对账与追责的（谁、什么参数、哪张模型）
         await audit.record(

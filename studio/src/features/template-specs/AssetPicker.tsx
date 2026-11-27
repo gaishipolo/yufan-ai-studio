@@ -3,7 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { Check } from 'lucide-react';
 import { useCan } from '@/shared/access/use-access';
 import { libraryApi } from '@/entities/library/api/library.api';
-import { useLibraryTags } from '@/entities/library/api/library.queries';
+import { libraryKeys, useLibraryTags } from '@/entities/library/api/library.queries';
 import { scopeFilterIds } from '@/entities/library/model/tagTree';
 import { viewQuery } from '@/entities/library/model/types';
 import { TagFilter } from '@/entities/library/ui/TagFilter';
@@ -154,7 +154,7 @@ export function AssetPicker({
     [kind, keyword, filterKey, pool],
   );
   const query = useQuery({
-    queryKey: ['library-selection', kind, keyword, filterKey, pool],
+    queryKey: libraryKeys.selection(params),
     queryFn: () => libraryApi.selection(params),
     enabled: open,
   });

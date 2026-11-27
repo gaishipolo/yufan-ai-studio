@@ -13,8 +13,10 @@ from typing import Any
 
 from pydantic import Field
 
+from core.idempotency import IDEMPOTENCY_KEY_MAX, IDEMPOTENCY_KEY_PATTERN
 from core.response import Page
 from core.schema import CamelModel, UtcDateTime
+from core.template_spec.models import PROMPT_LIMITS_BY_CAPABILITY
 from modules.task.enums import (
     AspectRatio,
     TaskScope,
@@ -128,12 +130,28 @@ class CreateTaskIn(CamelModel):
     两者都可以不传：不传模型取该能力的默认模型，不传时长取模型 schema 的默认档位。
     """
 
-    # 上限与 `core/template_spec/models.py::EXECUTION_PROMPT_LIMIT` 必须一致
-    # （漂移由 `test_execution_prompt_limit_matches_task_schema` 钉住）。
-    # 7000：模板封装的提示词常带多段描述 + 槽位引用，2000 太紧；百炼驱动本身
-    # 放到 20000，这里留足余量又不至于让无人值守的批量任务无限吃 token。
-    prompt: str = Field(min_length=1, max_length=7000, description="画面描述")
+    # 与 `core/template_spec/models.py::PROMPT_LIMITS_BY_CAPABILITY["video"]`
+    # 必须一致（漂移由 `test_execution_prompt_limit_matches_task_schema` 遍历
+    # 所有执行端点钉住）。7000：模板封装的提示词常带多段描述 + 槽位引用，
+    # 2000 太紧；百炼驱动本身放到 20000，这里留足余量又不至于让无人值守的
+    # 批量任务无限吃 token。
+    prompt: str = Field(
+        min_length=1,
+        max_length=PROMPT_LIMITS_BY_CAPABILITY["video"],
+        description="画面描述",
+    )
     title: str | None = Field(default=None, max_length=200, description="不传则截取 prompt")
+    idempotency_key: str | None = Field(
+        default=None,
+        min_length=8,
+        max_length=IDEMPOTENCY_KEY_MAX,
+        pattern=IDEMPOTENCY_KEY_PATTERN,
+        description=(
+            "客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。"
+            "同键同内容重试返回原任务、不重复提交供应商；同键不同内容 409。"
+            "不同键可以并发提交，不受“等上一条完成”限制"
+        ),
+    )
     model: str | None = Field(
         default=None, max_length=64, description="模型 id 或名称，缺省取默认模型"
     )

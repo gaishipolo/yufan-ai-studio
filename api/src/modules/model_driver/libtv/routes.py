@@ -24,8 +24,9 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Query
 
-from api.deps import rate_limit, require
+from api.deps import SessionDep, rate_limit, require
 from core.context import CurrentUser
+from core.ports.task_external_ids import visible_external_ids
 from core.response import ApiResponse
 from modules.model_driver.libtv import account as libtv_api
 from modules.model_driver.libtv.schema import (
@@ -98,9 +99,14 @@ async def libtv_account(
 async def libtv_progress(
     payload: LibTvProgressIn,
     actor: TaskReadDep,
+    session: SessionDep,
     _: None = Depends(rate_limit("model_driver.libtv_progress", limit=60)),
 ) -> ApiResponse[LibTvProgressOut]:
-    items = await libtv_api.progress(payload.task_ids, payload.account)
+    # 上游账号全团队共用：不先与 `video_tasks` 做归属比对，持 `task:read`
+    # 就能拿别人的 task_id 读到排队位次与失败原因。
+    visible = await visible_external_ids(session, actor, payload.task_ids)
+    ids = [task_id for task_id in payload.task_ids if task_id in visible]
+    items = await libtv_api.progress(ids, payload.account) if ids else []
     return ApiResponse.ok(
         LibTvProgressOut(
             items=[

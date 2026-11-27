@@ -34,8 +34,10 @@ from core.template_spec.models import (
 )
 from core.template_spec.rules import _LEFTOVER, normalize_refs, validate_spec
 
-#: `{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.2}}`，**两边允许空格**。
-#: 只匹配合法的 key 形状，写错的部分留在原地，由下面的"残留引用"检查兜住。
+#: `{{slot:key}}`，**两边允许空格**。正则也覆盖历史修饰符（`*` / `.N`）——
+#: 结构校验已直接拒它们，这里认出来是为了把「整组 / 第 N 张」报成具体原因，
+#: 而不是一句「残留占位符」。只匹配合法的 key 形状，写错的部分留在原地，
+#: 由下面的"残留引用"检查兜住。
 #:
 #: 空格这一条必须与 `rules._SLOT_REF`（结构校验）一致：那边容空格、这边不容，
 #: 结果就是「预检与发布都过、用户在模板库点生成才 400」。同一个形状两处两种口径，

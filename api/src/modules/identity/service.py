@@ -28,7 +28,7 @@ from core import audit
 from core.authz import evaluate
 from core.config import settings
 from core.context import SUPER_PERMISSION, CurrentUser
-from core.exceptions import Unauthorized
+from core.exceptions import BadRequest, Unauthorized
 from core.logging import get_logger
 from core.pages import PAGE_PREFIX, page_catalog
 from core.permissions import PermissionSpec, catalog, expand_grants
@@ -136,8 +136,8 @@ _PROFILE_FIELDS = ("display_name", "email", "avatar_url", "phone", "position")
 #   判「目标是不是超管」就够。之前复用「目标权限 ⊆ 操作者」的严格守卫，结果是
 #   一个只带 `identity:read` + `identity:update` 的委派角色连 viewer 的昵称都改不了
 #   （40323）——把「能用的功能」换成了「看起来安全但没人能用」。
-# - 找回入口（邮箱）：接上「邮箱找回密码 / 收验证码」之后，改它就是接管账号的第一步，
-#   所以沿用「目标权限不得高于自己」的严格守卫（R7-03）。
+# - 找回入口（邮箱）：改它就是接管账号的第一步。管理员路径沿用「目标权限不得
+#   高于自己」的严格守卫（R7-03）；自助路径还要求再验一次当前口令（update_me）。
 _DISPLAY_FIELDS = ("display_name", "avatar_url", "phone", "position")
 _RECOVERY_FIELDS = ("email",)
 
@@ -869,9 +869,26 @@ class IdentityService:
         自助路径若能把 `is_active` 改成 false，用户点错一次就把自己锁在门外，
         而恢复只有管理员一个入口。字段白名单比 `setattr` 循环更难写错——
         将来给 `UserUpdateIn` 加字段（比如 `role_ids`）也不会自动漏进自助口子。
+
+        **改邮箱要校验当前口令**：邮箱是找回入口，只凭登录态就能改绑，
+        等于把「拿到令牌」升级成账号接管的第一步。只在**真的改**（含清空）时
+        要求，纯改昵称/头像的请求不受影响。
         """
         user = await self._require_user(actor.id)
         fields = payload.model_dump(exclude_unset=True)
+        email_changed = "email" in fields and fields["email"] != user.email
+        if email_changed:
+            current = payload.current_password
+            if not current:
+                raise BadRequest("修改邮箱需要输入当前密码")
+            async with password_slot():
+                ok = await verify_password_async(current, user.password_hash)
+            if not ok:
+                key = f"pw:{user.id}"
+                throttle.record_failure(key)
+                throttle.reject(key)
+                raise OldPasswordMismatch()
+            throttle.reset(f"pw:{user.id}")
         for field in _PROFILE_FIELDS:
             if field in fields:
                 setattr(user, field, fields[field])

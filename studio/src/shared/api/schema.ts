@@ -205,6 +205,8 @@ export interface CreateTaskIn {
   prompt: string;
   /** 不传则截取 prompt */
   title?: string | null;
+  /** 客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原任务、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制 */
+  idempotencyKey?: string | null;
   /** 模型 id 或名称，缺省取默认模型 */
   model?: string | null;
   /** 视频时长（秒），缺省取模型的默认档位 */
@@ -439,6 +441,8 @@ export interface FromGenerationIn {
 export interface GenerateImageIn {
   /** 画面描述 */
   prompt: string;
+  /** 客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原记录、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制 */
+  idempotencyKey?: string | null;
   /** 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 */
   name?: string;
   /** 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` */
@@ -714,9 +718,9 @@ export interface LibTvConsumptionOut {
 
 /** LibTvProgressIn */
 export interface LibTvProgressIn {
-  /** 上游 task_id 列表 */
+  /** 上游 task_id 列表（最多 100 个；不属于当前账号的会被忽略） */
   taskIds?: string[];
-  /** 留空按配置挑：积分看 9412，免费队列看第一个在线的 */
+  /** 留空按配置挑：积分看 9412，免费队列看第一个在线的；只接受配置里登记过的 CDP 账号 */
   account?: string;
 }
 
@@ -1227,6 +1231,8 @@ export interface ProfileUpdateIn {
   displayName?: string | null;
   /** 邮箱；传 null 清空 */
   email?: string | null;
+  /** 当前密码；仅当本次要修改邮箱时必填 */
+  currentPassword?: string | null;
   /** 头像 URL；传 null 清空 */
   avatarUrl?: string | null;
   /** 手机号；传 null 清空 */
@@ -1549,8 +1555,8 @@ export interface SpecGroupIn {
 - `promptExecutionLimit`：**能不能发布**的上限（7000），按**原文字数**比。
 
 编辑页显示的是后者：它是真正会拦住作者的那个数。注意它只是**下限保证** ——
-提示词展开（`{{Mixed 1*}}` 一次列出整组）之后还可能更长，那一步的判据在
-编译期（`compile` 按展开后的成品长度再比一次）。 */
+槽位文案展开之后还可能更长，那一步的判据在编译期（`compile` 按展开后的
+成品长度再比一次）。引用本身只有单个写法（`{{Mixed N}}`），没有整组展开。 */
 export interface SpecLimitsOut {
   promptMax?: number;
   promptExecutionLimit?: number;

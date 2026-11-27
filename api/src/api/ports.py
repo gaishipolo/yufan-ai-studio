@@ -78,6 +78,7 @@ from core.ports.library_references import library_references_ready
 from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
 from core.ports.submission_ledger import has_submission_ledger
+from core.ports.task_external_ids import has_task_external_id_lookup
 from core.ports.usage_metrics import has_usage_metrics
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
@@ -213,6 +214,15 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         "等人工核对）。台账回填不是放行不可逆操作的判定，回填不了只是不能自动续接，"
         "不该把整条恢复流程变成 503",
         is_registered=has_submission_ledger,
+    ),
+    PortSpec(
+        name="task-external-ids",
+        module="core.ports.task_external_ids",
+        protocol="TaskExternalIdLookup",
+        implementer="modules/task（`video_tasks.external_id` 的只读归属查询）",
+        when_unregistered="返回空集（fail-closed）：供应商进度查不到任何任务号，"
+        "不会把别人的任务暴露出去",
+        is_registered=has_task_external_id_lookup,
     ),
     PortSpec(
         name="usage-metrics",

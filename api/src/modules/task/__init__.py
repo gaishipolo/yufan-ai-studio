@@ -13,8 +13,10 @@ from core.ports.library_references import (
     LibraryReferenceSource,
     bind_library_reference_sources,
 )
+from core.ports.task_external_ids import register_task_external_id_lookup
 from core.ports.usage_metrics import register_usage_metrics
 from modules.task.export_source import TASK_EXPORT_SOURCE
+from modules.task.external_ids import SqlTaskExternalIdLookup
 from modules.task.library_references import TaskLibraryReferences
 from modules.task.permissions import SPECS
 from modules.task.router import router
@@ -30,6 +32,10 @@ from modules.task import maintenance  # noqa: E402,F401  isort: skip  注册周�
 # 导出功能要读 video_tasks：注册成导出源，而不是让 modules/export import 本模块。
 # 见 core/ports/export_sources.py 的说明。
 register_export_source(TASK_EXPORT_SOURCE)
+
+# 供应商进度按上游 task_id 批量查，必须先与 `video_tasks` 做归属比对；
+# 模型驱动不能 import 本模块，只认这个只读注入口。
+register_task_external_id_lookup(SqlTaskExternalIdLookup())
 
 # 用量看板要统计视频生成了多少，但业务模块之间不许互相 import：由本模块在
 # import 期把只读读取器交给 core 注入口，看板只认 `UsageMetricsProvider` 这份契约。

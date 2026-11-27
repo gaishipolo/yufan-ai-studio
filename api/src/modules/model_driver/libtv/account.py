@@ -48,7 +48,7 @@ from typing import Any
 
 import httpx
 
-from core.exceptions import UpstreamError
+from core.exceptions import BadRequest, UpstreamError
 from core.logging import get_logger
 from modules.model_driver.libtv import executor
 from modules.model_driver.libtv.reconcile import AutoVerdict, auto_verdict
@@ -166,6 +166,31 @@ def _vendor_transport() -> Path:
     )
 
 
+def _known_accounts() -> frozenset[str]:
+    urls = set(executor.account_urls())
+    credit = executor.credit_account_url()
+    if credit:
+        urls.add(credit)
+    return frozenset(urls)
+
+
+def _validated_account(account: str) -> str:
+    """只接受配置里登记过的 CDP 地址。
+
+    客户端给的 `account` 会一路传到 node 的 `loginHeaders`（它先
+    `GET http://127.0.0.1:<任意端口>/json/version`）。只限制 loopback 不够：
+    任何持 `task:read` 的账号都能拿它探测本机端口。账号别名不是自由输入，
+    服务端只认 `.env` 里登记过的那几个。
+    """
+    normalized = account.strip().rstrip("/")
+    if normalized and normalized not in _known_accounts():
+        raise BadRequest(
+            "该 LibTV 账号未登记：只接受配置里已存在的 CDP 地址"
+            "（LIBTV_BROWSER_URL(S) / LIBTV_CREDITS_BROWSER_URL）"
+        )
+    return normalized
+
+
 async def _headers(account: str) -> dict[str, str]:
     """从 CDP 那个已登录浏览器里取一次鉴权头，按账号缓存。
 
@@ -173,6 +198,7 @@ async def _headers(account: str) -> dict[str, str]:
     `Storage.getCookies`，而 vendor 里已经有实现好的 `loginHeaders`
     （它会同时在两个域上找 `usertoken`），再写一份 Python 版只会多一处会漂移的口径。
     """
+    account = _validated_account(account)
     now = time.monotonic()
     cached = _tokens.get(account)
     if cached and cached[0] > now:

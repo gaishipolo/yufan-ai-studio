@@ -35,9 +35,10 @@ Create Date: 2026-11-13 21:10:00.000000
 唯一不是空间标记的那一列——它装的是 v1 id，v2 的等价列叫
 `reference_library_ids`。
 
-## 降级只还原结构，不还原数据
+## 不可逆
 
-被删的行没有备份。这条 downgrade 的唯一用途是「本地库想回到并存期跑一次对照」；
+被删的行没有备份，重建空表只会让降级看起来「成功」而实际丢数据。
+所以这条迁移标了 `irreversible = True`，且 `downgrade()` 直接抛；
 真要回到 v1 时代，正确动作是从备份恢复整个库。
 """
 
@@ -51,6 +52,10 @@ revision: str = "f5b2d8c4a173"
 down_revision: Union[str, Sequence[str], None] = "d41c7a9e5f28"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+#: 本迁移不可逆：表结构可重建，被删的数据回不来（见模块 docstring 的「不可逆」一节）。
+#: 机器可读判据：`scripts/downgrade_anchor.py` 靠它算 CI 的降级锚点。
+irreversible = True
 
 #: 要删掉的遗留列：(表, 列, 降级时还原的列类型)。
 _COLUMNS = (
@@ -77,67 +82,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.create_table(
-        "assets",
-        sa.Column("id", sa.String(length=32), nullable=False),
-        sa.Column("name", sa.String(length=200), nullable=False),
-        sa.Column("type", sa.String(length=16), nullable=False),
-        sa.Column("mime_type", sa.String(length=64), nullable=False),
-        sa.Column("size_bytes", sa.BigInteger(), nullable=False),
-        sa.Column("cover_url", sa.String(length=512), nullable=False),
-        sa.Column("cover_key", sa.String(length=256), nullable=False),
-        sa.Column("storage_key", sa.String(length=256), nullable=False),
-        sa.Column("width", sa.Integer(), nullable=False),
-        sa.Column("height", sa.Integer(), nullable=False),
-        sa.Column("duration", sa.Float(), nullable=False),
-        sa.Column("has_audio", sa.Boolean(), nullable=False),
-        # sha256 可为 NULL：SQLite / PG 都把多个 NULL 视为互不相同，所以
-        # 「算不出摘要」的行可以共存（见原 `modules/asset/models.py` 的说明）。
-        sa.Column("sha256", sa.String(length=64), nullable=True),
-        sa.Column("category", sa.String(length=16), nullable=True),
-        sa.Column("source", sa.String(length=16), nullable=False),
-        sa.Column("ref_count", sa.Integer(), nullable=False),
-        sa.Column("owner_id", sa.String(length=32), nullable=False),
-        sa.Column("shared", sa.Boolean(), nullable=False),
-        sa.Column("shared_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("deleted_at", sa.DateTime(timezone=True), nullable=True),
-        sa.Column("state_version", sa.Integer(), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    for name, columns in (
-        ("ix_assets_type", ["type"]),
-        ("ix_assets_category", ["category"]),
-        ("ix_assets_owner_id", ["owner_id"]),
-        ("ix_assets_owner_type", ["owner_id", "type"]),
-        ("ix_assets_owner_created", ["owner_id", "created_at"]),
-        ("ix_assets_created_at", ["created_at"]),
-    ):
-        op.create_index(name, "assets", columns, unique=False)
-    # 两条部分索引：谓词照抄原模型（`sqlite_where` / `postgresql_where`）。
-    op.create_index(
-        "ix_assets_shared_source",
-        "assets",
-        ["category", "created_at"],
-        unique=False,
-        sqlite_where=sa.text("shared = 1 AND deleted_at IS NULL"),
-        postgresql_where=sa.text("shared AND deleted_at IS NULL"),
-    )
-    op.create_index(
-        "uq_assets_owner_sha256",
-        "assets",
-        ["owner_id", "sha256", "category"],
-        unique=True,
-        sqlite_where=sa.text("deleted_at IS NULL"),
-        postgresql_where=sa.text("deleted_at IS NULL"),
-    )
-
-    for table, column, kind in _COLUMNS:
-        with op.batch_alter_table(table) as batch_op:
-            if isinstance(kind, sa.JSON):
-                batch_op.add_column(sa.Column(column, kind, nullable=False, server_default="[]"))
-            else:
-                batch_op.add_column(
-                    sa.Column(column, kind, nullable=False, server_default="v2")
-                )
+    # 不可逆：表结构可重建，被删的数据回不来。
+    raise NotImplementedError("v1 素材库已下线，删掉的行没有备份，迁移不可回退")

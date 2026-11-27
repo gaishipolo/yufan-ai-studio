@@ -177,6 +177,14 @@ class ProfileUpdateIn(CamelModel):
     email: str | None = Field(
         default=None, max_length=128, pattern=EMAIL_PATTERN, description="邮箱；传 null 清空"
     )
+    #: 改邮箱（含清空）时必须同时给出当前口令：邮箱是找回入口，只凭登录态
+    #: 就能改绑，等于把「拿到令牌」直接升级成「接管账号」的第一步。
+    current_password: str | None = Field(
+        default=None,
+        min_length=1,
+        max_length=128,
+        description="当前密码；仅当本次要修改邮箱时必填",
+    )
     avatar_url: str | None = Field(
         default=None, max_length=512, description="头像 URL；传 null 清空"
     )

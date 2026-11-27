@@ -55,6 +55,7 @@ import type {SpecSlotIn} from '@/shared/api/schema';
 import {
   isOptionalSlot,
   referencedKeys,
+  singleSlotRefCounts,
   slotRefModes,
   slotRefToken,
   slotTextRefError,
@@ -362,6 +363,35 @@ export function optionalSlotRefError(
       `「${name}」是可选槽位，只能被框选 —— 正文里引用它的地方必须落在框选段里` +
       '（那一段是它的插入点）；请把别处的引用删掉'
     );
+  }
+  return null;
+}
+
+/**
+ * 随机档提示词里的可选槽位：最多只能被**单张引用一次**。
+ *
+ * 随机档没有「框选段」—— 它的插入点就是那处引用本身。后端
+ * `validate_optional_slot_refs` 对两段提示词各算各的：同一可选槽位出现
+ * 两处单张引用时，界面上两处长得一模一样，编译期不知道哪一处该换成
+ * 「未选时文案」。这里补上前端提示，避免发布才 400。
+ */
+export function optionalSlotRefCountError(
+  prompt: string,
+  slots: SpecSlotIn[],
+): string | null {
+  const optional = slots.filter(
+    slot =>
+      (slot.refMode ?? 'mixed') === 'mixed' &&
+      (slot.binding ?? 'user') !== 'fixed' &&
+      isOptionalSlot(slot),
+  );
+  if (!optional.length) return null;
+  const counts = singleSlotRefCounts(prompt, slots);
+  for (const slot of optional) {
+    if ((counts[slot.key] ?? 0) > 1) {
+      const name = slot.label?.trim() || slot.key;
+      return `「${name}」是可选槽位，提示词里最多引用一次（那处就是它的插入点）`;
+    }
   }
   return null;
 }

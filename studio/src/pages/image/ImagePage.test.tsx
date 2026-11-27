@@ -243,7 +243,22 @@ describe('ImagePage · 表单参数来自模型目录', () => {
       prompt: '一只白猫',
       size: '1024x1024',
       count: 1,
+      idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
     });
+  });
+
+  it('同一份表单连续提交（双击）复用同一个幂等键', async () => {
+    const user = userEvent.setup();
+    render(<ImagePage />);
+    await user.type(screen.getByPlaceholderText(/赛博朋克街头/), '一只白猫');
+    const button = screen.getByRole('button', { name: '开始生成' });
+    await user.click(button);
+    await user.click(button);
+
+    expect(mutateMock).toHaveBeenCalledTimes(2);
+    expect(mutateMock.mock.calls[0][0].idempotencyKey).toBe(
+      mutateMock.mock.calls[1][0].idempotencyKey,
+    );
   });
 
   it('显式改选非默认模型时才下发 model，张数带上用户所选', async () => {
@@ -259,6 +274,7 @@ describe('ImagePage · 表单参数来自模型目录', () => {
       size: '1024x1024',
       count: 3,
       model: 'seedream-3',
+      idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
     });
   });
 
@@ -319,6 +335,7 @@ describe('ImagePage · 表单参数来自模型目录', () => {
       count: 1,
       params: { quality: 'high', seed: 42, watermark: true, negativePrompt: '模糊' },
       model: 'rich-image',
+      idempotencyKey: expect.stringMatching(/^[A-Za-z0-9_-]{8,64}$/),
     });
   });
 
@@ -386,14 +403,21 @@ describe('ImagePage · 参考图（图生图 / 多图合成）', () => {
     expect(screen.getByText(/最多 1 张/)).toBeInTheDocument();
   });
 
-  it('换模型清空已选参考图（新模型可能根本不收）', async () => {
+  it('换模型会先确认，确认后才清空已选参考图', async () => {
     uploadMock.mockResolvedValueOnce({ id: 'a-1', name: 'a.png', url: '/u/1' });
+    const user = userEvent.setup();
     render(<ImagePage />);
 
     pick([png('a.png')]);
     await screen.findByRole('button', { name: '移除参考图 1' });
 
-    await userEvent.setup().selectOptions(select('模型'), 'seedream-3');
+    await user.selectOptions(select('模型'), 'seedream-3');
+    // 还没确认：参考图仍在，且弹层写清了会清空几张
+    expect(screen.getByRole('button', { name: '移除参考图 1' })).toBeInTheDocument();
+    const dialog = screen.getByRole('dialog');
+    expect(dialog.textContent).toContain('1 张');
+
+    await user.click(screen.getByRole('button', { name: '切换并清空' }));
     expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
   });
 

@@ -30,7 +30,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
-from sqlalchemy import delete, func, or_, select
+from sqlalchemy import delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -682,12 +682,33 @@ class LibraryService:
         if row.state == "trash":
             raise AssetNotEditable()
         self._check_version(row, payload.expected_version)
+        values: dict[str, object] = {
+            "state_version": LibraryAsset.state_version + 1,
+        }
         if payload.name is not None:
             # 名字里的格式后缀由**文件本身**决定，不由用户输入决定
-            row.name = keep_extension(row.name, row.storage_key, payload.name)
+            values["name"] = keep_extension(row.name, row.storage_key, payload.name)
+        # 版本校验与写入同一句 SQL：读到的 state_version 与 UPDATE 之间隔着
+        # await，两个请求带同一个 expectedVersion 都能过旧校验，后写者覆盖
+        # 先写者而版本只 +1。抢不到（0 行）即说明已被别人推进。
+        conditions = [LibraryAsset.id == row.id]
+        if payload.expected_version is not None:
+            conditions.append(LibraryAsset.state_version == payload.expected_version)
+        result = await self.session.execute(
+            update(LibraryAsset).where(*conditions).values(**values)
+        )
+        if result.rowcount == 0:
+            await self.session.refresh(row)
+            raise StateChanged(
+                "资产已被修改，请刷新后重试",
+                details={
+                    "expectedVersion": payload.expected_version,
+                    "stateVersion": row.state_version,
+                },
+            )
+        await self.session.refresh(row)
         if payload.tag_ids is not None:
             await set_asset_tags(self.session, row.id, payload.tag_ids)
-        row.state_version += 1
         await self.session.commit()
         return await self.detail(asset_id, actor)
 
@@ -720,8 +741,27 @@ class LibraryService:
             raise BadRequest("案例只支持图片或视频")
         if row.purpose == target:
             return self._to_out(row, owner_name=None)
-        row.purpose = target
-        row.state_version += 1
+        conditions = [LibraryAsset.id == row.id]
+        if expected_version is not None:
+            conditions.append(LibraryAsset.state_version == expected_version)
+        result = await self.session.execute(
+            update(LibraryAsset)
+            .where(*conditions)
+            .values(
+                purpose=target,
+                state_version=LibraryAsset.state_version + 1,
+            )
+        )
+        if result.rowcount == 0:
+            await self.session.refresh(row)
+            raise StateChanged(
+                "资产已被修改，请刷新后重试",
+                details={
+                    "expectedVersion": expected_version,
+                    "stateVersion": row.state_version,
+                },
+            )
+        await self.session.refresh(row)
         await self.session.commit()
         await audit(
             "library.asset.purpose",

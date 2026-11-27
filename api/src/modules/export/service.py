@@ -31,7 +31,7 @@ from __future__ import annotations
 from datetime import timedelta
 from typing import Any
 
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
@@ -276,23 +276,34 @@ class ExportService:
         `running` 缺失时（刚接手还没写）回落到创建时间，不给那种行留缺口。
         """
         cutoff = utcnow() - timedelta(seconds=older_than_sec)
-        stmt = select(Export).where(
-            or_(
-                and_(Export.status == ExportStatus.QUEUED.value, Export.created_at < cutoff),
-                and_(
-                    Export.status == ExportStatus.RUNNING.value,
-                    func.coalesce(Export.started_at, Export.created_at) < cutoff,
-                ),
+        # 状态谓词必须在 UPDATE 里再判一次：从「读出来」到「写回去」之间，
+        # worker 可能刚好干完并提交 succeeded。只按读到的行写回，会把已成功的
+        # 导出改回 failed（用户先看到成功、再看到失败，产物却还在）。
+        stmt = (
+            update(Export)
+            .where(
+                or_(
+                    and_(
+                        Export.status == ExportStatus.QUEUED.value,
+                        Export.created_at < cutoff,
+                    ),
+                    and_(
+                        Export.status == ExportStatus.RUNNING.value,
+                        func.coalesce(Export.started_at, Export.created_at) < cutoff,
+                    ),
+                )
+            )
+            .values(
+                status=ExportStatus.FAILED.value,
+                error="导出超时未完成，请重新导出",
             )
         )
-        rows = (await self.session.execute(stmt)).scalars().all()
-        for row in rows:
-            row.status = ExportStatus.FAILED.value
-            row.error = "导出超时未完成，请重新导出"
-        if rows:
+        result = await self.session.execute(stmt)
+        count = result.rowcount
+        if count > 0:
             await self.session.commit()
-            logger.warning("有 %d 条导出超时被置失败", len(rows))
-        return len(rows)
+            logger.warning("有 %d 条导出超时被置失败", count)
+        return count
 
     # ------------------------------------------------------------------ #
     # 内部

@@ -1,9 +1,10 @@
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import { Wand2 } from 'lucide-react';
 import {
   Button,
   CardSkeletonGrid,
   Chip,
+  ConfirmDialog,
   CoverImage,
   ErrorState,
   PageHeader,
@@ -15,6 +16,8 @@ import {
 } from '@/shared/ui';
 import type { ReferenceItem } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
+import { FORM_LIMITS } from '@/shared/lib/formLimits';
+import { idempotencyKeyFor, newIdempotencyIntent } from '@/shared/lib/idempotency';
 import { toast } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
 import {
@@ -53,6 +56,10 @@ export default function ImagePage() {
   // 素材库悬浮栏：默认收起，从参考图区的「素材库」按钮打开
   const [libraryOpen, setLibraryOpen] = useState(false);
   const [page, setPage] = useState(1);
+  // 换模型会清参考图：先问一句，不能静默丢掉用户已经上传/挑好的图。
+  const [pendingModelId, setPendingModelId] = useState<string | null>(null);
+  /* 请求级幂等意图：双击/超时重试复用同一个键，成功后换新的（下一张可并发）。 */
+  const idempotencyIntent = useRef(newIdempotencyIntent());
 
   const { models, isLoading: modelsLoading, isError: modelsError } = useImageModels();
   const { data, isLoading, isFetching, isError, error, refetch } = useImages(page);
@@ -66,6 +73,23 @@ export default function ImagePage() {
   const controls = paramControlsFor(model);
   const values = resolveParamValues(controls, overrides);
   const modelOptions = models.map((m) => ({ value: m.id, label: m.label }));
+  const applyModel = (id: string) => {
+    setModelId(id);
+    // 换模型的参数面可能完全不同（张数上限、尺寸白名单、甚至多出
+    // 一组新控件），旧改动一律清掉，避免带着上一个模型的值提交。
+    // 参考图同理：新模型可能根本不支持参考图。
+    setOverrides({});
+    setReferences([]);
+    setLibraryOpen(false);
+  };
+  const changeModel = (id: string) => {
+    if (id === (model?.id ?? '')) return;
+    if (references.length) {
+      setPendingModelId(id);
+      return;
+    }
+    applyModel(id);
+  };
   // 只读账号不该点到「开始生成」：路由守卫只要求 image:read，写动作要 image:create
   // （2026-11-15 审查 3.1）。
   const canGenerate = useCan('image:create');
@@ -156,9 +180,11 @@ export default function ImagePage() {
     if (!model.isDefault) payload.model = model.id;
     // 文本引用按顺序冻结正文；与 referenceLibraryIds 互不混用
     if (textRefs.length) payload.textLibraryIds = textRefs.map((item) => item.id);
+    payload.idempotencyKey = idempotencyKeyFor(idempotencyIntent.current, payload);
 
     generate.mutate(payload, {
       onSuccess: () => {
+        idempotencyIntent.current = newIdempotencyIntent();
         toast('已提交，正在排队生成', 'success');
         setPrompt('');
         setTextRefs([]);
@@ -186,9 +212,13 @@ export default function ImagePage() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               rows={4}
+              maxLength={FORM_LIMITS.imagePrompt}
               placeholder="例：赛博朋克街头，霓虹灯牌，雨夜地面反光，电影级打光，超高细节"
               className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-ink-mute focus:border-primary-line focus:bg-panel focus:shadow-ring"
             />
+            <div className="mt-1 text-right font-mono text-micro tabular-nums text-ink-mute">
+              {prompt.length} / {FORM_LIMITS.imagePrompt}
+            </div>
           </div>
 
           <div className="mb-2.5">
@@ -208,15 +238,7 @@ export default function ImagePage() {
               options={modelOptions}
               value={model?.id ?? ''}
               disabled={!modelOptions.length}
-              onChange={(e) => {
-                setModelId(e.target.value);
-                // 换模型的参数面可能完全不同（张数上限、尺寸白名单、甚至多出
-                // 一组新控件），旧改动一律清掉，避免带着上一个模型的值提交。
-                // 参考图同理：新模型可能根本不支持参考图。
-                setOverrides({});
-                setReferences([]);
-                setLibraryOpen(false);
-              }}
+              onChange={(e) => changeModel(e.target.value)}
             />
             {!model && (
               <p className="mt-1 text-meta text-ink-mute">
@@ -360,6 +382,27 @@ export default function ImagePage() {
           onPick={addLibraryAsset}
         />
       )}
+
+      <ConfirmDialog
+        open={pendingModelId !== null}
+        title="切换模型？"
+        description="新模型的参数与参考图支持可能不同。切换会清空已选的参考图。"
+        details={[
+          { label: '从', value: model?.label ?? '—' },
+          {
+            label: '到',
+            value: models.find((item) => item.id === pendingModelId)?.label ?? '—',
+          },
+          { label: '将清空参考图', value: `${references.length} 张` },
+        ]}
+        confirmTone="danger"
+        confirmLabel="切换并清空"
+        onCancel={() => setPendingModelId(null)}
+        onConfirm={() => {
+          if (pendingModelId) applyModel(pendingModelId);
+          setPendingModelId(null);
+        }}
+      />
     </>
   );
 }

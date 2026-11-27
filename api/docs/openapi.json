@@ -11080,6 +11080,21 @@
             "title": "Title",
             "description": "不传则截取 prompt"
           },
+          "idempotencyKey": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 8,
+                "pattern": "^[A-Za-z0-9_-]{8,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotencykey",
+            "description": "客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原任务、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制"
+          },
           "model": {
             "anyOf": [
               {
@@ -12015,6 +12030,21 @@
             "minLength": 1,
             "title": "Prompt",
             "description": "画面描述"
+          },
+          "idempotencyKey": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 64,
+                "minLength": 8,
+                "pattern": "^[A-Za-z0-9_-]{8,64}$"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Idempotencykey",
+            "description": "客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原记录、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制"
           },
           "name": {
             "type": "string",
@@ -13006,13 +13036,15 @@
               "type": "string"
             },
             "type": "array",
+            "maxItems": 100,
             "title": "Taskids",
-            "description": "上游 task_id 列表"
+            "description": "上游 task_id 列表（最多 100 个；不属于当前账号的会被忽略）"
           },
           "account": {
             "type": "string",
+            "maxLength": 512,
             "title": "Account",
-            "description": "留空按配置挑：积分看 9412，免费队列看第一个在线的",
+            "description": "留空按配置挑：积分看 9412，免费队列看第一个在线的；只接受配置里登记过的 CDP 账号",
             "default": ""
           }
         },
@@ -15136,6 +15168,20 @@
             "title": "Email",
             "description": "邮箱；传 null 清空"
           },
+          "currentPassword": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 128,
+                "minLength": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Currentpassword",
+            "description": "当前密码；仅当本次要修改邮箱时必填"
+          },
           "avatarUrl": {
             "anyOf": [
               {
@@ -16244,7 +16290,7 @@
         },
         "type": "object",
         "title": "SpecLimitsOut",
-        "description": "编辑页要显示的**上限**。\n\n这些数是后端的常量（`core/template_spec/models.py`），前端以前各抄一份\n常量 + 一条「对着 openapi 读一遍」的漂移守卫。改成从接口取之后，\n只有一处真值 —— 调上限只改后端。\n\n两个数说的是不同的事，别混：\n\n- `promptMax`：**存草稿**的上限（20000）。草稿允许很长，写一半也能存。\n- `promptExecutionLimit`：**能不能发布**的上限（7000），按**原文字数**比。\n\n编辑页显示的是后者：它是真正会拦住作者的那个数。注意它只是**下限保证** ——\n提示词展开（`{{Mixed 1*}}` 一次列出整组）之后还可能更长，那一步的判据在\n编译期（`compile` 按展开后的成品长度再比一次）。"
+        "description": "编辑页要显示的**上限**。\n\n这些数是后端的常量（`core/template_spec/models.py`），前端以前各抄一份\n常量 + 一条「对着 openapi 读一遍」的漂移守卫。改成从接口取之后，\n只有一处真值 —— 调上限只改后端。\n\n两个数说的是不同的事，别混：\n\n- `promptMax`：**存草稿**的上限（20000）。草稿允许很长，写一半也能存。\n- `promptExecutionLimit`：**能不能发布**的上限（7000），按**原文字数**比。\n\n编辑页显示的是后者：它是真正会拦住作者的那个数。注意它只是**下限保证** ——\n槽位文案展开之后还可能更长，那一步的判据在编译期（`compile` 按展开后的\n成品长度再比一次）。引用本身只有单个写法（`{{Mixed N}}`），没有整组展开。"
       },
       "SpecPublishOut": {
         "properties": {

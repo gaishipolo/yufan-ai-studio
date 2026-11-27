@@ -3,6 +3,7 @@ import { ChevronDown, GripVertical, Trash2 } from 'lucide-react';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
 import type { SpecSlotIn } from '@/shared/api/schema';
 import { Button, FormField, MultiSelect, Select } from '@/shared/ui';
+import { FORM_LIMITS } from '@/shared/lib/formLimits';
 import { MentionTextarea } from './MentionTextarea';
 import { cn } from '@/shared/lib/cn';
 import {
@@ -150,6 +151,7 @@ export function SlotCard({
         <input
           value={slot.label ?? ''}
           placeholder={name}
+          maxLength={FORM_LIMITS.slotLabel}
           aria-label="展示名"
           onChange={event => onPatch({label: event.target.value})}
           className={cn(
@@ -350,11 +352,15 @@ export function SlotCard({
                 value={slot.filledText ?? ''}
                 candidates={filledTextChips(slot, slots)}
                 rows={2}
+                maxLength={FORM_LIMITS.slotText}
                 placeholder={filledPlaceholder}
                 panelHint="选择要插入的编号"
                 onChange={text => onPatch({filledText: text})}
                 onInsert={text => onPatch({filledText: text})}
               />
+              <span className="mt-1 self-end font-mono text-micro tabular-nums text-ink-mute">
+                {(slot.filledText ?? '').length} / {FORM_LIMITS.slotText}
+              </span>
             </FormField>
           )}
 

@@ -135,20 +135,36 @@ def test_restore_drops_the_case_purpose(client: TestClient, api: str) -> None:
 
 
 def test_a_case_stays_visible_to_other_accounts(client: TestClient, api: str) -> None:
-    """案例对所有登录用户可读 —— 这正是删除要留理由的原因。"""
+    """两条口径要分开：读某条案例素材 ≠ 浏览案例池。
+
+    模板卡片要对所有登录用户展示案例封面，所以没有 `library:case:read`
+    也能读这条素材的详情/字节；但「案例池」的列表入口仍然要那个权限。
+    """
     admin = admin_headers(client)
     _user, headers = make_user(client, admin, LIB_RW)
-    asset_id = insert_asset(
-        owner_id="u_001",
-        name="案例封面.png",
-        kind="image",
-        state="active",
-        visibility="personal",
-        purpose="case",
+
+    uploaded = client.post(
+        f"{api}/library/assets/upload",
+        content=png_bytes("teal", (33, 31)),
+        params={"filename": "case-cover.png", "kind": "image", "purpose": "case"},
+        headers=admin,
     )
+    assert uploaded.status_code == 201, uploaded.text
+    asset_id = uploaded.json()["data"]["id"]
 
     visible = client.get(f"{api}/library/assets/{asset_id}", headers=headers)
     assert visible.status_code == 200, visible.text
+    assert client.get(f"{api}/library/assets/{asset_id}/file", headers=headers).status_code == 200
+    assert (
+        client.get(f"{api}/library/assets/{asset_id}/thumbnail", headers=headers).status_code
+        == 200
+    )
+
+    # 但案例池仍然是「浏览入口」，不是登录即可翻。
+    denied = client.get(
+        f"{api}/library/assets", params={"purpose": "case"}, headers=headers
+    )
+    assert denied.status_code == 403, denied.text
 
 
 def test_selection_can_look_at_the_case_pool(client: TestClient, api: str) -> None:

@@ -64,6 +64,7 @@ import {
   TextInput,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
+import { FORM_LIMITS } from '@/shared/lib/formLimits';
 import { toast } from '@/shared/lib/toast';
 import { useCan } from '@/shared/access/use-access';
 import { AssetPicker, type PickKind, type PickedAsset } from '@/features/template-specs/AssetPicker';
@@ -110,6 +111,7 @@ import {
   assignDefaultText,
   defaultTextRefError,
   hydrateAnchors,
+  optionalSlotRefCountError,
   optionalSlotRefError,
   parseAnchors,
   readDefaultText,
@@ -995,6 +997,10 @@ export function SpecWorkspace() {
    */
   const applyPromptText = (text: string): boolean => {
     if (!draft) return false;
+    if (text.length > FORM_LIMITS.specPrompt) {
+      setHint(`提示词不能超过 ${FORM_LIMITS.specPrompt} 字（存草稿的上限）`);
+      return false;
+    }
     const error = promptRefError(text, draft.slots ?? []);
     if (error) {
       setHint(error);
@@ -1065,7 +1071,13 @@ export function SpecWorkspace() {
      只是写进另一个字段。校验也要各管各的提示，见 `randomHint` 的注释。 */
   const applyRandomPromptText = (text: string): boolean => {
     if (!draft) return false;
-    const error = promptRefError(text, draft.slots ?? []);
+    if (text.length > FORM_LIMITS.specPrompt) {
+      setRandomHint(`随机档提示词不能超过 ${FORM_LIMITS.specPrompt} 字（存草稿的上限）`);
+      return false;
+    }
+    const error =
+      promptRefError(text, draft.slots ?? []) ??
+      optionalSlotRefCountError(text, draft.slots ?? []);
     if (error) {
       setRandomHint(error);
       return false;
@@ -1494,9 +1506,13 @@ export function SpecWorkspace() {
               <FormField label="名称" required>
                 <TextInput
                   value={draft.name}
+                  maxLength={FORM_LIMITS.specName}
                   placeholder="例如：米兰之夜 · 产品替换"
                   onChange={event => setDraft({...draft, name: event.target.value})}
                 />
+                <span className="self-end font-mono text-micro tabular-nums text-ink-mute">
+                  {draft.name.length} / {FORM_LIMITS.specName}
+                </span>
               </FormField>
             </div>
             {/* 模型：**一个**多选控件，不是「单选 + 多选」两个。
@@ -1681,6 +1697,7 @@ export function SpecWorkspace() {
                           draft?.groups?.find(item => item.key === run.group)?.label ?? ''
                         }
                         placeholder={groupNames.get(run.group) ?? ''}
+                        maxLength={FORM_LIMITS.specGroupLabel}
                         aria-label="封装名称"
                         onChange={event => renameGroup(run.group, event.target.value)}
                         className={cn(

@@ -157,8 +157,10 @@ def active_visible_clause(
     封面与悬停播放都要读得到这条素材。它不走 `visibility` —— 案例既不属于某个
     人的个人库，也不该出现在团队库里；「谁能浏览案例池」是另一道门（见
     `router` 的 `purpose=case` 入口，要 `library:case:read`），与「谁能读这一条」
-    是两件事。列表默认排除案例（`LibraryService.list` 的 `exclude_purposes`），
-    所以这一支不会把案例灌进「全部 / 个人 / 团队」。
+    是两件事：模板卡片要展示案例，所以单条读取不查这个码；这个码只拦
+    「翻案例池 / 挑案例」的列表入口。列表默认排除案例
+    （`LibraryService.list` 的 `exclude_purposes`），所以这一支不会把案例灌进
+    「全部 / 个人 / 团队」。
     """
     group_branch = LibraryAsset.id.in_(
         select(LibraryAssetGroup.asset_id).where(

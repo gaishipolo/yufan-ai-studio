@@ -53,6 +53,11 @@ vi.mock('@/entities/model/api/model.queries', () => ({
 vi.mock('@/entities/library/api/library.api', () => ({libraryApi: {}}));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
+  libraryKeys: {
+    all: ['library'],
+    selections: () => ['library', 'selection'],
+    selection: (params: object) => ['library', 'selection', params],
+  },
   useLibraryDetail: (id: string) => ({data: {name: `素材-${id}.png`}}),
   useLibraryTags: () => ({data: tagsState.current, isPending: false}),
   /* 包列表：后端会按槽位候选标签过滤，这里直接给「这个模板能用的那个包」 */

@@ -77,7 +77,7 @@ Vite 会把 `/api` 代理到 `VITE_API_PROXY_TARGET`（默认 `http://127.0.0.1:
 | `app migrate-storage [--dry-run] [--delete-source] [--skip-urls]` | `local → s3` 切换前跑：把 `STORAGE_LOCAL_ROOT` 的对象按 key 搬进桶，并把库里 `/static/...` 旧地址**剥成对象 key**（地址在出参时按当前驱动现签，跑完不再随驱动失联） |
 | `app migrate-blobs [--dry-run] [--delete-source]` | 归档素材改内容寻址布局（`blobs/<摘要>`），幂等；可原地跑 |
 | `app migrate-archive [--dry-run]` | 归档切远端前跑：把本地归档根（`catalog`/`blobs`/`previews`/`library`）搬进当前归档驱动，幂等 |
-| `app prune-blobs [--execute] [--min-age-hours 24] [--include-trash] [--trash-age-days 30]` | 回收没人引用的孤儿字节；`--include-trash` 同时彻底清理超期的软删记录（软删本身不释放空间） |
+| `app library prune-blobs [--prefix library/blobs/] [--min-age-hours 24] [--limit 1000] [--execute]` | 列出「对象存储里有、库里无引用」的孤儿字节；默认只报告，`--execute` 才删 |
 | `app verify-blobs [--all] [--sample 20]` | 读回字节重算 sha256，报告损坏/缺失对象；`key = sha256` 本身就是校验和 |
 | `app rebuild-mirrors [--dry-run]` | 按 DB 幂等重建 `catalog/assets/*.json`：补缺镜像、更新 `stateVersion` 落后的、清掉无 DB 行的孤儿 |
 | `app doctor [--strict]` | 部署自检（23 项）：条件写、引用来源完备性、预签名、DB/镜像一致性、镜像对账、**schema 是否停在迁移 head**、选主、旧 URL、配额、缓存读写往返、队列可达性、**outbox 积压/失败**、**指标端点**、功能开关、**连接池参数**、出站 HTTP 配置、完整性抽检 |
@@ -563,7 +563,7 @@ mypy --platform win32 src    # 与 CI 同口径（项目依赖 Win32 API，裸 m
 - [ ] 部署后跑一次 `app doctor`（有 FAIL 直接非零退出）：它会实测
       `If-None-Match` 条件写、预签名可达性、DB/镜像一致性与字节完整性，
       而不是等第一次并发发布或第一次裂图才暴露。
-- [ ] `app prune-blobs --include-trash` 挂周期任务前先确认是单机部署；
+- [ ] `app library prune-blobs --execute` 挂周期任务前先确认是单机部署；
       多实例请保持 `ARCHIVE_GC_ENABLED=false`，改由运维在单机上定时执行。
 - [ ] 从旧归档盘升级时跑一次 `app import-archive-index --dry-run`，确认
       「新建 / 缺文件 / 冲突」的数量后再去掉 `--dry-run`。命令幂等，可重复执行。

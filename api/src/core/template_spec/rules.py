@@ -41,14 +41,16 @@ _TEXT_LITERAL = re.compile(r"\{\{\s*Text\s+\d+\s*\}\}")
 #: 槽位整体后移。作者写的 `{{Mixed N}}` 指的是「第 N 个槽位」，展开成该槽位
 #: 实际拿到的编号（可能是一串）。
 _MIXED_REF = re.compile(r"\{\{\s*Mixed\s+(\d+)(\*|\.\d+)?\s*\}\}")
-#: 提示词里的槽位引用：`{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.N}}`。
+#: 提示词里的槽位引用：**合法形态只有** `{{slot:key}}`。
 #: 抓 key 是为了核对它有没有对应槽位 —— 引用一个已删掉的槽位，`compile` 才会报
 #: 「引用了不存在的槽位」，而预检那一步会放行（它只管结构）。槽位可以删到 0，
 #: 这条就更容易踩到，所以把判据提到结构校验里。
 #:
-#: **两个捕获组**：1 = 槽位 key，2 = 修饰符（`""` / `"*"` / `".N"`）。
-#: 修饰符要抓出来，是因为三种写法的「没填素材」语义不同（见
-#: `slot_ref_modes`）：单张引用要兜底文案，整组引用降级为空，第 N 张必然报错。
+#: 第二个捕获组是**历史修饰符**（`*` / `.N`）。一槽一素材之后它们不再合法，
+#: 但正则仍要认出这段形状，才能让 `_validate_ref_modifier` 报出「整组 / 第 N 张
+#: 已不支持」而不是一句「残留占位符」。`slot_ref_modes` 也保留这个形状，
+#: 用来分析已发布的老版本。
+#:
 #: 注意 `findall` 在有两个组时返回**元组** —— 要 key 请用 `finditer` 取
 #: `group(1)`（`slot_refs` / `slot_ref_modes` 就是这么做的）。
 _SLOT_REF = re.compile(r"\{\{\s*slot:([a-z0-9_]+)(\*|\.\d+)?\s*\}\}")
@@ -229,16 +231,25 @@ def _validate_prompt_text(text: str, keys: set[str], name: str) -> None:
     随机档提示词允许为空（表示该模板不支持随机档）；非空时按主提示词的全套规则管。
     """
     _validate_ref_modifier(text, name)
-    for ref in sorted(slot_refs(text)):
-        if ref not in keys:
-            raise BadRequest(
-                f"{name}引用了不存在的槽位「{ref}」：删槽位时要把它的引用一并删掉"
-            )
+    # `{{Text N}}` 有更具体的解释，先判它；通用占位符检查会把这句话吞掉。
     if _TEXT_LITERAL.search(text):
         raise BadRequest(
             f"{name}不要直接写 {{{{Text N}}}}：文本槽位排第几由槽位顺序决定，"
             "写死会在少选一份时错位"
         )
+    # 发布闸不能只查「引用的槽位存不存在」：`{{Mixed 2 *}}`、`{{Mixed2}}`
+    # 这类形状解析不出来，`slot_refs` 一个都看不到，却会原样进供应商提示词。
+    # 编译期也有残留检查，但那时错误现场在使用者点生成；这里提前到发布。
+    if has_bad_placeholder(text):
+        raise BadRequest(
+            f"{name}里有无法解析的占位符（检查括号、Mixed 编号 / 槽位 key；"
+            "整组 / 第 N 张写法已不支持）"
+        )
+    for ref in sorted(slot_refs(text)):
+        if ref not in keys:
+            raise BadRequest(
+                f"{name}引用了不存在的槽位「{ref}」：删槽位时要把它的引用一并删掉"
+            )
     if len(text) > MAX_PROMPT:
         raise BadRequest(f"{name}不能超过 {MAX_PROMPT} 字（现在 {len(text)}）")
     if not text.strip():
@@ -267,17 +278,19 @@ def _validate_allowed_models(models: tuple[str, ...]) -> None:
         seen.add(model_id)
 
 
-def has_bad_slot_ref(text: str) -> bool:
-    """这段文字里有**无法解析**的槽位引用吗（少括号、key 形状不对、编号位数超限）？
+def has_bad_placeholder(text: str) -> bool:
+    """这段文字里有**无法解析**的占位符吗（坏括号 / 坏 key / 畸形 Mixed）？
 
-    `_LEFTOVER` 是**替换之后**的残留检查 —— 直接拿它去搜原文会把**每一个**
-    合法的引用都判成「坏引用」（`{{slot:hero}}` 本身就匹配 `{{\\s*slot:`）。
-    所以这里先把**合法**的引用摘掉，剩下的才是坏的。
+    不能只找 `{{slot:` 残留：`{{Mixed 2 *}}`、`{{Mixed2}}`、`{{Mixed}}`
+    都不含 `slot:`，却会原样进供应商提示词。判据是「摘掉合法槽位引用后，
+    还剩不剩花括号」—— 合法的 `{{Mixed N}}` 在调用前已经由 `normalize_refs`
+    换成 `{{slot:key}}`，所以这里只需认一种合法形状。
 
     摘掉用同一个正则（`_SLOT_REF`）：合法的形状只有一处定义，摘的时候
     用的形状与替换时一致，才不会出现「校验说合法、替换说非法」。
     """
-    return bool(_LEFTOVER.search(_SLOT_REF.sub("", text)))
+    leftover = _SLOT_REF.sub("", text)
+    return "{{" in leftover or "}}" in leftover
 
 
 def slot_refs(prompt: str) -> list[str]:
@@ -293,12 +306,12 @@ def slot_refs(prompt: str) -> list[str]:
 def slot_ref_modes(prompt: str) -> dict[str, set[str]]:
     """提示词里每个槽位被**哪种写法**引用了。
 
-    返回 `{槽位key: {"", "*", ".2"}}`，其中 `""` = 单张引用 `{{slot:x}}`，
-    `"*"` = 整组引用 `{{slot:x*}}`，`".2"` = 第 N 张 `{{slot:x.2}}`。
+    返回 `{槽位key: {写法}}`。**新模板只有 `""`（单张引用）合法**；
+    `"*"` / `".2"` 是历史写法，一槽一素材后由 `_validate_ref_modifier`
+    直接拒。保留它们只是为了给老版本做分析时形状不漂移。
 
-    **为什么要分写法**：三种写法的「没填素材」语义不同（见 `compile.py`
-    的说明）—— 单张引用要兜底文案，整组引用降级为空，第 N 张直接报错。
-    只问「引用了谁」判不出该不该要兜底，所以这里把写法也带出来。
+    单张引用是唯一插入点（填了素材插编号，没填插「未选时文案」）；因此
+    「这个槽位有没有插入点」只需要看 `""` 是否存在。
     """
     modes: dict[str, set[str]] = {}
     for match in _SLOT_REF.finditer(prompt):
@@ -583,7 +596,7 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
                         "它只能引用自己，或引用必定有素材的槽位（必填 / 已固定）—— "
                         "可选槽位可能没人填，那时没有编号可指"
                     )
-            if has_bad_slot_ref(slot.filled_text):
+            if has_bad_placeholder(slot.filled_text):
                 raise BadRequest(
                     f"槽位「{label}」的选中时文案里有无法解析的槽位引用"
                     "（检查括号与槽位 key）"
@@ -607,7 +620,7 @@ def _validate_slot_texts(spec: TemplateSpec) -> None:
                     f"槽位「{label}」的未选时文案不能引用它自己："
                     "这段话用的正是「使用者没给这一格挑素材」的时候"
                 )
-            if has_bad_slot_ref(slot.empty_text):
+            if has_bad_placeholder(slot.empty_text):
                 raise BadRequest(
                     f"槽位「{label}」的未选时文案里有无法解析的槽位引用"
                     "（检查括号与槽位 key）"

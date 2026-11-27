@@ -39,7 +39,8 @@ export const libraryKeys = {
   downloads: () => [...libraryKeys.all, 'downloads'] as const,
   download: (id: string) => [...libraryKeys.all, 'download', id] as const,
   requests: (scope: 'mine' | 'pending') => [...libraryKeys.all, 'requests', scope] as const,
-  selection: (params: object) => [...libraryKeys.all, 'selection', params] as const,
+  selections: () => [...libraryKeys.all, 'selection'] as const,
+  selection: (params: object) => [...libraryKeys.selections(), params] as const,
   /** 文本正文按资产隔离：编辑保存后只失效这一条，不惊动别处 */
   texts: (id: string) => [...libraryKeys.all, 'text', id] as const,
   textVersions: (id: string) => [...libraryKeys.all, 'textVersions', id] as const,
@@ -154,6 +155,7 @@ function useInvalidateLibrary() {
     void client.invalidateQueries({ queryKey: libraryKeys.facets() });
     void client.invalidateQueries({ queryKey: libraryKeys.details() });
     void client.invalidateQueries({ queryKey: libraryKeys.tags() });
+    void client.invalidateQueries({ queryKey: libraryKeys.selections() });
   };
 }
 

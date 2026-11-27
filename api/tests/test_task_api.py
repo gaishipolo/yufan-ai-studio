@@ -118,6 +118,30 @@ def test_create_without_title_uses_prompt(client: TestClient, api: str) -> None:
     assert task["title"].startswith("没有标题的任务")
 
 
+def test_same_idempotency_key_replays_the_same_task(client: TestClient, api: str) -> None:
+    """双击/超时重试只创建一条；同键换参数必须 409。"""
+    from uuid import uuid4
+
+    key = f"task-{uuid4().hex}"
+    payload = {
+        "prompt": "幂等测试：雪山日出",
+        "model": "Seedance 2.5",
+        "durationSec": 12,
+        "aspectRatio": "9:16",
+        "idempotencyKey": key,
+    }
+    first = client.post(f"{api}/tasks", json=payload)
+    second = client.post(f"{api}/tasks", json=payload)
+    assert first.status_code == 201, first.text
+    assert second.status_code == 201, second.text
+    assert first.json()["data"]["id"] == second.json()["data"]["id"]
+
+    changed = client.post(
+        f"{api}/tasks", json={**payload, "prompt": "换了内容的同键请求"}
+    )
+    assert changed.status_code == 409, changed.text
+
+
 def test_validation_error_shape(client: TestClient, api: str) -> None:
     resp = client.post(f"{api}/tasks", json={"prompt": ""})
     assert resp.status_code == 422
@@ -924,3 +948,64 @@ def test_style_preset_must_be_declared_by_the_model(client: TestClient, api: str
 
     assert resp.status_code == 400, resp.text
     assert "风格" in resp.json()["message"]
+
+
+def test_libtv_progress_only_queries_visible_task_ids(
+    client: TestClient, api: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """持 `task:read` 只能查自己的上游任务号。
+
+    上游账号全团队共用，以前把客户端给的 task_id 直接转发，任何人拿别人的
+    id 就能读到排队位次与失败原因。这里钉住「先与 video_tasks 取交集」。
+    """
+    from uuid import uuid4
+
+    import modules.model_driver.libtv.routes as routes
+    from db.session import get_session_factory
+    from modules.task.enums import TaskStatus
+    from modules.task.models import VideoTask
+
+    headers = _bearer(client, "libtv-viewer", "只读", ("task:read",))
+    own = f"up-own-{uuid4().hex}"
+    other = f"up-other-{uuid4().hex}"
+
+    async def seed() -> None:
+        async with get_session_factory()() as session:
+            session.add_all(
+                [
+                    VideoTask(
+                        title="自己的任务",
+                        prompt="p",
+                        status=TaskStatus.RUNNING.value,
+                        model="x",
+                        external_id=own,
+                        author_id="libtv-viewer",
+                    ),
+                    VideoTask(
+                        title="别人的任务",
+                        prompt="p",
+                        status=TaskStatus.RUNNING.value,
+                        model="x",
+                        external_id=other,
+                        author_id="someone-else",
+                    ),
+                ]
+            )
+            await session.commit()
+
+    sent: list[str] = []
+
+    async def fake_progress(task_ids: list[str], account: str = "") -> list[object]:
+        sent.extend(task_ids)
+        return []
+
+    asyncio.run(seed())
+    monkeypatch.setattr(routes.libtv_api, "progress", fake_progress)
+    resp = client.post(
+        f"{api}/model-driver/libtv/progress",
+        json={"taskIds": [own, other, "not-a-task"], "account": ""},
+        headers=headers,
+    )
+
+    assert resp.status_code == 200, resp.text
+    assert sent == [own]

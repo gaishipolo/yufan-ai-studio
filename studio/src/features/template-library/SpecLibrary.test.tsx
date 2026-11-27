@@ -52,6 +52,11 @@ vi.mock('@/entities/model/api/model.queries', () => ({
    **按候选集（tagIds）分开返回**：可选槽位圈了 `tag-person`，
    它的候选网格与必填槽位的不一样 —— 否则按名字找素材会命中多个元素。 */
 vi.mock('@/entities/library/api/library.queries', () => ({
+  libraryKeys: {
+    all: ['library'],
+    selections: () => ['library', 'selection'],
+    selection: (params: object) => ['library', 'selection', params],
+  },
   useLibraryDetail: (id: string) => ({
     data: {name: id === 'p1' ? '人物图.png' : '商品图.png'},
   }),

@@ -138,7 +138,7 @@ module = ModuleSpec(
         ),
         PermissionSpec(
             "library:case:read",
-            "浏览全部模板案例（案例池）",
+            "浏览案例池（不等于读取某条案例素材：模板展示对所有登录用户公开）",
             group="资产库",
             # 案例池同时给「资产库」和「模板封装」两页用：那边挑案例是它的一部分
             pages=("page:library", "page:template-specs"),

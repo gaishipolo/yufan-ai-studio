@@ -68,6 +68,16 @@ def test_account_pool_is_ordered_and_deduplicated(two_accounts: None) -> None:
     assert libtv.account_urls() == (FREE, CREDITS)
 
 
+def test_unregistered_cdp_account_is_rejected(two_accounts: None) -> None:
+    """客户端只能引用配置里登记过的 CDP；任意 loopback 地址不接受。"""
+    from core.exceptions import BadRequest
+    from modules.model_driver.libtv import account
+
+    assert account._validated_account(f"{FREE}/") == FREE
+    with pytest.raises(BadRequest, match="未登记"):
+        account._validated_account("http://127.0.0.1:9999")
+
+
 def test_account_urls_tolerate_trailing_slash_and_whitespace(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

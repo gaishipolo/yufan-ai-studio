@@ -29,6 +29,11 @@ vi.mock('@/shared/access/use-access', () => ({
 
 vi.mock('@/entities/library/api/library.queries', () => ({
   useLibraryTags: () => ({ data: tagsData.current }),
+  libraryKeys: {
+    all: ['library'],
+    selections: () => ['library', 'selection'],
+    selection: (params: object) => ['library', 'selection', params],
+  },
 }));
 
 vi.mock('@/entities/library/api/library.api', () => ({

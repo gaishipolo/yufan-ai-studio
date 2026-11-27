@@ -77,9 +77,16 @@ class LibTvQueueItemOut(CamelModel):
 
 
 class LibTvProgressIn(CamelModel):
-    task_ids: list[str] = Field(default_factory=list, description="上游 task_id 列表")
+    task_ids: list[str] = Field(
+        default_factory=list,
+        max_length=100,
+        description="上游 task_id 列表（最多 100 个；不属于当前账号的会被忽略）",
+    )
     account: str = Field(
-        default="", description="留空按配置挑：积分看 9412，免费队列看第一个在线的"
+        default="",
+        max_length=512,
+        description="留空按配置挑：积分看 9412，免费队列看第一个在线的；"
+        "只接受配置里登记过的 CDP 账号",
     )
 
 

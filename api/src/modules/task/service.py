@@ -19,7 +19,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.audit import record as audit
 from core.config import get_settings
 from core.context import CurrentUser
-from core.exceptions import BadRequest, Forbidden, InvalidState, RateLimited, UpstreamError
+from core.exceptions import (
+    BadRequest,
+    Conflict,
+    Forbidden,
+    InvalidState,
+    RateLimited,
+    UpstreamError,
+)
+from core.idempotency import fingerprint_matches, request_fingerprint
 from core.library_refs import resolve_reference_images
 from core.library_text import dumps_text_refs, freeze_text_refs
 from core.logging import get_logger
@@ -354,12 +362,41 @@ class TaskService:
                 "等其中几条跑完再提交，否则会挤占别人的排队时间"
             )
 
+    async def _idempotent_task(
+        self, actor_id: str, key: str, fingerprint: str
+    ) -> VideoTask | None:
+        """同键重放：同内容返回原任务，不同内容 409。"""
+        row = await self.session.scalar(
+            select(VideoTask).where(
+                VideoTask.author_id == actor_id,
+                VideoTask.idempotency_key == key,
+            )
+        )
+        if row is None:
+            return None
+        if not fingerprint_matches(row.idempotency_fingerprint, fingerprint):
+            raise Conflict(
+                "该幂等键已经用于另一份任务请求：同一次提交请复用原键，"
+                "新的提交请生成新的幂等键"
+            )
+        return row
+
     async def create_task(self, actor: CurrentUser, payload: CreateTaskIn) -> VideoTask:
         """创建任务：校验参数 → 落库（queued）→ 交给生成框架。
 
         请求线程不做任何模型调用，避免长耗时阻塞；前端拿到 queued 后靠轮询推进。
         模型与参数在这里就校验，非法请求**当场 400**，而不是异步失败后才暴露。
+
+        带 `idempotencyKey` 时，同键同内容直接返回原任务（不重复提交供应商）；
+        不同键仍是两次独立提交，可以并发。
         """
+        key = payload.idempotency_key
+        fingerprint = request_fingerprint(payload) if key else ""
+        if key:
+            # 放在容量检查之前：已经创建过的任务重放时不该被“在途已满”挡住。
+            existing = await self._idempotent_task(actor.id, key, fingerprint)
+            if existing is not None:
+                return existing
         # 先看队列容量：这一步不依赖 payload，放在最前面 —— 被挡住时不该先花
         # 一轮解析模型/参考素材的代价。
         await self._assert_in_flight_room(actor)
@@ -449,9 +486,20 @@ class TaskService:
             cover_url="",
             author_id=actor.id,
             author_name=actor.name,
+            idempotency_key=key or None,
+            idempotency_fingerprint=fingerprint or None,
         )
-        await self.repo.add(task)
-        await self.session.commit()
+        try:
+            await self.repo.add(task)
+            await self.session.commit()
+        except IntegrityError:
+            # 并发同键：唯一索引兜底；回读那一条并按指纹决定重放还是 409。
+            await self.session.rollback()
+            if key:
+                raced = await self._idempotent_task(actor.id, key, fingerprint)
+                if raced is not None:
+                    return raced
+            raise
 
         # 一行完成「入队 + 幂等键 + 超时 + 后续轮询编排」
         await self._dispatch(task)

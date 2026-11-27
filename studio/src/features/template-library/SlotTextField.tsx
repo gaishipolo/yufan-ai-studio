@@ -1,5 +1,6 @@
 import { useMemo, useRef, useState } from 'react';
 import { cn } from '@/shared/lib/cn';
+import { FORM_LIMITS } from '@/shared/lib/formLimits';
 import { RichPromptEditor } from '@/features/template-specs/RichPromptEditor';
 import type { RefChip } from '@/features/template-specs/specDraft';
 
@@ -10,7 +11,7 @@ import type { RefChip } from '@/features/template-specs/specDraft';
  * 超了后端会 400，所以这里先挡住 —— 让人写到第 2001 个字才被拒，
  * 那 2000 个字还得自己再删一遍。
  */
-export const MAX_SLOT_TEXT = 2000;
+export const MAX_SLOT_TEXT = FORM_LIMITS.slotText;
 
 /**
  * 文字里的引用 token（作者写法 `{{Mixed N}}` 与内部写法 `{{slot:key}}`）。

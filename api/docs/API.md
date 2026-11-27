@@ -141,7 +141,7 @@ Authorization: Bearer <accessToken>
 
 | 权限码 | 名称 | 说明 |
 |---|---|---|
-| `library:case:read` | 浏览全部模板案例（案例池） |  |
+| `library:case:read` | 浏览案例池（不等于读取某条案例素材：模板展示对所有登录用户公开） |  |
 | `library:case:write` | 上传案例 / 把素材移入案例池 |  |
 | `library:create` | 上传资产 |  |
 | `library:delete` | 删除本人资产（移入回收站） |  |
@@ -558,6 +558,7 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
+| `currentPassword` | `string \| null` | 否 | 当前密码；仅当本次要修改邮箱时必填 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
 | `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
 | `position` | `string \| null` | 否 | 职务；传 null 清空 |
@@ -1186,6 +1187,7 @@ Authorization: Bearer <accessToken>
 |---|---|---|---|
 | `prompt` | `string` | 是 | 画面描述 |
 | `title` | `string \| null` | 否 | 不传则截取 prompt |
+| `idempotencyKey` | `string \| null` | 否 | 客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原任务、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制 |
 | `model` | `string \| null` | 否 | 模型 id 或名称，缺省取默认模型 |
 | `durationSec` | `number \| null` | 否 | 视频时长（秒），缺省取模型的默认档位 |
 | `aspectRatio` | `AspectRatio` | 否 | 画幅比例，缺省 9:16 竖屏 |
@@ -1401,6 +1403,7 @@ Authorization: Bearer <accessToken>
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | `string` | 是 | 画面描述 |
+| `idempotencyKey` | `string \| null` | 否 | 客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原记录、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制 |
 | `name` | `string` | 否 | 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 |
 | `size` | `string` | 否 | 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` |
 | `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
@@ -3352,8 +3355,8 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `taskIds` | `string[]` | 否 | 上游 task_id 列表 |
-| `account` | `string` | 否 | 留空按配置挑：积分看 9412，免费队列看第一个在线的 |
+| `taskIds` | `string[]` | 否 | 上游 task_id 列表（最多 100 个；不属于当前账号的会被忽略） |
+| `account` | `string` | 否 | 留空按配置挑：积分看 9412，免费队列看第一个在线的；只接受配置里登记过的 CDP 账号 |
 
 **响应** `ApiResponse<LibTvProgressOut>`（前端取 `res.data`）
 
@@ -4392,6 +4395,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 |---|---|---|---|
 | `prompt` | `string` | 是 | 画面描述 |
 | `title` | `string \| null` | 否 | 不传则截取 prompt |
+| `idempotencyKey` | `string \| null` | 否 | 客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原任务、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制 |
 | `model` | `string \| null` | 否 | 模型 id 或名称，缺省取默认模型 |
 | `durationSec` | `number \| null` | 否 | 视频时长（秒），缺省取模型的默认档位 |
 | `aspectRatio` | `AspectRatio` | 否 | 画幅比例，缺省 9:16 竖屏 |
@@ -4631,6 +4635,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `prompt` | `string` | 是 | 画面描述 |
+| `idempotencyKey` | `string \| null` | 否 | 客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原记录、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制 |
 | `name` | `string` | 否 | 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 |
 | `size` | `string` | 否 | 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` |
 | `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
@@ -4868,8 +4873,8 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
-| `taskIds` | `string[]` | 否 | 上游 task_id 列表 |
-| `account` | `string` | 否 | 留空按配置挑：积分看 9412，免费队列看第一个在线的 |
+| `taskIds` | `string[]` | 否 | 上游 task_id 列表（最多 100 个；不属于当前账号的会被忽略） |
+| `account` | `string` | 否 | 留空按配置挑：积分看 9412，免费队列看第一个在线的；只接受配置里登记过的 CDP 账号 |
 
 ### `LibTvProgressOut`
 
@@ -5431,6 +5436,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 |---|---|---|---|
 | `displayName` | `string \| null` | 否 | 昵称 |
 | `email` | `string \| null` | 否 | 邮箱；传 null 清空 |
+| `currentPassword` | `string \| null` | 否 | 当前密码；仅当本次要修改邮箱时必填 |
 | `avatarUrl` | `string \| null` | 否 | 头像 URL；传 null 清空 |
 | `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
 | `position` | `string \| null` | 否 | 职务；传 null 清空 |
@@ -5773,8 +5779,8 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 - `promptExecutionLimit`：**能不能发布**的上限（7000），按**原文字数**比。
 
 编辑页显示的是后者：它是真正会拦住作者的那个数。注意它只是**下限保证** ——
-提示词展开（`{{Mixed 1*}}` 一次列出整组）之后还可能更长，那一步的判据在
-编译期（`compile` 按展开后的成品长度再比一次）。
+槽位文案展开之后还可能更长，那一步的判据在编译期（`compile` 按展开后的
+成品长度再比一次）。引用本身只有单个写法（`{{Mixed N}}`），没有整组展开。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|

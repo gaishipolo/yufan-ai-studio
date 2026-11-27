@@ -38,6 +38,11 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     # 模型目录 id：与 `GET /models` 的 id 对齐，供聚合与供应商路由使用。
     # 历史数据可能为空，读出时由 ModelRouter 反查补齐。
     model_id: Mapped[str | None] = mapped_column(String(64), nullable=True, index=True)
+    #: 客户端为「一次提交意图」生成的键；同键重试不会重复落库/提交供应商。
+    #: 空值 = 老客户端或不需要幂等的调用，不受唯一约束影响。
+    idempotency_key: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    #: 这次请求的规范化指纹：同键不同指纹必须 409，不能返回错的任务。
+    idempotency_fingerprint: Mapped[str | None] = mapped_column(String(64), nullable=True)
     duration_sec: Mapped[int] = mapped_column(Integer, default=5, nullable=False)
     aspect_ratio: Mapped[str] = mapped_column(
         String(8), default=AspectRatio.PORTRAIT.value, nullable=False
@@ -120,6 +125,13 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
         # 列表默认按「作者 + 创建时间倒序」翻页，走联合索引
         Index("ix_video_tasks_author_created", "author_id", "created_at"),
         Index("ix_video_tasks_status_created", "status", "created_at"),
+        # 同一次提交意图只能落一条；NULL 键不参与约束（老客户端照旧）。
+        Index(
+            "ux_video_tasks_author_idempotency",
+            "author_id",
+            "idempotency_key",
+            unique=True,
+        ),
         # 同一父任务只允许一条同类型派生任务：这是「点两次不会下两单」的硬保证。
         # 在这里显式声明，否则 `alembic check` 会把它当成「库里多出来的索引」要求删除。
         Index(

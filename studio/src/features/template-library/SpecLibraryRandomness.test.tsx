@@ -41,6 +41,11 @@ vi.mock('@/entities/library/api/library.api', () => ({
 }));
 
 vi.mock('@/entities/library/api/library.queries', () => ({
+  libraryKeys: {
+    all: ['library'],
+    selections: () => ['library', 'selection'],
+    selection: (params: object) => ['library', 'selection', params],
+  },
   useLibraryDetail: (id: string) => ({
     data: {
       name: id === 'r1' ? '参考图一.png' : id === 'r2' ? '参考图二.png'

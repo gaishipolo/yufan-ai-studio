@@ -18,15 +18,15 @@ Create Date: 2026-11-14 09:55:00.000000
 留着一张没人读的表比删掉更糟：下一个人会以为它是活的，迁移时还会被
 `compare_metadata` 逼着维护。
 
-## 能不能回滚
+## 不可逆
 
-**表结构能，数据不能**。`downgrade` 按原样重建两张表（含索引与外键），但已经
-删掉的行不会回来。这是「能力被替代」而不是「误删」：真要不丢数据，先备份再升级。
+表结构能重建，**数据不能**。让 `downgrade` 重建空表再「成功」返回，等于静默
+丢数据；所以这条迁移标了 `irreversible = True`，且 `downgrade()` 直接抛。
+真要不丢数据，先备份再升级。
 """
 
 from typing import Sequence, Union
 
-import sqlalchemy as sa
 from alembic import op
 
 # revision identifiers, used by Alembic.
@@ -34,6 +34,10 @@ revision: str = "c6f0a2d7e813"
 down_revision: Union[str, Sequence[str], None] = "a3c7e91b2d45"
 branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
+
+#: 本迁移不可逆：表结构可重建，被删的数据回不来（见模块 docstring 的「不可逆」一节）。
+#: 机器可读判据：`scripts/downgrade_anchor.py` 靠它算 CI 的降级锚点。
+irreversible = True
 
 
 def upgrade() -> None:
@@ -43,58 +47,5 @@ def upgrade() -> None:
 
 
 def downgrade() -> None:
-    op.create_table(
-        "template_pack_templates",
-        sa.Column("id", sa.String(length=32), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("template_key", sa.String(length=80), nullable=False),
-        sa.Column("name", sa.String(length=160), nullable=False),
-        sa.Column("description", sa.String(length=2000), nullable=False),
-        sa.Column("prompt", sa.String(length=20000), nullable=False),
-        sa.Column("prompt_sha256", sa.String(length=64), nullable=False),
-        sa.Column("source_video_asset_id", sa.String(length=64), nullable=False),
-        sa.Column("source_duration_sec", sa.Float(), nullable=False),
-        sa.Column("aspect_ratio", sa.String(length=16), nullable=False),
-        sa.Column("cover_url", sa.String(length=512), nullable=False),
-        sa.Column("status", sa.String(length=16), nullable=False),
-        sa.Column("owner_id", sa.String(length=32), nullable=False),
-        sa.Column("published_at", sa.DateTime(timezone=True), nullable=True),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index(
-        "ix_template_pack_templates_created_at", "template_pack_templates", ["created_at"]
-    )
-    op.create_index("ix_template_pack_templates_status", "template_pack_templates", ["status"])
-    op.create_index("ix_template_pack_templates_owner_id", "template_pack_templates", ["owner_id"])
-    op.create_index(
-        "uq_template_pack_templates_key", "template_pack_templates", ["template_key"], unique=True
-    )
-
-    op.create_table(
-        "template_pack_slots",
-        sa.Column("id", sa.String(length=32), nullable=False),
-        sa.Column("created_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("updated_at", sa.DateTime(timezone=True), nullable=False),
-        sa.Column("template_id", sa.String(length=32), nullable=False),
-        sa.Column("position", sa.Integer(), nullable=False),
-        sa.Column("slot_kind", sa.String(length=16), nullable=False),
-        sa.Column("token", sa.String(length=32), nullable=False),
-        sa.Column("label", sa.String(length=64), nullable=False),
-        sa.Column("asset_id", sa.String(length=64), nullable=False),
-        sa.Column("media_type", sa.String(length=16), nullable=False),
-        sa.Column("filter_kind", sa.String(length=16), nullable=False),
-        sa.Column("filter_tag_ids", sa.JSON(), nullable=False),
-        sa.Column("filter_tag_match", sa.String(length=8), nullable=False),
-        sa.Column("required", sa.Boolean(), nullable=False),
-        sa.ForeignKeyConstraint(["template_id"], ["template_pack_templates.id"]),
-        sa.PrimaryKeyConstraint("id"),
-    )
-    op.create_index("ix_template_pack_slots_created_at", "template_pack_slots", ["created_at"])
-    op.create_index("ix_template_pack_slots_template_id", "template_pack_slots", ["template_id"])
-    op.create_index(
-        "uq_template_pack_slots_position",
-        "template_pack_slots",
-        ["template_id", "position"],
-        unique=True,
-    )
+    # 不可逆：表结构可重建，被删的数据回不来。
+    raise NotImplementedError("旧封装模板已下线，删掉的行没有备份，迁移不可回退")

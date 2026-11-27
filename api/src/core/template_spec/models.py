@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from types import MappingProxyType
 from typing import Any, Literal
 
 #: 槽位类型。**就是资产库的 kind**（图片 / 视频 / 音频 / 文本）。
@@ -41,15 +42,27 @@ MAX_PROMPT = 20000
 #: 镜像：列几十个等于没列（使用者还是不知道该挑哪个），也把「这份模板适用于哪些
 #: 模型」这件事摊成了流水账。十来个已经是「挑得动」的上限。
 MAX_ALLOWED_MODELS = 10
-#: **执行**上限：编译产物要交给 `POST /tasks`，而它的 `CreateTaskIn.prompt` 是
-#: `max_length=7000`。超过它在填表页点「生成」才会 422 —— 那时用户已经填完素材，
-#: 错却出在提示词长度上，很不好解释。所以在发布（粗判）与 `compile`（按展开后精确判）
-#: 两处提前挡。
+#: **执行**上限按能力声明：编译产物最后落到哪个端点，就按哪个端点的 schema 判。
+#: 视频走 `POST /tasks`（`CreateTaskIn.prompt` 7000），图片走
+#: `POST /generations/image`（`GenerateImageIn.prompt` 2000）。
 #:
-#: 这个数是**执行端点**的属性，不是模板的属性：替换链吃 20000 级别的提示词（P3 之前的
-#: 旧模板就是这样）。将来第二个执行端点进来时，它应该随该能力声明，而不是改这里。
-#: 漂移由 `tests/test_template_spec_api.py::test_execution_prompt_limit_matches_task_schema` 钉住。
-EXECUTION_PROMPT_LIMIT = 7000
+#: 用一份上限同时管两种能力，表现是「图片模板能发布、填表能编译、点生成才 422」——
+#: 用户已经把素材填完了，错却出在提示词长度上。发布（粗判）与 `compile`
+#: （按展开后的成品精确判）都从这里取当前模板/所选模型的能力上限。
+#:
+#: 两个端点 schema 与这张表必须一致；漂移由
+#: `tests/test_template_spec_api.py::test_execution_prompt_limit_matches_task_schema`
+#: 遍历所有执行端点钉住。
+PROMPT_LIMITS_BY_CAPABILITY: Mapping[str, int] = MappingProxyType(
+    {"video": 7000, "image": 2000}
+)
+#: 视频档的别名：历史调用点与对外返回的全局上限仍按视频口径。
+EXECUTION_PROMPT_LIMIT = PROMPT_LIMITS_BY_CAPABILITY["video"]
+
+
+def prompt_limit_for_capability(capability: str | None) -> int:
+    """取该能力的执行端点上上限；未知能力按视频（通用任务）兜底。"""
+    return PROMPT_LIMITS_BY_CAPABILITY.get(capability or "", EXECUTION_PROMPT_LIMIT)
 
 
 @dataclass(frozen=True, slots=True)
