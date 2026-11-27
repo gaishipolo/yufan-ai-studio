@@ -27,7 +27,7 @@ function renderBar(selected: string[], onChange = vi.fn(), onClear = vi.fn()) {
   return { onChange, onClear };
 }
 
-describe('LibraryTagBar · 两级标签任意组合', () => {
+describe('LibraryTagBar · 两级标签单选切换', () => {
   it('两行分别是维度 / 取值，各自按添加时间排序并带素材数', () => {
     renderBar([]);
     const { top, second } = rows();
@@ -60,23 +60,13 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
     ]);
   });
 
-  it('取值行随多个维度叠加：点了「产品」+「角色」就是两条轴的取值之和', () => {
-    renderBar(['t1', 't2']);
-    const { second } = rows();
-    expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
-      '全部',
-      '30305',
-      'T402',
-      '菜菜3',
-    ]);
-  });
-
-  it('选了一个取值，取值行仍列它所属维度的全部取值（才能同维度多选）', () => {
-    renderBar(['t11']);
+  it('选了一个取值，父维度仍高亮，取值行只列该维度的取值', () => {
+    renderBar(['t1', 't11']);
     const { top, second } = rows();
-    // 维度行始终列全部维度：用户要换方向得能点到别的轴
-    expect(top.getByRole('button', {name: /^角色/})).toBeInTheDocument();
-    // 取值行收窄到「产品」这一条轴，但兄弟取值「T40」还得留着
+    expect(top.getByRole('button', {name: /^产品/})).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
     expect(second.getAllByRole('button').map((b) => b.textContent)).toEqual([
       '全部',
       '30305',
@@ -91,25 +81,32 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
     expect(onChange).toHaveBeenCalledWith(['t1']);
   });
 
-  it('点取值不再把父维度踢掉：两级可以任意组合', async () => {
+  it('点取值会保留父维度（一级仍选中）', async () => {
     const user = userEvent.setup();
     const { onChange } = renderBar(['t1']);
     await user.click(rows().second.getByRole('button', {name: /3030/}));
     expect(onChange).toHaveBeenCalledWith(['t1', 't11']);
   });
 
-  it('再点一次取消选择（同一枚胶囊来回切）', async () => {
+it('直接点取值也会自动选中它的父维度', async () => {
     const user = userEvent.setup();
-    const { onChange } = renderBar(['t11']);
+    const { onChange } = renderBar([]);
     await user.click(rows().second.getByRole('button', {name: /3030/}));
-    expect(onChange).toHaveBeenCalledWith([]);
+    expect(onChange).toHaveBeenCalledWith(['t1', 't11']);
   });
 
-  it('可跨维度多选：产品下 3030 与角色维度并存', async () => {
+  it('再点已选取值只取消取值，父维度保留', async () => {
     const user = userEvent.setup();
-    const { onChange } = renderBar(['t11']);
+    const { onChange } = renderBar(['t1', 't11']);
+    await user.click(rows().second.getByRole('button', {name: /3030/}));
+    expect(onChange).toHaveBeenCalledWith(['t1']);
+  });
+
+  it('点另一个一级维度会替换当前维度并清掉取值', async () => {
+    const user = userEvent.setup();
+    const { onChange } = renderBar(['t1', 't11']);
     await user.click(rows().top.getByRole('button', {name: /^角色/}));
-    expect(onChange).toHaveBeenCalledWith(['t11', 't2']);
+    expect(onChange).toHaveBeenCalledWith(['t2']);
   });
 
   it('两行都是「行标题 → 搜索框 → 全部」，输入框上下对齐', () => {
@@ -138,7 +135,7 @@ describe('LibraryTagBar · 两级标签任意组合', () => {
 
   it('每一行的「全部」都清空所有层级（不再只清自己那一层）', async () => {
     const user = userEvent.setup();
-    const { onClear } = renderBar(['t1', 't11']);
+    const { onClear } = renderBar(['t1']);
     const { top, second } = rows();
     await user.click(top.getByRole('button', {name: '全部标签'}));
     await user.click(second.getByRole('button', {name: '全部标签（取值行）'}));

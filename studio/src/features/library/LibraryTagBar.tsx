@@ -3,15 +3,15 @@ import { Settings2, X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
 import {
-  secondLevelForSelection,
   tagLabel,
+  tagsAtDepth,
   topLevelTags,
 } from '@/entities/library/model/tagTree';
 
 export interface LibraryTagBarProps {
   /** 后端已按添加时间排好序；这里再排一次只是防 mock / 旧缓存混进乱序数据 */
   tags: LibraryTagStatOut[];
-  /** URL 里选中的 tag id（一级维度 / 二级取值都算，可以跨维度多选） */
+  /** URL 里选中的 tag id：最多一个维度 + 一个取值（取值默认带着父维度） */
   selected: string[];
   busy?: boolean;
   /** 交回**完整**的选中数组：容器只负责写 URL，取舍在组件里算 */
@@ -36,21 +36,12 @@ const ROW_LABEL = 'w-12 shrink-0 truncate text-body font-medium text-ink-mute';
  * 第二行是**取值**（6036 / 正面图 / 菜菜）。每行的排布都是
  * 「行标题 → 搜索框 → 全部 → 标签胶囊」。
  *
- * 两级维度模型的组合规则：
+ * **每层最多一个**：一级维度至多一个、二级取值至多一个。
+ * 点一级会切换维度并清掉旧取值；点二级会自动选中它的父维度（一级保持高亮），
+ * 同级再点另一个会替换；点已选中的二级只取消取值，父维度仍在。
  *
- * 1. **同维度多选 = 或**。选「6036」与选「T35」可以并存 —— 两个产品都要看。
- * 2. **跨维度多选 = 且**。选「正面图」与选「6036」并存 = 既是 6036 又是正面图。
- *    这跟旧的三级全并集不同：并集会把「6036 的三视图」也带出来。
- * 3. **同维度里选了维度又选了它下面的取值 → 只留取值**。维度的范围本来就
- *    含它的取值，两个都留着等于「整个产品线」，而用户点「6036」要的是
- *    6036 那一档。收敛发生在发请求之前（`effectiveTagSelection`）。
- * 4. **选中状态不再互相踢掉**。点了就都留着 —— 选中的胶囊全部高亮，
- *    用户看得见自己圈了哪几档；哪一档真正参与筛选由上一条决定。
- *
- * 两行的**二级行随选中项收窄**：点了「产品」，二级行只剩产品的取值；
- * 点了「产品」+「角色」，二级行就是这两条轴的取值之和（口径见
- * `secondLevelForSelection`）。一级行始终列全部维度 —— 维度才是用户想换
- * 方向的地方，收起来就换不了轴了。每行有自己的搜索框，词多了就搜。
+ * 二级行随选中的一级收窄：选了「产品」，二级行只剩产品的取值。
+ * 一级行始终列全部维度，换方向不用先清空。每行有自己的搜索框。
  *
  * 计数来自 `GET /library/tags`，后端给的是「自身 + 全部下级」去重后的合计，
  * 与点进去看到的条数一致。
@@ -68,22 +59,43 @@ export function LibraryTagBar({
   const [secondQuery, setSecondQuery] = useState('');
 
   const top = useMemo(() => topLevelTags(tags), [tags]);
-  /* 二级行只列「当前选中项涉及的维度」下的取值：点了「产品」就只剩产品的
-     取值，点了「产品」+「角色」就是两条轴的取值之和。没选任何东西时列全部。 */
-  const second = useMemo(
-    () => secondLevelForSelection(tags, selected),
-    [tags, selected],
+  const parentOf = useMemo(
+    () => new Map(tags.map((tag) => [tag.id, tag.parentId ?? null])),
+    [tags],
   );
+  /* 老 URL 可能只存了二级 id：显示时把父维度补上，避免“选了 6036 但产品没高亮”。 */
+  const active = useMemo(() => {
+    const next = new Set(selected);
+    for (const id of selected) {
+      const parentId = parentOf.get(id);
+      if (parentId) next.add(parentId);
+    }
+    return next;
+  }, [selected, parentOf]);
 
-  const active = useMemo(() => new Set(selected), [selected]);
+  /* 选中的是一级：二级行只列它的取值；没选一级：列全部取值。 */
+  const second = useMemo(() => {
+    const all = tagsAtDepth(tags, 2);
+    const selectedTop = top.find((tag) => active.has(tag.id));
+    return selectedTop ? all.filter((tag) => tag.parentId === selectedTop.id) : all;
+  }, [tags, top, active]);
 
-  /** 选/不选：点了就加进来，再点一次拿掉。不动同维度的其它标签。 */
   function toggle(tag: LibraryTagStatOut) {
-    onChange(
-      active.has(tag.id)
-        ? selected.filter((item) => item !== tag.id)
-        : [...selected, tag.id],
-    );
+    if (!tag.parentId) {
+      /* 一级：再点取消，连同它下面已选的取值一起清掉；换维度也清掉旧取值。 */
+      if (active.has(tag.id)) {
+        onChange(selected.filter((id) => id !== tag.id && parentOf.get(id) !== tag.id));
+      } else {
+        onChange([tag.id]);
+      }
+      return;
+    }
+    /* 二级：再点只取消取值（父维度保留）；选新的自动带上父维度、替换旧取值。 */
+    if (active.has(tag.id)) {
+      onChange(selected.filter((id) => id !== tag.id));
+      return;
+    }
+    onChange([tag.parentId, tag.id]);
   }
 
   const visibleTop = top.filter((tag) => tag.name.includes(topQuery.trim()));
@@ -119,13 +131,11 @@ export function LibraryTagBar({
           「一级」「二级」是存储结构的说法：看标签词（「产品」「6036」「正面图」）
           的人分不出哪行是分类、哪行是内容。
 
-          组合规则（同维度是或、跨维度是且）原来是一行常驻小字，
-          挂在标签栏顶上，与它约束的那两行隔着一段距离。
-          现在并进**行标题的 `title`**（悬浮才看）：规则贴在它约束的那一行上，
-          常驻版面干净了，信息还在。 */}
+          单选规则（点别的替换当前、再点取消）并进行标题的 `title`：
+          悬浮才看，常驻版面干净。 */}
       <TagRow
         label="维度"
-        labelHint="同一维度内多选是「或」：两个都圈上，两个都要看"
+        labelHint="单选：点别的维度会替换并清掉已选取值"
         ariaLabel="维度标签"
         allLabel="全部标签"
         query={topQuery}
@@ -141,7 +151,7 @@ export function LibraryTagBar({
 
       <TagRow
         label="取值"
-        labelHint="与维度行是「且」：圈了取值就只留同时满足这些取值的素材"
+        labelHint="单选：点二级会自动选中父维度；再点取消取值"
         ariaLabel="取值标签"
         allLabel="全部标签（取值行）"
         query={secondQuery}

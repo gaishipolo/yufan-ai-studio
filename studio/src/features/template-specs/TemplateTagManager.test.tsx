@@ -83,6 +83,7 @@ describe('TemplateTagManager · 模板词表结构', () => {
     await user.selectOptions(screen.getByRole('combobox', { name: '新标签所属上级' }), 't1');
     await user.type(screen.getByRole('textbox', { name: '新标签名称' }), 'T40{enter}');
     expect(calls.create.at(-1)).toEqual({ name: 'T40', parentId: 't1' });
+    expect(await screen.findByRole('button', { name: '收起 产品' })).toBeInTheDocument();
   });
 
   it('上级下拉只有一级维度：把取值当上级会造出第三层', () => {
@@ -92,9 +93,27 @@ describe('TemplateTagManager · 模板词表结构', () => {
     expect(select.querySelector('option[value="t1"]')).not.toBeNull();
   });
 
+  it('默认收起二级；展开后才显示一级下面的取值', async () => {
+    const user = userEvent.setup();
+    renderManager();
+    expect(screen.queryByRole('textbox', { name: '6036 的名称' })).not.toBeInTheDocument();
+    expect(screen.getByRole('button', { name: '展开 产品' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+
+    await user.click(screen.getByRole('button', { name: '展开 产品' }));
+    expect(screen.getByRole('textbox', { name: '6036 的名称' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: '写实 的名称' })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: '收起 产品' }));
+    expect(screen.queryByRole('textbox', { name: '6036 的名称' })).not.toBeInTheDocument();
+  });
+
   it('改名单独走 rename mutation，不改层级', async () => {
     const user = userEvent.setup();
     renderManager();
+    await user.click(screen.getByRole('button', { name: '展开 产品' }));
     const input = screen.getByRole('textbox', { name: '6036 的名称' });
     await user.clear(input);
     await user.type(input, '6036 Pro');
@@ -111,6 +130,7 @@ describe('TemplateTagManager · 模板词表结构', () => {
     const topSelect = screen.getByRole('combobox', { name: '产品 的层级' });
     expect(topSelect).toBeDisabled();
 
+    await user.click(screen.getByRole('button', { name: '展开 风格' }));
     const leafSelect = screen.getByRole('combobox', { name: '写实 的层级' });
     await user.selectOptions(leafSelect, 't1');
     expect(calls.move).toEqual([{ id: 't21', parentId: 't1' }]);
@@ -119,6 +139,7 @@ describe('TemplateTagManager · 模板词表结构', () => {
   it('删除两段式：先点头像只进入确认，确认按钮才真的删', async () => {
     const user = userEvent.setup();
     renderManager();
+    await user.click(screen.getByRole('button', { name: '展开 产品' }));
 
     await user.click(screen.getByRole('button', { name: '删除标签 T35' }));
     expect(calls.remove).toEqual([]);

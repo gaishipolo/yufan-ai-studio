@@ -243,8 +243,7 @@ export function SpecLibrary() {
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
   const tagsQuery = useTemplateTags();
   const tags = useMemo(() => tagsQuery.data ?? [], [tagsQuery.data]);
-  /* 发请求前收敛：同维度里选了维度又选了它的取值时只留取值。
-     界面上两枚胶囊都高亮，真正参与筛选的是这一份。 */
+  /* 界面上可以「维度 + 取值」同时高亮，但请求只发二级取值。 */
   const effectiveTagIds = useMemo(
     () => effectiveTemplateTagIds(tags, selectedTagIds),
     [tags, selectedTagIds],
@@ -834,28 +833,7 @@ export function SpecLibrary() {
     );
   }
 
-  if (items.length === 0) {
-    /* 筛空了 ≠ 没有模板：这时说「还没有已发布的模板」是在骗人，
-       得给出一键回到全量的出口（两行筛选条在这个分支里也随之消失）。 */
-    if (hasActiveFilter) {
-      return (
-        <EmptyState
-          title="没有符合筛选条件的模板"
-          action={
-            <Button
-              size="sm"
-              variant="secondary"
-              onClick={() => {
-                setKeyword('');
-                setSelectedTagIds([]);
-              }}
-            >
-              清除筛选
-            </Button>
-          }
-        />
-      );
-    }
+  if (items.length === 0 && !hasActiveFilter) {
     return (
       /* 空状态是一次邀请，不是段说明：按钮里直接写「去哪儿做」，
          就不用在下面再补一句「先在模板封装里定一张表并发布」。 */
@@ -900,20 +878,38 @@ export function SpecLibrary() {
             就只能靠 1px 描边区分，看一眼全是线。给托盘一点底色，卡片立刻浮起来
             —— 比给每张卡加更重的阴影更省、也更不会脏。 */}
         <div className="rounded-2xl bg-canvas/40 p-2.5 shadow-[inset_0_1px_0_rgba(255,255,255,.9)] ring-1 ring-inset ring-[rgba(211,224,229,.45)]">
-          <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
-            {items.map(item => (
-              <TemplateCard
-                key={item.key}
-                item={item}
-                selected={item.key === spec?.key}
-                onSelect={() => setSelectedKey(item.key)}
-                modelLabel={modelLabelOf(item.latest?.model ?? '')}
-                tagLabels={(item.tagIds ?? [])
-                  .map(id => tagLabelById.get(id))
-                  .filter((label): label is string => !!label)}
-              />
-            ))}
-          </div>
+          {items.length === 0 ? (
+            <EmptyState
+              title="没有符合筛选条件的模板"
+              action={
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => {
+                    setKeyword('');
+                    setSelectedTagIds([]);
+                  }}
+                >
+                  清除筛选
+                </Button>
+              }
+            />
+          ) : (
+            <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
+              {items.map(item => (
+                <TemplateCard
+                  key={item.key}
+                  item={item}
+                  selected={item.key === spec?.key}
+                  onSelect={() => setSelectedKey(item.key)}
+                  modelLabel={modelLabelOf(item.latest?.model ?? '')}
+                  tagLabels={(item.tagIds ?? [])
+                    .map(id => tagLabelById.get(id))
+                    .filter((label): label is string => !!label)}
+                />
+              ))}
+            </div>
+          )}
         </div>
       </div>
 

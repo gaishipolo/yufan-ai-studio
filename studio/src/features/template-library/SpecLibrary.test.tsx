@@ -13,7 +13,12 @@ const {compileMock, createTaskMock, generateImageMock, modelsMock, specState, pu
   modelsMock: vi.fn(),
   /* 当前发布的规格。用例可以换掉它来测另一种槽位配置。 */
   specState: {current: null as unknown},
-  publishedState: {isError: false, error: null as unknown, refetch: vi.fn()},
+  publishedState: {
+    isError: false,
+    error: null as unknown,
+    refetch: vi.fn(),
+    emptyWhenFiltered: false,
+  },
   /* 筛选条选中后传给 usePublishedSpecs 的 tagIds —— 守卫「真的发后端筛了」。 */
   publishedTagCalls: [] as string[][],
   tagState: {current: [] as TagOut[]},
@@ -23,7 +28,15 @@ vi.mock('@/entities/template-spec/api/spec.queries', () => ({
   usePublishedSpecs: (tagIds: string[] = []) => {
     publishedTagCalls.push(tagIds);
     return {
-      data: publishedState.isError ? undefined : {items: [specState.current], total: 1},
+      data: publishedState.isError
+        ? undefined
+        : {
+            items:
+              publishedState.emptyWhenFiltered && tagIds.length
+                ? []
+                : [specState.current],
+            total: publishedState.emptyWhenFiltered && tagIds.length ? 0 : 1,
+          },
       isLoading: false,
       isError: publishedState.isError,
       error: publishedState.error,
@@ -181,6 +194,7 @@ const TEMPLATE_TAGS: TagOut[] = [
 beforeEach(() => {
   specState.current = SPEC;
   tagState.current = TEMPLATE_TAGS;
+  publishedState.emptyWhenFiltered = false;
   publishedTagCalls.length = 0;
   modelsMock.mockImplementation((capability: string) =>
     capability === 'video' ? [LIBTV] : [],
@@ -638,7 +652,7 @@ describe('模板库：右栏', () => {
  *
  * 三处守卫各管一段链路，缺任何一段都会红：
  * 1. 卡片下方不再有插槽状态 chip，而是词表映射出的标签胶囊；
- * 2. 筛选条真的有两行，且行标题写明组合语义；
+ * 2. 筛选条真的有两行，且一级/二级只能单选切换；
  * 3. 选中项作为 `tagIds` 交给 `usePublishedSpecs`（后端筛选），不是只在本地.hide。
  */
 describe('模板库：标签筛选与卡片标签', () => {
@@ -662,13 +676,15 @@ describe('模板库：标签筛选与卡片标签', () => {
     expect(within(card).getByTitle('产品 / 6036')).toBeInTheDocument();
   });
 
-  it('筛选条两行都在，行标题写明同维度「或」、跨维度「且」', async () => {
+  it('筛选条两行都在，行标题说明单选替换、不再写多选组合语义', async () => {
     renderLibrary();
 
     const dimension = await screen.findByRole('group', {name: '模板维度标签'});
     const value = screen.getByRole('group', {name: '模板取值标签'});
-    expect(within(dimension).getByText('维度').title).toContain('或');
-    expect(within(value).getByText('取值').title).toContain('且');
+    expect(within(dimension).getByText('维度').title).toContain('替换');
+    expect(within(value).getByText('取值').title).toContain('单选');
+    expect(within(dimension).getByText('维度').title).not.toContain('或');
+    expect(within(value).getByText('取值').title).not.toContain('且');
     expect(within(dimension).getByRole('button', {name: /产品/})).toBeInTheDocument();
     expect(within(value).getByRole('button', {name: /6036/})).toBeInTheDocument();
   });
@@ -683,6 +699,73 @@ describe('模板库：标签筛选与卡片标签', () => {
     await waitFor(() => {
       expect(publishedTagCalls[publishedTagCalls.length - 1]).toContain('tt-product');
     });
+  });
+
+  it('点二级后父维度仍选中；请求只发最具体的二级 tagId', async () => {
+    const user = userEvent.setup();
+    renderLibrary();
+
+    const dimension = await screen.findByRole('group', {name: '模板维度标签'});
+    const value = screen.getByRole('group', {name: '模板取值标签'});
+    await user.click(within(dimension).getByRole('button', {name: /产品/}));
+    await waitFor(() =>
+      expect(publishedTagCalls[publishedTagCalls.length - 1]).toEqual(['tt-product']),
+    );
+
+    await user.click(within(value).getByRole('button', {name: /6036/}));
+    await waitFor(() =>
+      expect(publishedTagCalls[publishedTagCalls.length - 1]).toEqual(['tt-6036']),
+    );
+    expect(within(dimension).getByRole('button', {name: /产品/})).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(value).getByRole('button', {name: /6036/})).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+  });
+
+  it('再点已选二级只取消二级，一级维度保留并继续收窄取值行', async () => {
+    const user = userEvent.setup();
+    renderLibrary();
+
+    const dimension = await screen.findByRole('group', {name: '模板维度标签'});
+    const value = screen.getByRole('group', {name: '模板取值标签'});
+    await user.click(within(dimension).getByRole('button', {name: /产品/}));
+    await user.click(within(value).getByRole('button', {name: /6036/}));
+    await user.click(within(value).getByRole('button', {name: /6036/}));
+
+    await waitFor(() =>
+      expect(publishedTagCalls[publishedTagCalls.length - 1]).toEqual(['tt-product']),
+    );
+    expect(within(dimension).getByRole('button', {name: /产品/})).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(within(value).queryByRole('button', {name: /写实/})).not.toBeInTheDocument();
+  });
+
+  it('筛选无结果时保留筛选条，只在列表区显示空态', async () => {
+    publishedState.emptyWhenFiltered = true;
+    const user = userEvent.setup();
+    renderLibrary();
+
+    const dimension = await screen.findByRole('group', {name: '模板维度标签'});
+    await user.click(within(dimension).getByRole('button', {name: /产品/}));
+
+    await waitFor(() =>
+      expect(screen.getByText('没有符合筛选条件的模板')).toBeInTheDocument(),
+    );
+    // 页面骨架还在：两行筛选条都保留，可以直接换标签
+    expect(screen.getByRole('group', {name: '模板维度标签'})).toBeInTheDocument();
+    expect(screen.getByRole('group', {name: '模板取值标签'})).toBeInTheDocument();
+
+    await user.click(screen.getAllByRole('button', {name: '清除筛选'})[0]);
+    await waitFor(() =>
+      expect(screen.queryByText('没有符合筛选条件的模板')).not.toBeInTheDocument(),
+    );
+    expect(await screen.findByRole('button', {name: /商品替换/})).toBeInTheDocument();
   });
 
   it('选了维度后取值行只留该维度下的取值，没选维度时列全部', async () => {

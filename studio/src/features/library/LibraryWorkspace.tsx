@@ -132,12 +132,8 @@ export function LibraryWorkspace() {
     [view],
   );
   const tags = useLibraryTags(tagScope);
-  /*
-   * 发给后端的是**收敛后**的标签：跨链多选是并集，但同一条链上只按最具体的那
-   * 一层筛选（父的范围本来就含子，两个都留着范围会重复 —— 用户点「产品 /
-   * 3030」要的是 3030 那一档，不是整个产品线）。URL 里存的仍是用户点的全部，
-   * 所以标签栏的胶囊全都高亮，用户看得见自己圈了哪几档。
-   */
+  /* 界面上可以同时高亮「维度 + 取值」，但请求只带取值 —— 父的范围包含子，
+     两个一起发会等于整个维度。*/
   const effectiveTagIds = useMemo(
     () => effectiveTagSelection(tags.data ?? [], tagIds),
     [tags.data, tagIds],
@@ -248,8 +244,7 @@ export function LibraryWorkspace() {
 
   const fail = (error: Error) => toast(error.message, 'error');
 
-  /** 标签栏交回**完整**的选中数组（三个级别可跨链多选），容器只写 URL。
-      URL 里只存 tag id、不另存「当前一级」，刷新或分享后三行仍然对得上。 */
+  /** 标签栏交回「版本最多一个维度 + 一个取值」；容器只写 URL。 */
   function changeTags(next: string[]) {
     update({ tags: next.join(',') || null, page: null });
   }

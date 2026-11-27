@@ -68,12 +68,49 @@ describe('LibraryTagManager · 词表结构的唯一入口', () => {
     expect(select.querySelector('option[value="t1"]')).not.toBeNull();
   });
 
-  it('列表按「一级维度 → 二级取值」原序排下来', () => {
+  it('默认只显示一级；二级收在维度下面', () => {
     renderManager();
     const names = screen
       .getAllByRole('textbox')
       .map((input) => input.getAttribute('aria-label'))
       .filter((label): label is string => Boolean(label?.endsWith(' 的名称')));
-    expect(names).toEqual(['产品 的名称', '6036 的名称', 'T35 的名称', '音乐 的名称']);
+    expect(names).toEqual(['产品 的名称', '音乐 的名称']);
+    expect(screen.getByRole('button', { name: '展开 产品' })).toHaveAttribute(
+      'aria-expanded',
+      'false',
+    );
+  });
+
+  it('点一级展开/收起二级，顺序保持「维度 → 取值」', async () => {
+    const user = userEvent.setup();
+    renderManager();
+
+    await user.click(screen.getByRole('button', { name: '展开 产品' }));
+    const expanded = screen
+      .getAllByRole('textbox')
+      .map((input) => input.getAttribute('aria-label'))
+      .filter((label): label is string => Boolean(label?.endsWith(' 的名称')));
+    expect(expanded).toEqual([
+      '产品 的名称',
+      '6036 的名称',
+      'T35 的名称',
+      '音乐 的名称',
+    ]);
+
+    await user.click(screen.getByRole('button', { name: '收起 产品' }));
+    expect(screen.queryByRole('textbox', { name: '6036 的名称' })).not.toBeInTheDocument();
+  });
+
+  it('新建二级后自动展开它的一级', async () => {
+    const user = userEvent.setup();
+    renderManager();
+    await user.selectOptions(screen.getByRole('combobox', { name: '新标签所属上级' }), 't1');
+    await user.type(screen.getByRole('textbox', { name: '新标签名称' }), 'T40{enter}');
+
+    expect(createCalls).toEqual([{ name: 'T40', parentId: 't1' }]);
+    expect(await screen.findByRole('button', { name: '收起 产品' })).toHaveAttribute(
+      'aria-expanded',
+      'true',
+    );
   });
 });

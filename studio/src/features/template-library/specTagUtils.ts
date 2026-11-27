@@ -22,24 +22,14 @@ export function templateTagLabel(tag: TagOut): string {
 }
 
 /**
- * 真正发后端的标签：**同维度里选了维度又选了它的取值 → 只留取值**。
+ * 真正发后端的标签：**同一条链上只留二级取值**。
  *
- * 后端在维度组内是 OR，把父和子一起送上去等于「整个维度」—— 点了「6036」
- * 却仍看到同维度的其它取值。收敛只发生在这里，界面上的胶囊全部保留高亮
- * （与素材库标签栏同一条约定）。
+ * 界面上「维度 + 它下面的取值」可以同时高亮（用户要看到自己选了哪条轴），
+ * 但请求不能两个都发：父的范围包含子，一起发等于整个维度，点「6036」
+ * 会变回看整个产品线。跨维度也不会发生（每层最多一个）。
  */
 export function effectiveTemplateTagIds(tags: TagOut[], selected: string[]): string[] {
   const parentOf = new Map(tags.map((tag) => [tag.id, tag.parentId ?? null]));
   const chosen = [...new Set(selected)].filter((id) => parentOf.has(id));
-  return chosen.filter((id) =>
-    !chosen.some((other) => {
-      if (other === id) return false;
-      let cursor = parentOf.get(other) ?? null;
-      while (cursor) {
-        if (cursor === id) return true;
-        cursor = parentOf.get(cursor) ?? null;
-      }
-      return false;
-    }),
-  );
+  return chosen.filter((id) => !chosen.some((other) => parentOf.get(other) === id));
 }

@@ -62,6 +62,10 @@ export function usePublishedSpecs(tagIds: string[] = []) {
         tagIds: tagIds.length ? tagIds : undefined,
         pageSize: 100,
       }),
+    /* 切标签只是换筛选条件，页面结构不变：保留上一份结果，等新数据回来再替换。
+       没有它会整页进入 isLoading 骨架屏，标签栏和卡片一起闪掉再重建 ——
+       看起来就是整个模板库在抖。 */
+    placeholderData: (previous) => previous,
   });
 }
 

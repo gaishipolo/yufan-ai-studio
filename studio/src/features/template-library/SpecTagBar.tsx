@@ -16,7 +16,7 @@ const ROW_LABEL = 'w-12 shrink-0 truncate text-body font-medium text-ink-mute';
 export interface SpecTagBarProps {
   /** `GET /template-specs/tags` 的平铺词表。 */
   tags: TagOut[];
-  /** 选中的标签 id（一级维度 / 二级取值都算）—— 由容器持有，不进 URL。 */
+  /** 选中的标签 id：最多一个维度 + 一个取值（取值默认带着父维度）。 */
   selected: string[];
   busy?: boolean;
   onChange: (next: string[]) => void;
@@ -24,10 +24,9 @@ export interface SpecTagBarProps {
 
 /**
  * 模板标签筛选条：**两行**，第一行「维度」（depth 1），第二行「取值」（depth 2）。
- * 第二行按选中的维度收窄（没选维度就列全部取值）。
- *
- * 组合语义贴在行标题的 `title` 里（悬浮才看）：同维度 OR、跨维度 AND ——
- * 常驻版面干净，规则又挂在它约束的那一行上。
+ * **每层最多一个**：点一级切换维度并清掉旧取值；点二级自动选中父维度
+ * （一级保持高亮），同级再点替换；再点已选二级只取消取值、父维度保留。
+ * 第二行始终按选中的一级收窄。
  */
 export function SpecTagBar({ tags, selected, busy, onChange }: SpecTagBarProps) {
   const [dimensionQuery, setDimensionQuery] = useState('');
@@ -37,11 +36,22 @@ export function SpecTagBar({ tags, selected, busy, onChange }: SpecTagBarProps) 
     () => tags.filter((tag) => templateTagDepth(tag) === 1),
     [tags],
   );
-  /* 收窄按**选中的维度**算，不按选中项自身 —— 选了「产品 / 6036」之后还得
-     看得见同维度的兄弟取值，否则「同维度多选是或」没法做。 */
+  const parentOf = useMemo(
+    () => new Map(tags.map((tag) => [tag.id, tag.parentId ?? null])),
+    [tags],
+  );
+  /* 老状态可能只存了二级：显示时把父维度补上，一级也要高亮。 */
+  const active = useMemo(() => {
+    const next = new Set(selected);
+    for (const id of selected) {
+      const parentId = parentOf.get(id);
+      if (parentId) next.add(parentId);
+    }
+    return next;
+  }, [selected, parentOf]);
   const selectedDimensions = useMemo(
-    () => new Set(selected.filter((id) => dimensions.some((tag) => tag.id === id))),
-    [selected, dimensions],
+    () => new Set(dimensions.filter((tag) => active.has(tag.id)).map((tag) => tag.id)),
+    [active, dimensions],
   );
   const values = useMemo(() => {
     const allValues = tags.filter((tag) => templateTagDepth(tag) === 2);
@@ -50,14 +60,23 @@ export function SpecTagBar({ tags, selected, busy, onChange }: SpecTagBarProps) 
       : allValues;
   }, [tags, selectedDimensions]);
 
-  const active = useMemo(() => new Set(selected), [selected]);
-
   function toggle(tag: TagOut) {
-    onChange(
-      active.has(tag.id)
-        ? selected.filter((id) => id !== tag.id)
-        : [...selected, tag.id],
-    );
+    if (templateTagDepth(tag) === 1) {
+      if (active.has(tag.id)) {
+        onChange(
+          selected.filter((id) => id !== tag.id && parentOf.get(id) !== tag.id),
+        );
+      } else {
+        onChange([tag.id]);
+      }
+      return;
+    }
+    if (active.has(tag.id)) {
+      onChange(selected.filter((id) => id !== tag.id));
+      return;
+    }
+    if (!tag.parentId) return;
+    onChange([tag.parentId, tag.id]);
   }
 
   const visibleDimensions = dimensions.filter((tag) =>
@@ -84,7 +103,7 @@ export function SpecTagBar({ tags, selected, busy, onChange }: SpecTagBarProps) 
 
       <SpecTagRow
         label="维度"
-        labelHint="同一维度内多选是「或」：两个都圈上，两个都要看；与取值行是「且」"
+        labelHint="单选：点别的维度会替换并清掉已选取值"
         ariaLabel="模板维度标签"
         allLabel="全部模板维度"
         query={dimensionQuery}
@@ -101,7 +120,7 @@ export function SpecTagBar({ tags, selected, busy, onChange }: SpecTagBarProps) 
 
       <SpecTagRow
         label="取值"
-        labelHint="与维度行是「且」：只留同时满足这些取值的模板；同维度内多个取值是「或」"
+        labelHint="单选：点二级会自动选中父维度；再点取消取值"
         ariaLabel="模板取值标签"
         allLabel="全部模板取值"
         query={valueQuery}
