@@ -53,8 +53,10 @@ export function TrendChart({ points, granularity, className }: TrendChartProps) 
 
   return (
     <div className={cn('w-full', className)}>
-      {/* 窄屏放不下 30 根柱子时横向滑动，而不是把柱子压成看不见的一条线。 */}
-      <div ref={scrollerRef} className="overflow-x-auto">
+      {/* 窄屏放不下 30 根柱子时横向滑动，而不是把柱子压成看不见的一条线。
+          `pt-12` 是留给悬停浮层的：最高柱顶到内容区顶部时，浮层还要往上伸
+          50 多像素；overflow-x-auto 会在 padding box 裁剪，不留这段会被切掉。 */}
+      <div ref={scrollerRef} className="overflow-x-auto pt-12">
         <div className="min-w-[420px]">
           <div
             /* `pt-4` 是留给峰值标注的：最高的柱子是满高的，它的数字会标在柱顶
