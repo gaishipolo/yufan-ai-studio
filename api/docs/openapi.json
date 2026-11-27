@@ -5318,6 +5318,231 @@
         }
       }
     },
+    "/api/v1/llm-config/providers": {
+      "get": {
+        "tags": [
+          "LLM 配置"
+        ],
+        "summary": "列出 LLM 供应商配置（密钥脱敏）",
+        "operationId": "get_providers_api_v1_llm_config_providers_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LlmProvidersOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      },
+      "put": {
+        "tags": [
+          "LLM 配置"
+        ],
+        "summary": "新增或更新 LLM 供应商，下一次请求即生效",
+        "operationId": "put_provider_api_v1_llm_config_providers_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SaveProviderIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LlmProviderOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/llm-config/providers/{name}": {
+      "delete": {
+        "tags": [
+          "LLM 配置"
+        ],
+        "summary": "删除 LLM 供应商配置",
+        "operationId": "remove_provider_api_v1_llm_config_providers__name__delete",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LlmProvidersOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/llm-config/providers/{name}/models:fetch": {
+      "post": {
+        "tags": [
+          "LLM 配置"
+        ],
+        "summary": "从供应商网关拉取真实模型 id",
+        "description": "GET {base_url}/models，返回上游 id 列表。只读外网请求。",
+        "operationId": "fetch_models_api_v1_llm_config_providers__name__models_fetch_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_FetchModelsOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/v1/llm-config/providers/{name}/test": {
+      "post": {
+        "tags": [
+          "LLM 配置"
+        ],
+        "summary": "对供应商发一次真实最小请求",
+        "description": "连通验收：验的是文本真的能取回来，不是 HTTP 200。",
+        "operationId": "test_provider_api_v1_llm_config_providers__name__test_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          },
+          {
+            "name": "model_id",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "description": "平台模型 id，留空取该供应商第一个",
+              "default": "",
+              "title": "Model Id"
+            },
+            "description": "平台模型 id，留空取该供应商第一个"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_dict_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/model-driver/drivers": {
       "get": {
         "tags": [
@@ -8227,6 +8452,33 @@
         "type": "object",
         "title": "ApiResponse[ExportOut]"
       },
+      "ApiResponse_FetchModelsOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/FetchModelsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[FetchModelsOut]"
+      },
       "ApiResponse_GroupOut_": {
         "properties": {
           "code": {
@@ -8604,6 +8856,60 @@
         },
         "type": "object",
         "title": "ApiResponse[LibraryTagOut]"
+      },
+      "ApiResponse_LlmProviderOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LlmProviderOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LlmProviderOut]"
+      },
+      "ApiResponse_LlmProvidersOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/LlmProvidersOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[LlmProvidersOut]"
       },
       "ApiResponse_LoginEventListOut_": {
         "properties": {
@@ -9543,6 +9849,35 @@
         },
         "type": "object",
         "title": "ApiResponse[UserOut]"
+      },
+      "ApiResponse_dict_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Data"
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[dict]"
       },
       "ApiResponse_list_DownloadJobOut__": {
         "properties": {
@@ -11144,6 +11479,19 @@
         ],
         "title": "ExportSourceOut",
         "description": "可导出的数据源。前端据此渲染下拉，不要硬编码数据源名单。\n\n这份列表来自运行时注册表（`core.ports.export_sources` + 内置源），\n新模块注册一个源之后这里自动多一项——前端不需要跟着发版。"
+      },
+      "FetchModelsOut": {
+        "properties": {
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/UpstreamModelOut"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "type": "object",
+        "title": "FetchModelsOut"
       },
       "FromGenerationIn": {
         "properties": {
@@ -13399,6 +13747,82 @@
         "title": "LibraryVisibility",
         "description": "可见范围。`personal` 是唯一允许草稿与回收站存在的范围。"
       },
+      "LlmModelOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          },
+          "upstream": {
+            "type": "string",
+            "title": "Upstream"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id",
+          "upstream"
+        ],
+        "title": "LlmModelOut"
+      },
+      "LlmProviderOut": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "baseUrl": {
+            "type": "string",
+            "title": "Baseurl"
+          },
+          "apiKeyConfigured": {
+            "type": "boolean",
+            "title": "Apikeyconfigured",
+            "default": false
+          },
+          "apiKeyMasked": {
+            "type": "string",
+            "title": "Apikeymasked",
+            "default": ""
+          },
+          "apiKeyFingerprint": {
+            "type": "string",
+            "title": "Apikeyfingerprint",
+            "default": ""
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/LlmModelOut"
+            },
+            "type": "array",
+            "title": "Models"
+          },
+          "source": {
+            "type": "string",
+            "title": "Source",
+            "default": "default"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "baseUrl"
+        ],
+        "title": "LlmProviderOut"
+      },
+      "LlmProvidersOut": {
+        "properties": {
+          "providers": {
+            "items": {
+              "$ref": "#/components/schemas/LlmProviderOut"
+            },
+            "type": "array",
+            "title": "Providers"
+          }
+        },
+        "type": "object",
+        "title": "LlmProvidersOut"
+      },
       "LoginEventListOut": {
         "properties": {
           "items": {
@@ -14727,6 +15151,36 @@
           "detail"
         ],
         "title": "RuntimeCheckOut"
+      },
+      "SaveProviderIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "baseUrl": {
+            "type": "string",
+            "title": "Baseurl"
+          },
+          "apiKey": {
+            "type": "string",
+            "title": "Apikey",
+            "default": ""
+          },
+          "models": {
+            "items": {
+              "$ref": "#/components/schemas/LlmModelOut"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name",
+          "baseUrl"
+        ],
+        "title": "SaveProviderIn"
       },
       "SessionOut": {
         "properties": {
@@ -16998,6 +17452,19 @@
         ],
         "title": "UploadKind",
         "description": "上传接口允许的文件类型。\n\n不复用 `LibraryAssetKind`：文本资产的体积上限与探测规则单独一档，\n`TEXT` 走同一条上传链，但上限另算（见 `infra/media_probe.MAX_TEXT_BYTES`）。"
+      },
+      "UpstreamModelOut": {
+        "properties": {
+          "id": {
+            "type": "string",
+            "title": "Id"
+          }
+        },
+        "type": "object",
+        "required": [
+          "id"
+        ],
+        "title": "UpstreamModelOut"
       },
       "UsageBreakdownItemOut": {
         "properties": {

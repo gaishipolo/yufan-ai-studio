@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **148** 个接口 / **12** 个模块
+> 版本 `0.2.0`｜共 **153** 个接口 / **13** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -161,6 +161,8 @@ Authorization: Bearer <accessToken>
 
 | 权限码 | 名称 | 说明 |
 |---|---|---|
+| `llm_config:read` | 查看 LLM 供应商与模型配置 |  |
+| `llm_config:write` | 修改 LLM 供应商、模型映射并发起连通测试 |  |
 | `model_driver:config:read` | 查看运行时配置 | 查看域名白名单与供应商接入状态；密钥只显示脱敏掩码与指纹，不显示明文 |
 | `model_driver:config:write` | 修改运行时配置 | 修改域名白名单与供应商密钥/地址，写回服务实际读取的 .env；下一次请求即生效。高危：白名单是 SSRF 防线，写错会让外部链接被当成可信来源 |
 | `model_driver:refresh` | 刷新模型驱动目录 | 重新扫描驱动目录，把新增的驱动文件热接上（进程级：只影响本实例，多实例各自收敛）。改已加载的文件不热替换，要重启才生效 |
@@ -171,6 +173,7 @@ Authorization: Bearer <accessToken>
 |---|---|---|
 | `page:image` | 生图 | 关联接口：catalog:read, image:create, image:delete, image:read, image:read:all, image:retry:any |
 | `page:library` | 资产库 | 关联接口：library:case:read, library:create, library:delete, library:delete:any, library:draft:review, library:generation:ingest, library:read, library:share, library:share:approve, library:share:approve:group, library:share:approve:team, library:share:direct, library:tag:manage, library:update |
+| `page:llm` | LLM 配置 | 关联接口：llm_config:read, llm_config:write |
 | `page:ops` | 运维 | 关联接口：model_driver:config:read, model_driver:config:write, model_driver:refresh |
 | `page:shots` | 镜头库 | 关联接口：shot:read |
 | `page:storyboards` | 分镜模板库 | 关联接口：storyboard:read |
@@ -268,9 +271,10 @@ Authorization: Bearer <accessToken>
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 47 | 见下方 `4.9` |
-| 模型驱动 | 12 | 见下方 `4.10` |
-| 模板封装 | 20 | 见下方 `4.11` |
-| 用量看板 | 2 | 见下方 `4.12` |
+| LLM 配置 | 5 | 见下方 `4.10` |
+| 模型驱动 | 12 | 见下方 `4.11` |
+| 模板封装 | 20 | 见下方 `4.12` |
+| 用量看板 | 2 | 见下方 `4.13` |
 
 ### 4.1 身份（42 个）
 
@@ -3115,7 +3119,95 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
 
-### 4.10 模型驱动（12 个）
+### 4.10 LLM 配置（5 个）
+
+| 方法 | 路径 | 说明 | 鉴权 |
+|---|---|---|---|
+| `GET` | `/api/v1/llm-config/providers` | 列出 LLM 供应商配置（密钥脱敏） | 🔒 |
+| `PUT` | `/api/v1/llm-config/providers` | 新增或更新 LLM 供应商，下一次请求即生效 | 🔒 |
+| `DELETE` | `/api/v1/llm-config/providers/{name}` | 删除 LLM 供应商配置 | 🔒 |
+| `POST` | `/api/v1/llm-config/providers/{name}/models:fetch` | 从供应商网关拉取真实模型 id | 🔒 |
+| `POST` | `/api/v1/llm-config/providers/{name}/test` | 对供应商发一次真实最小请求 | 🔒 |
+
+#### `GET /api/v1/llm-config/providers`
+
+**列出 LLM 供应商配置（密钥脱敏）**
+
+**响应** `ApiResponse<LlmProvidersOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `providers` | `LlmProviderOut[]` | 否 |  |
+
+#### `PUT /api/v1/llm-config/providers`
+
+**新增或更新 LLM 供应商，下一次请求即生效**
+
+**请求体** `SaveProviderIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `baseUrl` | `string` | 是 |  |
+| `apiKey` | `string` | 否 |  |
+| `models` | `LlmModelOut[]` | 否 |  |
+
+**响应** `ApiResponse<LlmProviderOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `baseUrl` | `string` | 是 |  |
+| `apiKeyConfigured` | `boolean` | 否 |  |
+| `apiKeyMasked` | `string` | 否 |  |
+| `apiKeyFingerprint` | `string` | 否 |  |
+| `models` | `LlmModelOut[]` | 否 |  |
+| `source` | `string` | 否 |  |
+
+#### `DELETE /api/v1/llm-config/providers/{name}`
+
+**删除 LLM 供应商配置**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `name` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<LlmProvidersOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `providers` | `LlmProviderOut[]` | 否 |  |
+
+#### `POST /api/v1/llm-config/providers/{name}/models:fetch`
+
+**从供应商网关拉取真实模型 id**
+
+GET {base_url}/models，返回上游 id 列表。只读外网请求。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `name` | path | `string` | 是 |  |
+
+**响应** `ApiResponse<FetchModelsOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `models` | `UpstreamModelOut[]` | 否 |  |
+
+#### `POST /api/v1/llm-config/providers/{name}/test`
+
+**对供应商发一次真实最小请求**
+
+连通验收：验的是文本真的能取回来，不是 HTTP 200。
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `name` | path | `string` | 是 |  |
+| `model_id` | query | `string` | 否 | 平台模型 id，留空取该供应商第一个 |
+
+**响应** `ApiResponse<Record<string, unknown>>`（前端取 `res.data`）
+
+### 4.11 模型驱动（12 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3352,7 +3444,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.11 模板封装（20 个）
+### 4.12 模板封装（20 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3946,7 +4038,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `demoAssetId` | `string \| null` | 否 |  |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
-### 4.12 用量看板（2 个）
+### 4.13 用量看板（2 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -4320,6 +4412,12 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `label` | `string` | 是 |  |
 | `columns` | `string[]` | 是 | CSV 列，同时也是列顺序 |
 | `permission` | `string \| null` | 否 | 导出该源额外需要的权限码；null 表示只需 export:read |
+
+### `FetchModelsOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `models` | `UpstreamModelOut[]` | 否 |  |
 
 ### `FromGenerationIn`
 
@@ -4887,6 +4985,31 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 取值：`personal`、`group`、`team`
 
+### `LlmModelOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
+| `upstream` | `string` | 是 |  |
+
+### `LlmProviderOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `baseUrl` | `string` | 是 |  |
+| `apiKeyConfigured` | `boolean` | 否 |  |
+| `apiKeyMasked` | `string` | 否 |  |
+| `apiKeyFingerprint` | `string` | 否 |  |
+| `models` | `LlmModelOut[]` | 否 |  |
+| `source` | `string` | 否 |  |
+
+### `LlmProvidersOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `providers` | `LlmProviderOut[]` | 否 |  |
+
 ### `LoginEventListOut`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -5264,6 +5387,15 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `ok` | `boolean` | 是 |  |
 | `detail` | `string` | 是 |  |
 | `required` | `boolean` | 否 |  |
+
+### `SaveProviderIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `baseUrl` | `string` | 是 |  |
+| `apiKey` | `string` | 否 |  |
+| `models` | `LlmModelOut[]` | 否 |  |
 
 ### `SessionOut`
 
@@ -5877,6 +6009,12 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 ### `UploadKind`（枚举）
 
 取值：`image`、`audio`、`video`、`text`
+
+### `UpstreamModelOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `id` | `string` | 是 |  |
 
 ### `UsageBreakdownItemOut`
 

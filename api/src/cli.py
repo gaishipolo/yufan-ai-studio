@@ -223,6 +223,38 @@ def _cmd_models(_: argparse.Namespace) -> None:
         )
 
 
+def _cmd_llm_check(args: argparse.Namespace) -> None:
+    """部署验收：对 OpenAI 兼容端点发一次真实最小请求。
+
+    不放进 doctor —— doctor 明确「不发真实请求、只报配置」（见
+    `_check_http_channel` 的 docstring），在没外网的机器上也要能跑。
+    连通性是部署验收，由人在这里显式触发。
+    """
+    import asyncio
+
+    from core.exceptions import AppError
+    from infra.llm import LlmMessage, LlmRequest, OpenAICompatibleClient
+
+    request = LlmRequest(
+        model=args.model or "llm/default",
+        messages=(LlmMessage("user", "只回复 OK 两个字，用于连通性检查"),),
+        # 不给 max_tokens：M3.1 这类模型先烧 reasoning token，给 8 个会被吃光，
+        # 用户看到「连通正常但回复是空的」，误以为文本解析坏了。
+        # 连通检查要验的是「文本真的能取回来」，不是「HTTP 200」。
+    )
+    try:
+        result = asyncio.run(OpenAICompatibleClient().complete(request))
+    except AppError as exc:
+        print(f"LLM 连通失败：{exc.message}", file=sys.stderr)
+        raise SystemExit(1) from exc
+    print(f"LLM 连通正常：{result.model} · {result.finish_reason}")
+    print(f"  回复：{result.text[:80]}")
+    print(
+        f"  usage：prompt {result.usage.prompt_tokens}"
+        f" / completion {result.usage.completion_tokens}"
+    )
+
+
 def _cmd_export_openapi(args: argparse.Namespace) -> None:
     """把 OpenAPI 固化成给前端用的四份文件（json / md / ts / permissions）。"""
     from openapi_export import DEFAULT_JSON, DEFAULT_MD, DEFAULT_PERMS, DEFAULT_TS, export
@@ -816,6 +848,15 @@ def main(argv: list[str] | None = None) -> int:
 
     p_models = sub.add_parser("models", help="列出模型目录")
     p_models.set_defaults(func=_cmd_models)
+
+    # 部署验收：真实发一条最小请求。不放进 doctor（它不发外网请求）。
+    p_llm_check = sub.add_parser("llm-check", help="检查 OpenAI 兼容 LLM 端点连通性")
+    p_llm_check.add_argument(
+        "--model",
+        default="",
+        help="平台模型 id（默认 llm/default，即运维页配的 LLM_MODEL）",
+    )
+    p_llm_check.set_defaults(func=_cmd_llm_check)
 
     p_export = sub.add_parser(
         "export-openapi", help="导出接口契约（docs/openapi.json + docs/API.md + 前端 schema.ts）"

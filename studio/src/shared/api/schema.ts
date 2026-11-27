@@ -403,6 +403,11 @@ export interface ExportSourceOut {
   permission?: string | null;
 }
 
+/** FetchModelsOut */
+export interface FetchModelsOut {
+  models?: UpstreamModelOut[];
+}
+
 /** 生成结果入库（也经 `library-ingest` 注入口供后端模块调用）。
 
 字节来源三选一，**必须能物化**：`storageKey`（主对象存储）、
@@ -959,6 +964,28 @@ export interface LibraryTagStatOut {
   createdAt: string;
 }
 
+/** LlmModelOut */
+export interface LlmModelOut {
+  id: string;
+  upstream: string;
+}
+
+/** LlmProviderOut */
+export interface LlmProviderOut {
+  name: string;
+  baseUrl: string;
+  apiKeyConfigured?: boolean;
+  apiKeyMasked?: string;
+  apiKeyFingerprint?: string;
+  models?: LlmModelOut[];
+  source?: string;
+}
+
+/** LlmProvidersOut */
+export interface LlmProvidersOut {
+  providers?: LlmProviderOut[];
+}
+
 /** LoginEventListOut */
 export interface LoginEventListOut {
   /** 按时间倒序 */
@@ -1344,6 +1371,14 @@ export interface RuntimeCheckOut {
   ok: boolean;
   detail: string;
   required?: boolean;
+}
+
+/** SaveProviderIn */
+export interface SaveProviderIn {
+  name: string;
+  baseUrl: string;
+  apiKey?: string;
+  models?: LlmModelOut[];
 }
 
 /** 一条登录会话。前端「我的登录设备」列表用它。 */
@@ -1890,6 +1925,11 @@ export interface UpdateTaskIn {
   title?: string | null;
   /** 收藏状态 */
   favorited?: boolean | null;
+}
+
+/** UpstreamModelOut */
+export interface UpstreamModelOut {
+  id: string;
 }
 
 /** 构成表的一行。 */
@@ -2450,6 +2490,16 @@ export interface EndpointData {
   "DELETE /api/v1/library/trash/{asset_id}": null;
   /** 从回收站恢复（强制回到个人库，不恢复共享） */
   "POST /api/v1/library/trash/{asset_id}/restore": LibraryAssetDetailOut;
+  /** 列出 LLM 供应商配置（密钥脱敏） */
+  "GET /api/v1/llm-config/providers": LlmProvidersOut;
+  /** 新增或更新 LLM 供应商，下一次请求即生效 */
+  "PUT /api/v1/llm-config/providers": LlmProviderOut;
+  /** 删除 LLM 供应商配置 */
+  "DELETE /api/v1/llm-config/providers/{name}": LlmProvidersOut;
+  /** 从供应商网关拉取真实模型 id */
+  "POST /api/v1/llm-config/providers/{name}/models:fetch": FetchModelsOut;
+  /** 对供应商发一次真实最小请求 */
+  "POST /api/v1/llm-config/providers/{name}/test": Record<string, unknown>;
   /** 运行时配置清单（密钥脱敏） */
   "GET /api/v1/model-driver/config": ConfigListOut;
   /** 修改运行时配置，下一次请求即生效 */

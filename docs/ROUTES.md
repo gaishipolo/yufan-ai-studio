@@ -2,7 +2,7 @@
 
 # 前端路由清单
 
-共 12 条路由，来自 11 个模块。
+共 13 条路由，来自 12 个模块。
 
 > 路由由 `src/app/registry/index.ts` 的 `import.meta.glob` 自动发现；
 > 新增模块只需写 `module.ts`，本文件由 `npm run gen:routes` 重新生成。
@@ -11,6 +11,7 @@
 | --- | --- | --- | --- | --- |
 | `/image` | image | shell | `page:image` | 创作 / 生图 |
 | `/library` | library | shell | `page:library` | 资产与数据 / 资产库 |
+| `/llm` | llm | shell | `page:llm` | 运维 / LLM 配置 |
 | `/login` | auth | bare | — | — |
 | `/ops` | ops | shell | `page:ops` | 运维 / 运维 |
 | `/shots` | shots | shell | `page:shots` | 模板与镜头 / 镜头库 |
@@ -40,6 +41,7 @@
   - 用户与权限 → `/system/user-access`
 - **运维**（order 10）
   - 运维 → `/ops`
+  - LLM 配置 → `/llm`
 
 ## 模块清单
 
@@ -48,6 +50,7 @@
 | auth | 1 | 0 | 1 |
 | image | 1 | 1 | 0 |
 | library | 1 | 1 | 0 |
+| llm | 1 | 1 | 0 |
 | ops | 1 | 1 | 0 |
 | shots | 1 | 1 | 0 |
 | storyboards | 1 | 1 | 0 |

@@ -2,7 +2,7 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 148 条（来自 `schema.ts` 的 `EndpointData`），
+后端端点 153 条（来自 `schema.ts` 的 `EndpointData`），
 已注册 mock 路由 80 条（来自 `mockRouteTable()`），
 按「同方法 + 正则能匹配」判定疑似覆盖 83 条。
 
@@ -14,13 +14,14 @@
 
 ## 模块级覆盖率
 
-**4 / 11** 个模块带 `mock.ts`。
+**4 / 12** 个模块带 `mock.ts`。
 
 | 模块 | mock.ts |
 | --- | --- |
 | `auth` | ✓ |
 | `image` | — |
 | `library` | ✓ |
+| `llm` | — |
 | `ops` | — |
 | `shots` | — |
 | `storyboards` | — |
@@ -69,6 +70,11 @@
 | PATCH | `/api/v1/library/packs/{}` |
 | PATCH | `/api/v1/library/tags/{}/parent` |
 | POST | `/api/v1/library/text-assets` |
+| GET | `/api/v1/llm-config/providers` |
+| PUT | `/api/v1/llm-config/providers` |
+| DELETE | `/api/v1/llm-config/providers/{}` |
+| POST | `/api/v1/llm-config/providers/{}/models:fetch` |
+| POST | `/api/v1/llm-config/providers/{}/test` |
 | GET | `/api/v1/model-driver/config` |
 | PUT | `/api/v1/model-driver/config` |
 | GET | `/api/v1/model-driver/drivers` |
@@ -103,4 +109,4 @@
 | GET | `/api/v1/template-specs/trash` |
 | POST | `/api/v1/template-specs/validate` |
 
-（未命中 65 条；已命中 83 条不在本表重复列出。）
+（未命中 70 条；已命中 83 条不在本表重复列出。）

@@ -30,43 +30,11 @@ external_id = None, submit_attempts = 1
 
 异常**类型**必须只有一处判定（否则必然漂移）；但文案带各驱动的上下文
 （百炼是「北京地域」、agnes_video 是「与生图共用」），强行统一会丢信息。
-所以：类型由本模块定，文案由驱动通过 `note` 补充。
+所以：类型由 `infra.credentials` 定，文案由驱动通过 `note` 补充。
+本文件现为兼容层：实现已下沉 infra（LLM 客户端也要用这条纪律，而 infra
+不能反向依赖业务模块），原 import 路径保留给现有驱动。
 """
 
-from __future__ import annotations
+from infra.credentials import require_api_key
 
-from core.exceptions import BadRequest
-
-
-def require_api_key(
-    value: str | None,
-    *,
-    vendor: str,
-    env_name: str,
-    note: str = "",
-) -> str:
-    """取供应商密钥；没配就抛 `BadRequest`（4xx）。
-
-    Args:
-        value: 配置里的密钥原值（可能是空串 / 纯空格 / None）
-        vendor: 供应商名，用于文案（"Agnes"）
-        env_name: 环境变量名，用于文案（"AGNES_API_KEY"）
-        note: 补充说明，可选（"北京地域" / "与生图共用"）
-
-    Returns:
-        去掉首尾空白的密钥（调用方拿到的就是可直接放进请求头的值）
-
-    Raises:
-        BadRequest: 密钥为空 —— **不抛 5xx**，否则会被框架改写成
-            「可能已受理」的错误文案（2026-11-23 事故）。
-    """
-    key = (value or "").strip()
-    if key:
-        return key
-    detail = f"{vendor} 未配置：请设置 {env_name}"
-    if note:
-        detail += f"（{note}）"
-    raise BadRequest(detail)
-
-
-__all__ = ["require_api_key"]
+__all__ = ("require_api_key",)
