@@ -19,24 +19,8 @@ import type { MentionCandidate, MentionTextareaHandle } from './MentionTextarea'
 import {parseAnchors} from './defaultText';
 import { CursorMenu, CursorMenuItem, CursorMenuGroup, type CaretPoint } from './CursorMenu';
 import { caretPointOf, selectionEndPoint } from './caretPoint';
-
-/**
- * 正文里的素材占位。**两边允许空格**（`{{ slot:key }}`）：后端与 `specDraft`
- * 都是容空格版本，这里写成严格版就会漏掉老草稿里的带空格引用。
- */
-const TOKEN_RE =
-  /\{\{\s*(?:slot:[a-z][a-z0-9_]{0,39}|Mixed\s+\d+)(?:\*|\.\d+)?\s*\}\}/g;
-
-/**
- * 正文里应该画成**胶囊**的 token 有几个。
- *
- * 锚点段（默认描述）里的引用**也画成胶囊**，所以这里要一并算上 ——
- * 两边口径一致才不会每次都重绘（重绘会把正在进行的鼠标拖选打断，
- * 选区塌缩 → 框选菜单不出现 → 「取消默认描述」点不到）。
- */
-export function expectedCapsuleCount(value: string): number {
-  return (value.match(TOKEN_RE) ?? []).length;
-}
+/* 正则与计数拆到 capsuleCount.ts：fast-refresh 要求组件文件只导出组件。 */
+import { expectedCapsuleCount, TOKEN_RE } from './capsuleCount';
 
 /** 去掉空白后的 token：正文里的写法可能带空格，候选里的是规范形式。 */
 const normalizeToken = (raw: string) => raw.replace(/\s+/g, '');
@@ -625,11 +609,13 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       if (!root || composing.current) return;
 
       const painted = root.querySelectorAll('[data-token]').length;
-      /* expected 只数**锚点段外**的 token。
-         锚点段（默认描述）里的 token 渲染成**纯文字**，不是胶囊 —— 把它数进去，
-         两边永远不等 → 每次都重绘 → 正在进行的鼠标拖选被 DOM 重建打断
-         （选区塌缩 → 框选菜单不弹 → 「取消默认描述」永远点不到）。
-         症状正是「默认描述里含插槽引用时，那段框不出来」。 */
+      /* expected 数**全部** token：锚点段（默认描述）里的引用现在也画成胶囊
+         （段内的下划线 + 胶囊的边框同时在，两个特征一眼可分），所以段内段外
+         都得数。两边必须一致才不会每次都重绘 —— 重绘会打断正在进行的鼠标
+         拖选（选区塌缩 → 框选菜单不弹）。
+
+         曾经段内引用画成纯文字、这里也就只数段外；改成段内也画胶囊后，
+         计数没跟着改曾导致「默认描述里含插槽引用时那段框不出来」。 */
       const expected = expectedCapsuleCount(value);
       if (serialize(root) === value && painted === expected) return;
 

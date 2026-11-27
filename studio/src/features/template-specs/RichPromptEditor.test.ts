@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { expectedCapsuleCount } from './RichPromptEditor';
+import { expectedCapsuleCount } from './capsuleCount';
 
 /**
  * 正文里该画成**胶囊**的 token 数量 —— 重绘判据的一半。
