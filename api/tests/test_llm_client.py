@@ -189,6 +189,132 @@ async def test_上游408保留原始状态码供降级判定() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [("model", "x"), ("messages", []), ("stream", True)],
+)
+async def test_params不能覆盖结构字段(key: str, value: object) -> None:
+    client, seen = client_recording(lambda _: ok_response())
+    with pytest.raises(BadRequest, match=key):
+        await client.complete(
+            LlmRequest(
+                model="llm/qwen-plus",
+                messages=(LlmMessage("user", "hi"),),
+                params={key: value},
+            )
+        )
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_200错误体不再当成功空文本() -> None:
+    client, _ = client_recording(
+        lambda _: httpx.Response(200, json={"error": {"message": "quota exhausted"}})
+    )
+    with pytest.raises(UpstreamError, match="quota exhausted") as caught:
+        await client.complete(
+            LlmRequest(model="llm/qwen-plus", messages=(LlmMessage("user", "hi"),))
+        )
+    assert caught.value.upstream_status == 200
+
+
+@pytest.mark.asyncio
+async def test_200缺少choices报上游错误() -> None:
+    client, _ = client_recording(lambda _: httpx.Response(200, json={"choices": []}))
+    with pytest.raises(UpstreamError, match="缺少 choices"):
+        await client.complete(
+            LlmRequest(model="llm/qwen-plus", messages=(LlmMessage("user", "hi"),))
+        )
+
+
+@pytest.mark.asyncio
+async def test_content片段数组只取文本片段() -> None:
+    client, _ = client_recording(
+        lambda _: httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {
+                        "message": {
+                            "content": [
+                                {"type": "text", "text": "你"},
+                                {"type": "image_url", "image_url": {"url": "x"}},
+                                {"type": "text", "text": "好"},
+                            ]
+                        },
+                        "finish_reason": "stop",
+                    }
+                ]
+            },
+        )
+    )
+    response = await client.complete(
+        LlmRequest(model="llm/qwen-plus", messages=(LlmMessage("user", "hi"),))
+    )
+    assert response.text == "你好"
+
+
+@pytest.mark.asyncio
+async def test_content结构异常报上游错误() -> None:
+    client, _ = client_recording(
+        lambda _: httpx.Response(
+            200,
+            json={
+                "choices": [
+                    {"message": {"content": {"bad": "shape"}}, "finish_reason": "stop"}
+                ]
+            },
+        )
+    )
+    with pytest.raises(UpstreamError, match="content"):
+        await client.complete(
+            LlmRequest(model="llm/qwen-plus", messages=(LlmMessage("user", "hi"),))
+        )
+
+
+@pytest.mark.asyncio
+async def test_上游错误正文里的密钥被脱敏() -> None:
+    key = "sk-secret-abcdef123456"
+    configured = LLMSettings(base_url="https://x.example/v1", api_key=key)
+    client = OpenAICompatibleClient(
+        configured,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                401, json={"error": {"message": f"Incorrect API key provided: {key}"}}
+            )
+        ),
+    )
+    with pytest.raises(Unauthorized) as caught:
+        await client.complete(
+            LlmRequest(model="llm/qwen-plus", messages=(LlmMessage("user", "hi"),))
+        )
+    assert key not in caught.value.message
+    assert key not in str(caught.value)
+    assert key not in str(caught.value.args)
+    assert "***" in caught.value.message
+
+
+@pytest.mark.asyncio
+async def test_200错误体里的密钥也被脱敏() -> None:
+    key = "sk-secret-abcdef123456"
+    configured = LLMSettings(base_url="https://x.example/v1", api_key=key)
+    client = OpenAICompatibleClient(
+        configured,
+        transport=httpx.MockTransport(
+            lambda _: httpx.Response(
+                200, json={"error": {"message": f"bad key {key}"}}
+            )
+        ),
+    )
+    with pytest.raises(UpstreamError, match="上游响应异常") as caught:
+        await client.complete(
+            LlmRequest(model="llm/qwen-plus", messages=(LlmMessage("user", "hi"),))
+        )
+    assert key not in caught.value.message
+    assert "***" in caught.value.message
+
+
+@pytest.mark.asyncio
 async def test_tool_calls_解析但不执行() -> None:
     def handler(_: httpx.Request) -> httpx.Response:
         return httpx.Response(

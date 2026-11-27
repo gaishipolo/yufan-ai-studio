@@ -18,6 +18,7 @@
 | 2026-11-26 | 实施前复核：`LLMSettings` 改成 `DriverSettings` 子类（§5.2）；`get_http()` 不复用、LLM 自建 client（§2.2/§7）；`LlmMessage` 补 `tool_call_id`、`params` 改 `default_factory`（§4） | §2.2、§4、§5.2、§7 |
 | 2026-11-27 | 审查修断链：多供应商页的 `default` 直接写 `LLM_*`（与运行时 LLMSettings 同前缀），不再"迁移"到 `LLM_DEFAULT_*`；`LLM_MODELS` 映射表由运行时解析 | §5.2、§8 |
 | 2026-11-27 | 多供应商运行时闭环：平台 id 带供应商前缀（default 用 `llm/*`，具名用 `<name>/*`），按前缀路由到 `LLM_<NAME>_*`；新增全局 `LLM_MODEL_CHAIN`（首项默认，400/422 与超时不降级），配置页可排序 | §5.2、§5.3、§5.4、§7 |
+| 2026-11-27 | 请求/响应硬化：保留键不可从 `params` 覆盖；200 假成功/缺 choices 报 `UpstreamError`；content 片段只取文本；上游错误正文脱敏密钥 | §4.1 |
 
 ---
 
@@ -178,6 +179,13 @@ class LlmResponse:
 **透传，不做白名单。** 与生图的 `params` 透传一致（`GenerationRequest.params` 是自由字典）。理由：将来「起草文案」需要低温、需要限制长度，硬编码参数表反而是债。
 
 代价：调用方能传出上游不认的参数，上游会 400。这与仓库现有做法一致，**有意接受**。
+
+### 4.1 请求/响应硬化（2026-11-27）
+
+- **保留键**：`params` 不能包含 `model` / `messages` / `stream`。前两个由 `LlmRequest` 字段决定，允许覆盖等于绕过平台 id 翻译与 G1；`stream` V1 不支持。命中即 400，不发请求。
+- **假成功**：HTTP 200 但带 `error`、缺少 `choices`、`choices[0].message` 不是对象时，按 `UpstreamError` 抛出（`upstream_status=200`），不再返回空文本；默认模型链可据此降级。
+- **content 形状**：字符串原样返回；多模态片段数组只拼接 `text` 片段；其它结构报 `UpstreamError`，不把 Python repr 透给业务。
+- **密钥脱敏**：上游错误正文若回显 `LLM_API_KEY` / `LLM_<NAME>_API_KEY`，构造异常前替换为 `***`，`message` 与 `args` 都不带明文。
 
 ---
 

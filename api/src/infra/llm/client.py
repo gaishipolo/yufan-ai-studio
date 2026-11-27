@@ -11,6 +11,8 @@
 
 from __future__ import annotations
 
+import json
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
 
@@ -26,7 +28,7 @@ from core.exceptions import (
 )
 from core.logging import get_logger
 from infra.credentials import require_api_key
-from infra.http_errors import classify_http_error
+from infra.http_errors import classify_http_error, extract_detail
 from infra.llm.base import (
     LlmMessage,
     LlmRequest,
@@ -47,6 +49,9 @@ logger = get_logger(__name__)
 #: 默认模型 id：表示「用页面配置的优先链」。
 DEFAULT_MODEL = "llm/default"
 
+#: 结构由 LlmRequest 字段决定的参数，不允许从 params 再传一遍把它覆盖掉。
+_RESERVED_PARAMS = frozenset({"model", "messages", "stream"})
+
 #: 状态映射是 LLM 自己声明的数据（不抹平各家的业务码）。
 #: `classify_http_error` 默认 4xx→BadRequest / 5xx→UpstreamError，
 #: 401/403/429 要显式给表才落到正确异常类。
@@ -55,6 +60,18 @@ _STATUS_MAP: dict[int, type[AppError]] = {
     403: Forbidden,
     429: RateLimited,
 }
+
+
+def _checked_params(params: Mapping[str, Any]) -> dict[str, Any]:
+    """params 只透传业务参数；结构字段不能被它覆盖。"""
+    reserved = sorted(_RESERVED_PARAMS.intersection(params))
+    if reserved:
+        raise BadRequest(
+            "LLM params 不能包含保留键："
+            + "、".join(reserved)
+            + "（model/messages 由请求字段决定；V1 不支持 stream）"
+        )
+    return dict(params)
 
 
 class OpenAICompatibleClient:
@@ -110,6 +127,52 @@ class OpenAICompatibleClient:
             wire["tool_call_id"] = message.tool_call_id
         return wire
 
+    def _redact(self, text: str) -> str:
+        """上游错误正文可能回显 key；出站前必须抹掉。"""
+        key = self.settings.bearer_token()
+        return text.replace(key, "***") if key else text
+
+    def _bad_response(self, detail: str) -> UpstreamError:
+        error = UpstreamError(f"{self.vendor} 上游响应异常：{detail}")
+        # 200 但结构不对：保留原始状态供降级链判断（不是 408，可降级）。
+        error.upstream_status = 200
+        return error
+
+    @staticmethod
+    def _body_error_detail(body: dict[str, Any]) -> str:
+        error = body.get("error")
+        if isinstance(error, str) and error.strip():
+            return error.strip()
+        if isinstance(error, dict):
+            message = error.get("message")
+            if isinstance(message, str) and message.strip():
+                return message.strip()
+        try:
+            text = json.dumps(error, ensure_ascii=False)
+        except (TypeError, ValueError):
+            text = str(error)
+        return text.strip()[:300] or "（上游没有给错误正文）"
+
+    def _content_text(self, content: Any) -> str:
+        """把 content 收敛为文本。
+
+        OpenAI 兼容端点的 content 可能是字符串，也可能是多模态片段数组；
+        后者只取 text 片段。其它结构不能 str() 成 Python repr 透出去。
+        """
+        if content is None:
+            return ""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts: list[str] = []
+            for item in content:
+                if isinstance(item, str):
+                    parts.append(item)
+                elif isinstance(item, dict) and isinstance(item.get("text"), str):
+                    parts.append(item["text"])
+            return "".join(parts)
+        raise self._bad_response("message.content 既不是字符串也不是片段数组")
+
     @staticmethod
     def _parse_usage(body: dict[str, Any]) -> LlmUsage:
         raw = body.get("usage")
@@ -147,14 +210,23 @@ class OpenAICompatibleClient:
 
     def _parse_response(self, body: dict[str, Any]) -> LlmResponse:
         choices = body.get("choices")
-        first = choices[0] if isinstance(choices, list) and choices else {}
-        message = first.get("message") if isinstance(first, dict) else {}
+        if not isinstance(choices, list) or not choices:
+            # 200 + {"error": ...} 是网关常见的"假成功"；当成功空文本会把
+            # 上游故障伪装成"模型什么都没说"。
+            if body.get("error") is not None:
+                detail = self._redact(self._body_error_detail(body))
+                raise self._bad_response(f"HTTP 200 里返回了错误：{detail}")
+            raise self._bad_response("缺少 choices")
+        first = choices[0]
+        if not isinstance(first, dict):
+            raise self._bad_response("choices[0] 不是对象")
+        message = first.get("message")
         if not isinstance(message, dict):
-            message = {}
+            raise self._bad_response("choices[0].message 不是对象")
         return LlmResponse(
-            text=str(message.get("content") or ""),
+            text=self._content_text(message.get("content")),
             model=str(body.get("model") or ""),
-            finish_reason=str(first.get("finish_reason") or "") if isinstance(first, dict) else "",
+            finish_reason=str(first.get("finish_reason") or ""),
             usage=self._parse_usage(body),
             tool_calls=self._parse_tool_calls(message),
             raw_id=str(body.get("id") or ""),
@@ -172,8 +244,9 @@ class OpenAICompatibleClient:
             # G1：messages 原样按序发出去，role/content/name/tool_call_id 都不丢。
             "messages": [self._wire_message(m) for m in request.messages],
         }
-        # params 透传（temperature / max_tokens / tools / ...），与生图一致。
-        payload.update(dict(request.params))
+        # params 透传（temperature / max_tokens / tools / ...），与生图一致；
+# 但 model/messages/stream 是结构字段，不允许从 params 覆盖。
+        payload.update(_checked_params(request.params))
 
         async with self._client() as client:
             # 不重试：chat 是 POST，重复提交等于重复计费（infra/http.py 同一纪律）。
@@ -183,8 +256,13 @@ class OpenAICompatibleClient:
                 headers=self._headers(),
             )
             if response.status_code >= 400:
+                # 上游错误正文可能回显 key；先脱敏再构造异常，args/message 都不带明文。
+                detail = self._redact(extract_detail(response))
                 raise classify_http_error(
-                    response, vendor=self.vendor, status_map=_STATUS_MAP
+                    response,
+                    vendor=self.vendor,
+                    status_map=_STATUS_MAP,
+                    detail=detail,
                 )
             try:
                 body = response.json()
