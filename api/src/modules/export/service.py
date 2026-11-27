@@ -29,9 +29,10 @@
 from __future__ import annotations
 
 from datetime import timedelta
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import and_, func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core import audit
@@ -299,7 +300,7 @@ class ExportService:
             )
         )
         result = await self.session.execute(stmt)
-        count = result.rowcount
+        count = cast(CursorResult[Any], result).rowcount or 0
         if count > 0:
             await self.session.commit()
             logger.warning("有 %d 条导出超时被置失败", count)

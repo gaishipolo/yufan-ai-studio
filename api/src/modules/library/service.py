@@ -28,9 +28,10 @@ import tempfile
 from collections.abc import AsyncIterator, Mapping, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import delete, func, or_, select, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.elements import ColumnElement
@@ -697,7 +698,7 @@ class LibraryService:
         result = await self.session.execute(
             update(LibraryAsset).where(*conditions).values(**values)
         )
-        if result.rowcount == 0:
+        if (cast(CursorResult[Any], result).rowcount or 0) == 0:
             await self.session.refresh(row)
             raise StateChanged(
                 "资产已被修改，请刷新后重试",
@@ -752,7 +753,7 @@ class LibraryService:
                 state_version=LibraryAsset.state_version + 1,
             )
         )
-        if result.rowcount == 0:
+        if (cast(CursorResult[Any], result).rowcount or 0) == 0:
             await self.session.refresh(row)
             raise StateChanged(
                 "资产已被修改，请刷新后重试",

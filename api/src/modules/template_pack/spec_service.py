@@ -21,9 +21,10 @@ import hashlib
 import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
-from typing import Any
+from typing import Any, cast
 
 from sqlalchemy import ColumnElement, and_, false, func, select, true, update
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from core.context import CurrentUser
@@ -746,7 +747,7 @@ async def save(
                 revision=SpecRow.revision + 1,
             )
         )
-        if result.rowcount == 0:
+        if (cast(CursorResult[Any], result).rowcount or 0) == 0:
             current = await session.scalar(
                 select(SpecRow.revision).where(SpecRow.id == head.id)
             )
@@ -835,7 +836,7 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         )
         .values(current_version=version)
     )
-    if claimed.rowcount == 0:
+    if (cast(CursorResult[Any], claimed).rowcount or 0) == 0:
         await session.refresh(head)
         latest_now = await _latest(session, head)
         if (
