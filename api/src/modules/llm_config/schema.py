@@ -11,6 +11,7 @@ __all__ = [
     "LlmModelOut",
     "LlmProviderOut",
     "LlmProvidersOut",
+    "ModelChainIn",
     "SaveProviderIn",
     "UpstreamModelOut",
 ]
@@ -33,6 +34,8 @@ class LlmProviderOut(CamelModel):
 
 class LlmProvidersOut(CamelModel):
     providers: list[LlmProviderOut] = Field(default_factory=list)
+    # 全局默认模型/降级链；第一项即默认模型。
+    model_chain: list[str] = Field(default_factory=list)
 
 
 class SaveProviderIn(CamelModel):
@@ -41,6 +44,10 @@ class SaveProviderIn(CamelModel):
     # 空串 = 不改已有密钥（与 runtime_config 同口径）
     api_key: str = ""
     models: list[LlmModelOut] = Field(default_factory=list)
+
+
+class ModelChainIn(CamelModel):
+    models: list[str] = Field(default_factory=list)
 
 
 class UpstreamModelOut(CamelModel):

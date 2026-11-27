@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, Trash2, Zap } from 'lucide-react';
+import { Download, Plus, Trash2, Zap, ChevronUp, ChevronDown } from 'lucide-react';
 import { llmConfigApi, type LlmModelOut, type LlmProviderOut } from '@/entities/llm/api/llm-config.api';
 import {
   Button,
@@ -39,6 +39,130 @@ const emptyDraft = (): Draft => ({
   models: [],
 });
 
+interface ChainModel {
+  id: string;
+  provider: string;
+  upstream: string;
+}
+
+function ModelChainPanel({
+  models,
+  chain,
+  canWrite,
+  saving,
+  onMove,
+  onRemove,
+  onAdd,
+  onSave,
+}: {
+  models: ChainModel[];
+  chain: string[];
+  canWrite: boolean;
+  saving: boolean;
+  onMove: (index: number, delta: number) => void;
+  onRemove: (id: string) => void;
+  onAdd: (id: string) => void;
+  onSave: () => void;
+}) {
+  const byId = new Map(models.map((model) => [model.id, model]));
+  const available = models.filter((model) => !chain.includes(model.id));
+
+  return (
+    <section
+      className="rounded-card border border-line-soft bg-panel p-4"
+      aria-label="默认模型与降级顺序"
+    >
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-body font-medium text-ink">默认模型与降级顺序</h2>
+          <p className="mt-1 text-meta text-ink-soft">
+            第一项是默认模型；调用失败时按顺序尝试后面的模型。
+          </p>
+          <p className="mt-0.5 text-meta text-ink-mute">
+            只有 429 / 401 / 403 / 连接失败 / 5xx 会降级；400/422 与超时不降级
+            —— 超时可能已被上游受理，换模型会重复计费。
+          </p>
+        </div>
+        {canWrite && (
+          <Button size="sm" onClick={onSave} disabled={saving}>
+            {saving ? '保存中…' : '保存降级顺序'}
+          </Button>
+        )}
+      </div>
+
+      {chain.length === 0 ? (
+        <p className="mt-3 text-meta text-ink-mute">
+          未配置时 <code>llm/default</code> 使用 default 供应商的 LLM_MODEL
+          （或它的第一个模型映射），不做降级。
+        </p>
+      ) : (
+        <ol className="mt-3 flex flex-col gap-1.5">
+          {chain.map((id, index) => {
+            const model = byId.get(id);
+            return (
+              <li
+                key={id}
+                className="flex items-center gap-2 rounded-md border border-line-soft bg-panel-soft px-2 py-1.5 text-meta"
+              >
+                <span className="w-14 shrink-0 text-ink-mute">
+                  {index === 0 ? '默认' : `降级 ${index}`}
+                </span>
+                <code className="text-ink">{id}</code>
+                {model ? (
+                  <span className="text-ink-soft">{model.upstream}</span>
+                ) : (
+                  <span className="text-danger-deep">模型已不存在</span>
+                )}
+                {canWrite && (
+                  <span className="ml-auto flex items-center gap-1">
+                    <IconButton
+                      icon={<ChevronUp size={14} />}
+                      label={`上移 ${id}`}
+                      disabled={index === 0}
+                      onClick={() => onMove(index, -1)}
+                    />
+                    <IconButton
+                      icon={<ChevronDown size={14} />}
+                      label={`下移 ${id}`}
+                      disabled={index === chain.length - 1}
+                      onClick={() => onMove(index, 1)}
+                    />
+                    <IconButton
+                      icon={<Trash2 size={14} />}
+                      label={`从降级链移除 ${id}`}
+                      onClick={() => onRemove(id)}
+                    />
+                  </span>
+                )}
+              </li>
+            );
+          })}
+        </ol>
+      )}
+
+      {canWrite && available.length > 0 && (
+        <div className="mt-3">
+          <p className="text-meta text-ink-soft">加进链里：</p>
+          <ul className="mt-1 flex flex-wrap gap-1.5">
+            {available.map((model) => (
+              <li key={model.id}>
+                <button
+                  type="button"
+                  onClick={() => onAdd(model.id)}
+                  title={`把 ${model.id} 加进降级顺序`}
+                  className="rounded-md border border-line-soft bg-panel px-2 py-1 text-meta text-ink-soft transition-colors hover:border-primary-line hover:text-primary"
+                >
+                  + {model.id}
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function ProviderEditor({
   open,
   initial,
@@ -70,18 +194,21 @@ function ProviderEditor({
       ...prev,
       models: prev.models.map((m, i) => (i === index ? { ...m, ...patch } : m)),
     }));
-  const addCandidate = (upstream: string) =>
-    setDraft((prev) =>
+  const addCandidate = (upstream: string) => {
+    // 平台 id 带供应商前缀：default 用 llm/*，具名供应商用 <name>/*。
+    const prefix = initial.name && initial.name !== 'default' ? initial.name : 'llm';
+    return setDraft((prev) =>
       prev.models.some((m) => m.upstream === upstream)
         ? prev
         : {
             ...prev,
             models: [
               ...prev.models,
-              { id: `llm/${upstream.toLowerCase()}`, upstream },
+              { id: `${prefix}/${upstream.toLowerCase()}`, upstream },
             ],
           },
     );
+  };
 
   return (
     <Modal open={open} onClose={onClose} title={initial.name ? '编辑供应商' : '新增供应商'} width={640}>
@@ -127,6 +254,11 @@ function ProviderEditor({
 
         <fieldset className="flex flex-col gap-2">
           <legend className="text-meta text-ink-soft">模型映射</legend>
+          <p className="text-meta text-ink-mute">
+            平台 id 要带供应商前缀：default 用 <code>llm/名字</code>，具名供应商用{' '}
+            <code>{initial.name && initial.name !== 'default' ? initial.name : '<供应商名>'}/名字</code>
+            。运行时按前缀选网关。
+          </p>
           {/* 新供应商还没保存，服务端没有网关可拉；拉取只对已有供应商开放。 */}
           {Boolean(initial.name) && (
             <div className="flex flex-col gap-1.5 rounded-md border border-line-soft bg-panel-soft p-2">
@@ -177,7 +309,11 @@ function ProviderEditor({
               <TextInput
                 value={model.id}
                 onChange={(e) => setModel(index, { id: e.target.value })}
-                placeholder="llm/flash"
+                placeholder={
+                  initial.name && initial.name !== 'default'
+                    ? `${initial.name}/flash`
+                    : 'llm/flash'
+                }
                 aria-label={`平台模型 id ${index + 1}`}
                 className="flex-1"
               />
@@ -309,12 +445,24 @@ export default function LlmConfigPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [candidates, setCandidates] = useState<string[]>([]);
   const [fetchError, setFetchError] = useState<string | null>(null);
+  const [chainDraft, setChainDraft] = useState<string[]>([]);
 
   const { data, isLoading, error } = useQuery({
     queryKey: ['llm', 'providers'],
     queryFn: llmConfigApi.list,
   });
   const providers = data?.providers ?? [];
+  const chainModels: ChainModel[] = providers.flatMap((provider) =>
+    (provider.models ?? []).map((model) => ({
+      id: model.id,
+      provider: provider.name,
+      upstream: model.upstream,
+    })),
+  );
+
+  useEffect(() => {
+    setChainDraft(data?.modelChain ?? []);
+  }, [data?.modelChain]);
 
   const invalidate = () => queryClient.invalidateQueries({ queryKey: ['llm', 'providers'] });
   const reportError = (err: unknown) =>
@@ -368,6 +516,27 @@ export default function LlmConfigPage() {
     onError: reportError,
   });
 
+  const saveChainMutation = useMutation({
+    mutationFn: (models: string[]) => llmConfigApi.saveModelChain(models),
+    onSuccess: () => {
+      setNotice('默认模型与降级顺序已保存');
+      invalidate();
+    },
+    onError: reportError,
+  });
+
+  const moveChain = (index: number, delta: number) => {
+    setChainDraft((prev) => {
+      const next = [...prev];
+      const target = index + delta;
+      if (target < 0 || target >= next.length) return prev;
+      const [item] = next.splice(index, 1);
+      if (item === undefined) return prev;
+      next.splice(target, 0, item);
+      return next;
+    });
+  };
+
   const openEditor = (provider?: LlmProviderOut) => {
     // 每次打开弹窗重置候选：上一次拉取的结果不该出现在别的供应商里。
     setCandidates([]);
@@ -412,6 +581,16 @@ export default function LlmConfigPage() {
       {isLoading && <p className="text-meta text-ink-mute">加载中…</p>}
 
       <div className="flex flex-col gap-3.5">
+        <ModelChainPanel
+          models={chainModels}
+          chain={chainDraft}
+          canWrite={canWrite}
+          saving={saveChainMutation.isPending}
+          onMove={moveChain}
+          onRemove={(id) => setChainDraft((prev) => prev.filter((item) => item !== id))}
+          onAdd={(id) => setChainDraft((prev) => (prev.includes(id) ? prev : [...prev, id]))}
+          onSave={() => saveChainMutation.mutate(chainDraft)}
+        />
         {providers.map((provider) => (
           <ProviderCard
             key={provider.name}

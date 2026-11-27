@@ -4,12 +4,13 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import LlmConfigPage from './LlmConfigPage';
 
-const { listMock, saveMock, removeMock, fetchMock, testMock } = vi.hoisted(() => ({
+const { listMock, saveMock, removeMock, fetchMock, testMock, chainMock } = vi.hoisted(() => ({
   listMock: vi.fn(),
   saveMock: vi.fn(),
   removeMock: vi.fn(),
   fetchMock: vi.fn(),
   testMock: vi.fn(),
+  chainMock: vi.fn(),
 }));
 vi.mock('@/entities/llm/api/llm-config.api', () => ({
   llmConfigApi: {
@@ -18,6 +19,7 @@ vi.mock('@/entities/llm/api/llm-config.api', () => ({
     remove: removeMock,
     fetchModels: fetchMock,
     test: testMock,
+    saveModelChain: chainMock,
   },
 }));
 vi.mock('@/shared/access/use-access', () => ({ useCan: () => true }));
@@ -39,17 +41,18 @@ const provider = {
   apiKeyConfigured: true,
   apiKeyMasked: 'sk-c***x5ky',
   apiKeyFingerprint: '7f826811',
-  models: [{ id: 'llm/flash', upstream: 'MiniMax-M3.1-Flash' }],
+  models: [{ id: 'minimax/flash', upstream: 'MiniMax-M3.1-Flash' }],
   source: 'env_file',
 };
 
 describe('LLM 配置页', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    listMock.mockResolvedValue({ providers: [] });
+    listMock.mockResolvedValue({ providers: [], modelChain: [] });
     saveMock.mockResolvedValue(provider);
     fetchMock.mockResolvedValue({ models: [{ id: 'MiniMax-M3.1-Flash' }] });
     testMock.mockResolvedValue({ model: 'MiniMax-M3.1-Flash', text: 'OK' });
+    chainMock.mockResolvedValue({ providers: [provider], modelChain: ['minimax/flash'] });
   });
 
   it('空态明说要填网关和密钥', async () => {
@@ -59,11 +62,24 @@ describe('LLM 配置页', () => {
   });
 
   it('列出供应商时只显示密钥掩码，不出现明文', async () => {
-    listMock.mockResolvedValue({ providers: [provider] });
+    listMock.mockResolvedValue({ providers: [provider], modelChain: [] });
     renderPage();
     expect(await screen.findByText('minimax')).toBeInTheDocument();
     expect(screen.getByText('sk-c***x5ky')).toBeInTheDocument();
-    expect(screen.getByText('llm/flash')).toBeInTheDocument();
+    expect(screen.getByText('minimax/flash')).toBeInTheDocument();
+  });
+
+  it('展示默认模型与降级顺序并保存', async () => {
+    const user = userEvent.setup();
+    listMock.mockResolvedValue({
+      providers: [provider],
+      modelChain: ['minimax/flash'],
+    });
+    renderPage();
+    expect(await screen.findByText('默认模型与降级顺序')).toBeInTheDocument();
+    expect(await screen.findByText('默认')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: /保存降级顺序/ }));
+    await waitFor(() => expect(chainMock).toHaveBeenCalledWith(['minimax/flash']));
   });
 
   it('编辑时密钥框留空 —— 掩码在占位符，不回显明文', async () => {
@@ -84,7 +100,7 @@ describe('LLM 配置页', () => {
     await user.type(screen.getByLabelText('网关地址'), 'https://api.minimaxi.com/v1');
     await user.type(screen.getByLabelText('密钥'), 'sk-secret');
     await user.click(screen.getByRole('button', { name: /加一个模型映射/ }));
-    await user.type(screen.getByLabelText('平台模型 id 1'), 'llm/flash');
+    await user.type(screen.getByLabelText('平台模型 id 1'), 'minimax/flash');
     await user.type(screen.getByLabelText('上游模型名 1'), 'MiniMax-M3.1-Flash');
     await user.click(screen.getByRole('button', { name: '保存' }));
 
@@ -93,7 +109,7 @@ describe('LLM 配置页', () => {
       name: 'minimax',
       baseUrl: 'https://api.minimaxi.com/v1',
       apiKey: 'sk-secret',
-      models: [{ id: 'llm/flash', upstream: 'MiniMax-M3.1-Flash' }],
+      models: [{ id: 'minimax/flash', upstream: 'MiniMax-M3.1-Flash' }],
     });
   });
 
@@ -114,7 +130,7 @@ describe('LLM 配置页', () => {
     expect(other).toBeEnabled();
     await user.click(other);
 
-    expect(await screen.findByDisplayValue('llm/minimax-m2.7')).toBeInTheDocument();
+    expect(await screen.findByDisplayValue('minimax/minimax-m2.7')).toBeInTheDocument();
     expect(screen.getByDisplayValue('MiniMax-M2.7')).toBeInTheDocument();
     expect(other).toBeDisabled();
   });

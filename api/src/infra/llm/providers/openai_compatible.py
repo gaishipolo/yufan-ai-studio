@@ -13,10 +13,13 @@ V1 只做这一家；将来真要并存第二家，另建一个 `providers/<name
 from __future__ import annotations
 
 import json
+from dataclasses import dataclass
 from typing import ClassVar
 
+from core.exceptions import BadRequest
 from infra.driver_config import DriverSettings, driver_config
 from infra.env_settings import vendor_settings
+from infra.llm.providers.source import ProviderConfig, normalize_model_id, provider_config
 
 
 class LLMSettings(DriverSettings):
@@ -32,6 +35,9 @@ class LLMSettings(DriverSettings):
     # 页面配的「平台 id → 上游模型名」映射（JSON 数组）。与 LLM_BASE_URL
     # 同属 LLM_ 前缀：页面存 default 供应商时写这组键，运行时就在这里读。
     models: str = ""
+    # 全局模型优先/降级链（JSON 数组，第一项为默认模型）。只有 `llm/default`
+    # 走这条链；链项形如 `llm/qwen-plus` 或 `minimax/flash`。
+    model_chain: str = ""
 
     # V1 没有业务场景：生产不配 LLM 也应当能起。等真接业务再加入必填。
     # ClassVar 必须保留：写成普通字段会被 pydantic 当成 env 项，
@@ -55,7 +61,7 @@ class LLMSettings(DriverSettings):
         return self.model.strip()
 
     def model_table(self) -> dict[str, str]:
-        """解析页面存的模型映射表。坏 JSON 视为未配置（不猜、不静默吞错）。"""
+        """解析页面存的模型映射表。坏 JSON 视为无映射（由页面侧校验给出明确报错）。"""
         raw = self.models.strip()
         if not raw or not raw.startswith("["):
             return {}
@@ -71,12 +77,98 @@ class LLMSettings(DriverSettings):
                 table[str(item["id"])] = str(item["upstream"])
         return table
 
+    def model_chain_ids(self) -> tuple[str, ...]:
+        """解析 ``LLM_MODEL_CHAIN``；坏值抛 ``ValueError``（由调用方转 400）。"""
+        return parse_model_chain(self.model_chain)
+
 
 get_llm_settings = vendor_settings(LLMSettings, env_prefix="LLM")
 
-#: 平台 id → 上游 model 名。带 `llm/` 前缀，天然全局唯一。
-#: 新增模型只加一行映射；未知 id 一律 400，不静默回落。
+#: 平台 id → 上游 model 名。保留给将来的代码内映射；页面配置优先。
 MODELS: dict[str, str] = {}
+
+#: 降级链最多多少个模型。太长的链意味着一次业务调用可能打穿多家供应商。
+MAX_CHAIN = 20
+
+
+def parse_model_chain(raw: str) -> tuple[str, ...]:
+    """解析模型优先链（JSON 数组，第一项为默认模型）。
+
+    链项是**平台模型 id**（`llm/qwen-plus` / `minimax/flash`），不是上游名。
+    `llm/default` 不能出现在链里——它表示整条链本身，放进去会自我递归。
+    """
+    text = raw.strip()
+    if not text:
+        return ()
+    try:
+        parsed = json.loads(text)
+    except ValueError as exc:
+        raise ValueError("LLM_MODEL_CHAIN 不是合法 JSON") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("LLM_MODEL_CHAIN 必须是 JSON 数组")
+    chain: list[str] = []
+    seen: set[str] = set()
+    for item in parsed:
+        if not isinstance(item, str) or not item.strip():
+            raise ValueError("LLM_MODEL_CHAIN 只能放非空字符串")
+        model_id = item.strip()
+        if model_id == "llm/default":
+            raise ValueError("LLM_MODEL_CHAIN 不能包含 llm/default")
+        if model_id in seen:
+            raise ValueError(f"LLM_MODEL_CHAIN 里模型重复：{model_id}")
+        seen.add(model_id)
+        chain.append(model_id)
+    if len(chain) > MAX_CHAIN:
+        raise ValueError(f"LLM_MODEL_CHAIN 最多 {MAX_CHAIN} 个模型")
+    return tuple(chain)
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRuntime:
+    """一次调用需要的供应商运行时配置。"""
+
+    name: str
+    settings: LLMSettings
+    model_map: dict[str, str]
+    api_key_env: str
+    label: str
+
+
+def load_provider(name: str) -> ProviderRuntime:
+    """读某个供应商的配置；缺网关等配置错误一律是 4xx。"""
+    try:
+        config: ProviderConfig = provider_config(name)
+    except ValueError as exc:
+        raise BadRequest(f"LLM 供应商配置有误：{exc}") from exc
+    if not config.base_url.strip():
+        raise BadRequest(
+            f"LLM 供应商 {config.name} 未配置：请设置 {config.base_url_env}（OpenAI 兼容端点）"
+        )
+    settings = LLMSettings(
+        base_url=config.base_url,
+        api_key=config.api_key,
+        timeout_sec=config.timeout_sec,
+        model=config.model,
+        models=config.models,
+    )
+    try:
+        # 具名供应商的旧配置可能还是 llm/*；运行时也做一次归一，避免
+        # 页面已能调用、手工/环境变量配置却 400。
+        table: dict[str, str] = {}
+        for model_id, upstream in settings.model_table().items():
+            normalized = normalize_model_id(config.name, model_id)
+            if normalized in table:
+                raise ValueError(f"模型 id 迁移后重复：{normalized}")
+            table[normalized] = upstream
+    except ValueError as exc:
+        raise BadRequest(f"LLM 供应商 {config.name} 的模型映射有误：{exc}") from exc
+    return ProviderRuntime(
+        name=config.name,
+        settings=settings,
+        model_map=table,
+        api_key_env=config.api_key_env,
+        label="LLM" if config.name == "default" else f"LLM {config.name}",
+    )
 
 
 def resolve_model(
@@ -86,10 +178,14 @@ def resolve_model(
 ) -> str:
     """把平台 id 翻成上游 model 名；未知 id 抛 `ValueError`（由客户端转 400）。
 
-    优先级：显式 `model_map`（连通测试指定）> `settings.models`（页面存的
-    default 供应商映射）> 模块常量 `MODELS` > `llm/default` > `llm/<name>` 直连。
-    映射表让同一个平台 id 指向不同家的上游模型 —— 换供应商只改配置，
-    调用方永远只认平台 id。
+    优先级：显式 `model_map`（连通测试指定）> `settings.models`（当前供应商
+    页面存的映射）> 模块常量 `MODELS`。
+
+    - 映射表里有 → 用映射值；
+    - `llm/default` → `LLM_MODEL`，再回落到当前供应商模型表的第一项
+      （页面只配了映射、没配 LLM_MODEL 时也能用）；
+    - `llm/<name>` → 直连上游名（V1 兼容）；
+    - `<provider>/<name>` → 必须在该供应商的映射表里，不猜。
     """
     from_settings = settings.model_table() if settings else {}
     table = {**MODELS, **from_settings, **(model_map or {})}
@@ -98,10 +194,23 @@ def resolve_model(
     if platform_id == "llm/default":
         if settings and settings.default_upstream_model():
             return settings.default_upstream_model()
-        raise ValueError("LLM_MODEL 未配置，不能用 llm/default")
+        if table:
+            return next(iter(table.values()))
+        raise ValueError(
+            "LLM 没有可用模型：请先在 LLM 配置页配置默认模型与降级链，或设置 LLM_MODEL"
+        )
     if platform_id.startswith("llm/") and platform_id[4:].strip():
         return platform_id[4:]
-    raise ValueError(f"未知的 LLM 模型 id：{platform_id}")
+    raise ValueError(f"未知的 LLM 模型 id：{platform_id}（未在供应商模型映射里登记）")
 
 
-__all__ = ["LLMSettings", "MODELS", "get_llm_settings", "resolve_model"]
+__all__ = [
+    "LLMSettings",
+    "MAX_CHAIN",
+    "MODELS",
+    "ProviderRuntime",
+    "get_llm_settings",
+    "load_provider",
+    "parse_model_chain",
+    "resolve_model",
+]

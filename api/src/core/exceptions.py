@@ -140,6 +140,10 @@ class AppError(Exception):
     code: int = ErrorCode.INTERNAL_ERROR
     message: str = "服务器内部错误"
     http_status: int = 500
+    #: 上游真实 HTTP 状态（仅 ``classify_http_error`` 产出的异常有值）。
+    #: 保留它是因为有些决策要看原始状态码而不是平台异常类：例如 LLM 降级链
+    #: 只对 5xx 降级，但 408 也被归到 UpstreamError —— 408 可能已受理，不能降级。
+    upstream_status: int | None = None
 
     def __init__(
         self,

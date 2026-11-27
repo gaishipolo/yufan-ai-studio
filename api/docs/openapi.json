@@ -5435,6 +5435,53 @@
         }
       }
     },
+    "/api/v1/llm-config/model-chain": {
+      "put": {
+        "tags": [
+          "LLM 配置"
+        ],
+        "summary": "保存默认模型与降级顺序（第一项为默认）",
+        "description": "模型优先链：第一项是默认模型，后续项按顺序降级。\n\n每个 id 都必须已存在于某个供应商的模型映射里 —— 链指向不存在的模型\n等于把故障留到调用时；这里当场拒掉。",
+        "operationId": "put_model_chain_api_v1_llm_config_model_chain_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ModelChainIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LlmProvidersOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
     "/api/v1/llm-config/providers/{name}/models:fetch": {
       "post": {
         "tags": [
@@ -14206,6 +14253,13 @@
             },
             "type": "array",
             "title": "Providers"
+          },
+          "modelChain": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Modelchain"
           }
         },
         "type": "object",
@@ -14411,6 +14465,19 @@
         ],
         "title": "MeOut",
         "description": "`GET /identity/me`：前端靠 `permissions` 渲染菜单与按钮。"
+      },
+      "ModelChainIn": {
+        "properties": {
+          "models": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Models"
+          }
+        },
+        "type": "object",
+        "title": "ModelChainIn"
       },
       "PackIn": {
         "properties": {

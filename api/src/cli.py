@@ -232,8 +232,10 @@ def _cmd_llm_check(args: argparse.Namespace) -> None:
     """
     import asyncio
 
+    import httpx
+
     from core.exceptions import AppError
-    from infra.llm import LlmMessage, LlmRequest, OpenAICompatibleClient
+    from infra.llm import LlmMessage, LlmRequest, complete
 
     request = LlmRequest(
         model=args.model or "llm/default",
@@ -243,11 +245,16 @@ def _cmd_llm_check(args: argparse.Namespace) -> None:
         # 连通检查要验的是「文本真的能取回来」，不是「HTTP 200」。
     )
     try:
-        result = asyncio.run(OpenAICompatibleClient().complete(request))
+        result = asyncio.run(complete(request))
     except AppError as exc:
         print(f"LLM 连通失败：{exc.message}", file=sys.stderr)
         raise SystemExit(1) from exc
+    except httpx.HTTPError as exc:
+        # 网络层异常没有包成 AppError（与驱动一致）；CLI 不把 traceback 甩给运维。
+        print(f"LLM 连通失败：无法连接到供应商网关（{type(exc).__name__}）", file=sys.stderr)
+        raise SystemExit(1) from exc
     print(f"LLM 连通正常：{result.model} · {result.finish_reason}")
+    print(f"  模型：{result.platform_model or request.model}")
     print(f"  回复：{result.text[:80]}")
     print(
         f"  usage：prompt {result.usage.prompt_tokens}"
@@ -854,7 +861,7 @@ def main(argv: list[str] | None = None) -> int:
     p_llm_check.add_argument(
         "--model",
         default="",
-        help="平台模型 id（默认 llm/default，即运维页配的 LLM_MODEL）",
+        help="平台模型 id（默认 llm/default，即 LLM 配置页的默认模型/降级链）",
     )
     p_llm_check.set_defaults(func=_cmd_llm_check)
 

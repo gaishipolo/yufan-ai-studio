@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **159** 个接口 / **13** 个模块
+> 版本 `0.2.0`｜共 **160** 个接口 / **13** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -271,7 +271,7 @@ Authorization: Bearer <accessToken>
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 47 | 见下方 `4.9` |
-| LLM 配置 | 5 | 见下方 `4.10` |
+| LLM 配置 | 6 | 见下方 `4.10` |
 | 模型驱动 | 12 | 见下方 `4.11` |
 | 模板封装 | 26 | 见下方 `4.12` |
 | 用量看板 | 2 | 见下方 `4.13` |
@@ -3119,15 +3119,38 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
 
-### 4.10 LLM 配置（5 个）
+### 4.10 LLM 配置（6 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
+| `PUT` | `/api/v1/llm-config/model-chain` | 保存默认模型与降级顺序（第一项为默认） | 🔒 |
 | `GET` | `/api/v1/llm-config/providers` | 列出 LLM 供应商配置（密钥脱敏） | 🔒 |
 | `PUT` | `/api/v1/llm-config/providers` | 新增或更新 LLM 供应商，下一次请求即生效 | 🔒 |
 | `DELETE` | `/api/v1/llm-config/providers/{name}` | 删除 LLM 供应商配置 | 🔒 |
 | `POST` | `/api/v1/llm-config/providers/{name}/models:fetch` | 从供应商网关拉取真实模型 id | 🔒 |
 | `POST` | `/api/v1/llm-config/providers/{name}/test` | 对供应商发一次真实最小请求 | 🔒 |
+
+#### `PUT /api/v1/llm-config/model-chain`
+
+**保存默认模型与降级顺序（第一项为默认）**
+
+模型优先链：第一项是默认模型，后续项按顺序降级。
+
+每个 id 都必须已存在于某个供应商的模型映射里 —— 链指向不存在的模型
+等于把故障留到调用时；这里当场拒掉。
+
+**请求体** `ModelChainIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `models` | `string[]` | 否 |  |
+
+**响应** `ApiResponse<LlmProvidersOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `providers` | `LlmProviderOut[]` | 否 |  |
+| `modelChain` | `string[]` | 否 |  |
 
 #### `GET /api/v1/llm-config/providers`
 
@@ -3138,6 +3161,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `providers` | `LlmProviderOut[]` | 否 |  |
+| `modelChain` | `string[]` | 否 |  |
 
 #### `PUT /api/v1/llm-config/providers`
 
@@ -3177,6 +3201,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `providers` | `LlmProviderOut[]` | 否 |  |
+| `modelChain` | `string[]` | 否 |  |
 
 #### `POST /api/v1/llm-config/providers/{name}/models:fetch`
 
@@ -5157,6 +5182,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `providers` | `LlmProviderOut[]` | 否 |  |
+| `modelChain` | `string[]` | 否 |  |
 
 ### `LoginEventListOut`
 
@@ -5204,6 +5230,12 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `createdAt` | `string` | 是 | 创建时间（UTC） |
 | `roles` | `RoleBriefOut[]` | 否 | 拥有的角色 |
 | `permissions` | `string[]` | 否 | 展开后的权限码；含 `*` 表示超级管理员 |
+
+### `ModelChainIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `models` | `string[]` | 否 |  |
 
 ### `PackIn`
 

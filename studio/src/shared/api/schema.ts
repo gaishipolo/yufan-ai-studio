@@ -984,6 +984,7 @@ export interface LlmProviderOut {
 /** LlmProvidersOut */
 export interface LlmProvidersOut {
   providers?: LlmProviderOut[];
+  modelChain?: string[];
 }
 
 /** LoginEventListOut */
@@ -1043,6 +1044,11 @@ export interface MeOut {
   roles?: RoleBriefOut[];
   /** 展开后的权限码；含 `*` 表示超级管理员 */
   permissions?: string[];
+}
+
+/** ModelChainIn */
+export interface ModelChainIn {
+  models?: string[];
 }
 
 /** 建封装：一次挑一组素材（同产品同颜色的多个视角）。 */
@@ -2519,6 +2525,8 @@ export interface EndpointData {
   "DELETE /api/v1/library/trash/{asset_id}": null;
   /** 从回收站恢复（强制回到个人库，不恢复共享） */
   "POST /api/v1/library/trash/{asset_id}/restore": LibraryAssetDetailOut;
+  /** 保存默认模型与降级顺序（第一项为默认） */
+  "PUT /api/v1/llm-config/model-chain": LlmProvidersOut;
   /** 列出 LLM 供应商配置（密钥脱敏） */
   "GET /api/v1/llm-config/providers": LlmProvidersOut;
   /** 新增或更新 LLM 供应商，下一次请求即生效 */

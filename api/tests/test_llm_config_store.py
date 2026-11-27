@@ -20,6 +20,8 @@ from modules.llm_config.store import (
     keys_of,
     list_providers,
     normalize_name,
+    read_model_chain,
+    save_model_chain,
     save_provider,
 )
 
@@ -114,8 +116,8 @@ def test_删除供应商只删自己的键(clean_env: None) -> None:
     assert credentials_of("b")[1] == "k-b"
 
 
-def test_模型id必须带llm前缀且不重复(clean_env: None) -> None:
-    with pytest.raises(ValueError, match="llm/"):
+def test_模型id必须带供应商前缀且不重复(clean_env: None) -> None:
+    with pytest.raises(ValueError, match="x/"):
         save_provider(
             "x",
             base_url="https://x.example/v1",
@@ -128,9 +130,33 @@ def test_模型id必须带llm前缀且不重复(clean_env: None) -> None:
             base_url="https://x.example/v1",
             api_key="k",
             models=(
-                ModelMapping("llm/a", "a1"),
-                ModelMapping("llm/a", "a2"),
+                ModelMapping("x/a", "a1"),
+                ModelMapping("x/a", "a2"),
             ),
+        )
+
+
+def test_具名供应商的旧llm_id迁移到供应商前缀(clean_env: None) -> None:
+    """早期页面把具名供应商的模型也写成 llm/*；保存/读取都要迁到 <name>/*。
+
+    否则运行时会按 llm/ 前缀把它路由到 default 供应商，凭据却用的是具名供应商的。
+    """
+    save_provider(
+        "minimax",
+        base_url="https://api.minimaxi.com/v1",
+        api_key="k",
+        models=(ModelMapping("llm/flash", "MiniMax-M3.1-Flash"),),
+    )
+    listed = list_providers().providers[0]
+    assert listed.models == (ModelMapping("minimax/flash", "MiniMax-M3.1-Flash"),)
+    assert '"minimax/flash"' in ENV_PATH.read_text(encoding="utf-8")
+    # 另一个供应商的前缀同样不许借用
+    with pytest.raises(ValueError, match="minimax/"):
+        save_provider(
+            "minimax",
+            base_url="https://api.minimaxi.com/v1",
+            api_key="",
+            models=(ModelMapping("other/flash", "x"),),
         )
 
 
@@ -232,3 +258,86 @@ def test_进程环境变量提供的项不能在页面改(clean_env: None, monke
     ENV_PATH.write_text("LLM_X_API_KEY=k\n", encoding="utf-8")
     with pytest.raises(ValueError, match="环境变量"):
         save_provider("x", base_url="https://from-page.example/v1", api_key="", models=())
+
+
+def test_环境变量提供的供应商也能列出(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    """容器部署常把 LLM_* 注入环境；页面不能只扫 .env（2026-11-27 审查）。"""
+    monkeypatch.setenv("LLM_ENVONLY_BASE_URL", "https://env-only.example/v1")
+    monkeypatch.setenv("LLM_ENVONLY_API_KEY", "sk-env-only")
+    monkeypatch.setenv(
+        "LLM_ENVONLY_MODELS", '[{"id":"envonly/flash","upstream":"EnvOnly"}]'
+    )
+    monkeypatch.setenv("LLM_BASE_URL", "https://env-default.example/v1")
+    monkeypatch.setenv("LLM_API_KEY", "sk-env-default")
+
+    by_name = {provider.name: provider for provider in list_providers().providers}
+    assert set(by_name) == {"default", "envonly"}
+    assert by_name["envonly"].source == "environment"
+    assert by_name["envonly"].models == (ModelMapping("envonly/flash", "EnvOnly"),)
+    assert by_name["default"].source == "environment"
+
+
+def test_页面保存default后llm_default可用(clean_env: None) -> None:
+    """页面只写 LLM_MODELS、不写 LLM_MODEL 时，llm/default 必须仍有默认模型。"""
+    from infra.llm.providers.openai_compatible import get_llm_settings, resolve_model
+
+    save_provider(
+        "default",
+        base_url="https://api.minimaxi.com/v1",
+        api_key="sk-real",
+        models=(ModelMapping("llm/flash", "MiniMax-M3.1-Flash"), ModelMapping("llm/pro", "Pro")),
+    )
+    save_model_chain(["llm/flash"], known={"llm/flash", "llm/pro"})
+
+    settings = get_llm_settings()
+    assert settings.model_chain_ids() == ("llm/flash",)
+    # 链未配置时也回落到模型表第一项，而不是报“LLM_MODEL 未配置”
+    assert resolve_model("llm/default", settings) == "MiniMax-M3.1-Flash"
+
+
+def test_保存或删除供应商会剪掉降级链里的失效模型(clean_env: None) -> None:
+    save_provider(
+        "minimax",
+        base_url="https://api.minimaxi.com/v1",
+        api_key="k",
+        models=(ModelMapping("minimax/flash", "F"), ModelMapping("minimax/pro", "P")),
+    )
+    save_provider(
+        "bailian",
+        base_url="https://bailian.example/v1",
+        api_key="k",
+        models=(ModelMapping("bailian/qwen", "Q"),),
+    )
+    known = {"minimax/flash", "minimax/pro", "bailian/qwen"}
+    save_model_chain(["minimax/pro", "minimax/flash", "bailian/qwen"], known=known)
+
+    # 从供应商里移除 minimax/pro → 链里对应项必须一起消失
+    save_provider(
+        "minimax",
+        base_url="https://api.minimaxi.com/v1",
+        api_key="",
+        models=(ModelMapping("minimax/flash", "F"),),
+    )
+    assert read_model_chain() == ("minimax/flash", "bailian/qwen")
+
+    delete_provider("minimax")
+    assert read_model_chain() == ("bailian/qwen",)
+
+
+def test_模型优先链的校验(clean_env: None) -> None:
+    with pytest.raises(ValueError, match="llm/default"):
+        save_model_chain(["llm/default"], known={"llm/default"})
+    with pytest.raises(ValueError, match="不在任何供应商"):
+        save_model_chain(["ghost/x"], known=set())
+    with pytest.raises(ValueError, match="重复"):
+        save_model_chain(["llm/a", "llm/a"], known={"llm/a"})
+    with pytest.raises(ValueError, match="不能为空"):
+        save_model_chain([""], known={"llm/a"})
+
+
+def test_模型优先链被环境变量覆盖时拒绝页面保存(
+    clean_env: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("LLM_MODEL_CHAIN", '["llm/a"]')
+    with pytest.raises(ValueError, match="环境变量"):
+        save_model_chain([], known=set())

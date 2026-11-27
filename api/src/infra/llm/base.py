@@ -73,6 +73,8 @@ class LlmResponse:
     usage: LlmUsage
     tool_calls: tuple[LlmToolCall, ...] = ()
     raw_id: str = ""
+    #: 实际使用的平台模型 id（降级链里可能是 `llm/default` 之后的某一项）。
+    platform_model: str = ""
 
 
 __all__ = [

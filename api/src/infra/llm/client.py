@@ -11,11 +11,20 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 from typing import Any
 
 import httpx
 
-from core.exceptions import AppError, BadRequest, Forbidden, RateLimited, Unauthorized
+from core.exceptions import (
+    AppError,
+    BadRequest,
+    Forbidden,
+    RateLimited,
+    Unauthorized,
+    UpstreamError,
+)
+from core.logging import get_logger
 from infra.credentials import require_api_key
 from infra.http_errors import classify_http_error
 from infra.llm.base import (
@@ -28,8 +37,15 @@ from infra.llm.base import (
 from infra.llm.providers.openai_compatible import (
     LLMSettings,
     get_llm_settings,
+    load_provider,
     resolve_model,
 )
+from infra.llm.providers.source import provider_of
+
+logger = get_logger(__name__)
+
+#: 默认模型 id：表示「用页面配置的优先链」。
+DEFAULT_MODEL = "llm/default"
 
 #: 状态映射是 LLM 自己声明的数据（不抹平各家的业务码）。
 #: `classify_http_error` 默认 4xx→BadRequest / 5xx→UpstreamError，
@@ -50,11 +66,16 @@ class OpenAICompatibleClient:
         *,
         transport: httpx.AsyncBaseTransport | None = None,
         model_map: dict[str, str] | None = None,
+        api_key_env: str = "LLM_API_KEY",
+        vendor: str = "LLM",
     ) -> None:
         self.settings = settings or get_llm_settings()
         self.transport = transport
         # 页面配的「平台 id → 上游模型名」映射；不进 LLMSettings（那是 env 字段）
         self.model_map = model_map
+        # 具名供应商的密钥键不同；错误文案必须指向用户真正要配的那个键。
+        self.api_key_env = api_key_env
+        self.vendor = vendor
 
     def _client(self) -> httpx.AsyncClient:
         # trust_env=False 与驱动一致：不吃系统代理，避免容器里的 HTTP_PROXY
@@ -68,8 +89,8 @@ class OpenAICompatibleClient:
     def _headers(self) -> dict[str, str]:
         key = require_api_key(
             self.settings.bearer_token(),
-            vendor="LLM",
-            env_name="LLM_API_KEY",
+            vendor=self.vendor,
+            env_name=self.api_key_env,
             note="OpenAI 兼容端点",
         )
         return {"Authorization": f"Bearer {key}"}
@@ -162,19 +183,78 @@ class OpenAICompatibleClient:
                 headers=self._headers(),
             )
             if response.status_code >= 400:
-                raise classify_http_error(response, vendor="LLM", status_map=_STATUS_MAP)
+                raise classify_http_error(
+                    response, vendor=self.vendor, status_map=_STATUS_MAP
+                )
             try:
                 body = response.json()
             except ValueError as exc:
                 raise BadRequest("LLM 上游返回的不是 JSON") from exc
             if not isinstance(body, dict):
                 raise BadRequest("LLM 上游返回的 JSON 结构不对")
-            return self._parse_response(body)
+            parsed = self._parse_response(body)
+            return replace(parsed, platform_model=request.model)
+
+
+def _should_fallback(exc: BaseException) -> bool:
+    """这个失败是否允许换下一个模型。
+
+    只降级「明确失败」：
+
+    - 429 / 401 / 403 / 5xx：上游明确拒绝或不可用；
+    - 连接失败（``ConnectError`` / ``ConnectTimeout``）：请求根本没送出去。
+
+    不降级：400/422（参数/请求错，换模型只会得到同样的错）、408 与读写超时
+    （请求已发出，上游**可能已受理并计费**，再打一次是重复计费）。
+    """
+    if isinstance(exc, (Unauthorized, Forbidden, RateLimited)):
+        return True
+    if isinstance(exc, UpstreamError):
+        return getattr(exc, "upstream_status", None) != 408
+    return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
+
+
+async def _complete_one(request: LlmRequest, platform_id: str) -> LlmResponse:
+    runtime = load_provider(provider_of(platform_id))
+    client = OpenAICompatibleClient(
+        runtime.settings,
+        model_map=runtime.model_map,
+        api_key_env=runtime.api_key_env,
+        vendor=runtime.label,
+    )
+    return await client.complete(replace(request, model=platform_id))
 
 
 async def complete(request: LlmRequest) -> LlmResponse:
-    """默认入口：用运维页配置的 OpenAI 兼容端点发一次调用。"""
-    return await OpenAICompatibleClient().complete(request)
+    """默认入口：用运维页配置的 OpenAI 兼容端点发一次调用。
+
+    只有 ``llm/default`` 会走 ``LLM_MODEL_CHAIN``（第一项为默认模型）并按
+    失败类型降级；显式模型 id 精确调用，不静默换模型。
+    """
+    if request.model != DEFAULT_MODEL:
+        return await _complete_one(request, request.model)
+
+    try:
+        chain = get_llm_settings().model_chain_ids()
+    except ValueError as exc:
+        raise BadRequest(f"LLM 模型优先链配置有误：{exc}") from exc
+    if not chain:
+        # 未配置链时保持旧语义：llm/default → LLM_MODEL / 模型表第一项。
+        chain = (DEFAULT_MODEL,)
+
+    for index, platform_id in enumerate(chain):
+        try:
+            return await _complete_one(request, platform_id)
+        except Exception as exc:
+            is_last = index == len(chain) - 1
+            if is_last or not _should_fallback(exc):
+                raise
+            logger.warning(
+                "LLM 默认模型 %s 调用失败（%s），降级到下一个模型",
+                platform_id,
+                type(exc).__name__,
+            )
+    raise AssertionError("LLM 降级链为空")  # pragma: no cover - 循环至少一项
 
 
-__all__ = ["OpenAICompatibleClient", "complete"]
+__all__ = ["DEFAULT_MODEL", "OpenAICompatibleClient", "complete"]

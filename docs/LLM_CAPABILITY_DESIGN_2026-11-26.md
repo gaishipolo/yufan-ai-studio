@@ -17,6 +17,7 @@
 | 2026-11-26 | 补：agent 必然是业务模块 → 循环归 `generation/`、业务归 `modules/agent/`；据此定出三条硬约束 | §6 |
 | 2026-11-26 | 实施前复核：`LLMSettings` 改成 `DriverSettings` 子类（§5.2）；`get_http()` 不复用、LLM 自建 client（§2.2/§7）；`LlmMessage` 补 `tool_call_id`、`params` 改 `default_factory`（§4） | §2.2、§4、§5.2、§7 |
 | 2026-11-27 | 审查修断链：多供应商页的 `default` 直接写 `LLM_*`（与运行时 LLMSettings 同前缀），不再"迁移"到 `LLM_DEFAULT_*`；`LLM_MODELS` 映射表由运行时解析 | §5.2、§8 |
+| 2026-11-27 | 多供应商运行时闭环：平台 id 带供应商前缀（default 用 `llm/*`，具名用 `<name>/*`），按前缀路由到 `LLM_<NAME>_*`；新增全局 `LLM_MODEL_CHAIN`（首项默认，400/422 与超时不降级），配置页可排序 | §5.2、§5.3、§5.4、§7 |
 
 ---
 
@@ -221,9 +222,10 @@ get_llm_settings = vendor_settings(LLMSettings, env_prefix="LLM")
 （`tests/test_config_guard.py`）同样只认它。写成 `LLM_BASE_URL = "..."` 这种
 模块常量，运维页不会出现、守卫巡检不到、`.env` 改了也不热生效。
 
-V1 只实现一个通用 OpenAI 兼容供应商：随便一个满足协议的 `base_url` + `api_key`
-都能接。平台模型 id 用 `llm/<上游名>` 前缀（`llm/qwen-plus`），天然全局唯一；
-将来要并存第二家，再各建一个 `providers/<name>.py`，换前缀即可，不改已有文件。
+V1 只实现一个通用 OpenAI 兼容**客户端**，但允许页面同时配置多个供应商端点：
+default 用 `LLM_*`，具名供应商用 `LLM_<NAME>_*`。平台模型 id 带供应商前缀
+（default 用 `llm/<上游名>`，具名用 `<name>/<上游名>`），运行时按前缀选网关；
+将来要换协议，再各建一个 `providers/<name>.py`，不改已有文件。
 
 **为什么 V1 就这么做**：一家时只多一层文件与一段前缀；不这么做，将来要并存时是「改配置层 + 改映射表 + 改 id 解析」，而那时已经有业务在跑，风险高得多。而 `DriverSettings` 子类 + 前缀的机制**本来就是为多供应商设计的**，照抄它的形状不额外背债。
 
@@ -232,6 +234,24 @@ V1 只实现一个通用 OpenAI 兼容供应商：随便一个满足协议的 `b
 客户端收到 `model="bailian/qwen-plus"` → 查该供应商的解析表 → 得上游 `"qwen-plus"` → 发给上游。
 
 照百炼驱动的 `_real_model()` 做法：**未知 id 直接 400**，不静默回落。这样「换供应商不改业务代码」才成立——业务侧永远只认平台 id。
+
+具名供应商的模型 id 必须是 `<name>/<上游名>`（default 仍然用 `llm/<上游名>`）。运行时按 id 前缀选网关：`minimax/flash` 读 `LLM_MINIMAX_*`，`llm/qwen` 读 `LLM_*`。早期页面把具名供应商的模型写成 `llm/*`，读取与运行时会迁移到 `<name>/*`；否则会拿 default 的凭据去调具名供应商的模型。
+
+### 5.4 默认模型与降级链
+
+新增一个**全局**键 `LLM_MODEL_CHAIN`（JSON 数组），第一项即默认模型：
+
+```
+LLM_MODEL_CHAIN=["minimax/flash","llm/qwen-plus","bailian/deepseek-v3"]
+```
+
+- 只有 `llm/default` 走这条链；显式模型 id（`minimax/flash`）精确调用，不静默换模型。
+- 每次只调用**一个**模型；失败时按链顺序尝试下一个，不做同模型重试（避免重复计费）。
+- 只对**明确失败**降级：429、401/403、连接失败（`ConnectError`/`ConnectTimeout`）、5xx。
+  400/422（参数/请求错）与 408/读写超时**不降级** —— 超时可能已被上游受理，换模型会重复计费。
+- 链为空时保持旧语义：`llm/default` → `LLM_MODEL`，再回落到 default 供应商模型表的第一项。
+- 链里每个 id 必须已存在于某个供应商的模型映射里；保存供应商或删除供应商时，会自动把失效模型从链里剪掉。
+- 配置页「默认模型与降级顺序」可加/删/上下移动；`LLM_MODEL_CHAIN` 也可由环境变量提供（此时页面只读，写入会被拒绝）。
 
 ---
 
@@ -271,6 +291,7 @@ V1 只实现一个通用 OpenAI 兼容供应商：随便一个满足协议的 `b
 ## 7. 三条不能省的纪律
 
 1. **不自动重试**——`infra/http.py` 注释写死「POST 重复提交等于重复计费」，LLM chat 同理。只在 4xx 明确拒收时可重试。
+   降级链**不是重试**：每个模型只调用一次，且 408/读写超时（可能已受理）与 400/422 不降级，见 §5.4。
 2. **超时单独给 —— LLM 自建 client，不复用 `get_http()`**。
    这不是"给共享 client 换个超时"的问题，查代码后的实情：
    - `get_http()` 的 `timeout=HttpSettings.timeout_sec`（默认 30s）是 **client 级默认值**，

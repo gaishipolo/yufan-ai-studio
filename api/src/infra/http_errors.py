@@ -113,7 +113,11 @@ def classify_http_error(
         # grsai 的 408→BadRequest 口径由它自己的 status_map 显式声明覆盖。
         exc_cls = DEFAULT_5XX if status >= 500 or status == 408 else DEFAULT_4XX
 
-    return exc_cls(f"{vendor} 上游异常（HTTP {status}）{suffix(text)}")
+    error = exc_cls(f"{vendor} 上游异常（HTTP {status}）{suffix(text)}")
+    # 保留原始状态：平台异常类会抹平 408 与 5xx（都归 UpstreamError），
+    # 但 LLM 降级链要按原始状态区分「明确失败」与「可能已受理」。
+    error.upstream_status = status
+    return error
 
 
 def classify_body_status(

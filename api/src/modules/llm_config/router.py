@@ -25,14 +25,18 @@ from modules.llm_config.schema import (
     LlmModelOut,
     LlmProviderOut,
     LlmProvidersOut,
+    ModelChainIn,
     SaveProviderIn,
     UpstreamModelOut,
 )
 from modules.llm_config.store import (
     ModelMapping,
+    ProviderListOut,
     credentials_of,
     delete_provider,
     list_providers,
+    read_model_chain,
+    save_model_chain,
     save_provider,
 )
 
@@ -40,6 +44,18 @@ router = APIRouter(prefix="/llm-config", tags=["LLM 配置"])
 
 ReadDep = Annotated[CurrentUser, Depends(require("llm_config:read"))]
 WriteDep = Annotated[CurrentUser, Depends(require("llm_config:write"))]
+
+
+def _providers_out(result: ProviderListOut) -> LlmProvidersOut:
+    try:
+        chain = list(read_model_chain())
+    except ValueError as exc:
+        # 链是手工可编辑的 .env 键；坏了要说清楚是哪一项，而不是页面整体 500。
+        raise BadRequest(f"LLM_MODEL_CHAIN 配置有误：{exc}") from exc
+    return LlmProvidersOut(
+        providers=[_provider_out(item) for item in result.providers],
+        model_chain=chain,
+    )
 
 
 def _provider_out(item) -> LlmProviderOut:
@@ -57,9 +73,7 @@ def _provider_out(item) -> LlmProviderOut:
 @router.get("/providers", summary="列出 LLM 供应商配置（密钥脱敏）")
 async def get_providers(actor: ReadDep) -> ApiResponse[LlmProvidersOut]:
     result = await run_in_threadpool(list_providers)
-    return ApiResponse.ok(
-        LlmProvidersOut(providers=[_provider_out(item) for item in result.providers])
-    )
+    return ApiResponse.ok(_providers_out(result))
 
 
 @router.put("/providers", summary="新增或更新 LLM 供应商，下一次请求即生效")
@@ -106,9 +120,35 @@ async def remove_provider(
         target_id=name,
     )
     result = await run_in_threadpool(list_providers)
-    return ApiResponse.ok(
-        LlmProvidersOut(providers=[_provider_out(item) for item in result.providers])
+    return ApiResponse.ok(_providers_out(result))
+
+
+@router.put("/model-chain", summary="保存默认模型与降级顺序（第一项为默认）")
+async def put_model_chain(
+    payload: ModelChainIn,
+    actor: WriteDep,
+    _: None = Depends(rate_limit("llm_config.write", limit=settings.rate_limit_default_per_min)),
+) -> ApiResponse[LlmProvidersOut]:
+    """模型优先链：第一项是默认模型，后续项按顺序降级。
+
+    每个 id 都必须已存在于某个供应商的模型映射里 —— 链指向不存在的模型
+    等于把故障留到调用时；这里当场拒掉。
+    """
+    try:
+        result = await run_in_threadpool(list_providers)
+        known = {model.id for provider in result.providers for model in provider.models}
+        chain = await run_in_threadpool(save_model_chain, payload.models, known=known)
+    except ValueError as exc:
+        raise BadRequest(str(exc)) from exc
+    await audit(
+        "llm_config.model_chain.save",
+        actor_id=actor.id,
+        target_type="llm_model_chain",
+        # 只看顺序与数量；链里没有密钥
+        detail={"models": len(chain), "default": chain[0] if chain else ""},
     )
+    result = await run_in_threadpool(list_providers)
+    return ApiResponse.ok(_providers_out(result))
 
 
 @router.post("/providers/{name}/models:fetch", summary="从供应商网关拉取真实模型 id")
