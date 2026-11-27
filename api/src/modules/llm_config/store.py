@@ -44,11 +44,13 @@ from core.config import ENV_FILE
 from infra.llm.providers import source as provider_source
 from infra.llm.providers.openai_compatible import MAX_CHAIN, parse_model_chain
 from infra.llm.providers.source import (
+    MAX_MODELS,
     discover_provider_names,
     effective,
     keys_of,
     normalize_model_id,
     normalize_provider_name,
+    parse_model_entries,
     provider_keys,
     provider_of,
     read_file_values,
@@ -58,10 +60,11 @@ from infra.llm.providers.source import (
 _ENV_PATH = Path(ENV_FILE)
 _LINE_RE = provider_source.LINE_RE
 _MAX_VALUE_LEN = 2048
+#: 模型表允许更长：100 个映射的 JSON 很容易超过 2048，不能一边说最多 100 个
+#: 一边在 20 个时因行长拒绝。
+_MAX_MODELS_VALUE_LEN = 32 * 1024
 _MASK_EDGE = 4
 
-#: 一个供应商最多挂多少模型，防止误粘贴把 .env 撑爆。
-MAX_MODELS = 100
 #: 默认模型 + 降级链的全局键。
 MODEL_CHAIN_KEY = "LLM_MODEL_CHAIN"
 
@@ -99,6 +102,9 @@ class ProviderOut:
     api_key_fingerprint: str
     models: tuple[ModelMapping, ...]
     source: str  # environment / env_file / default
+    #: 该供应商自己的配置错误（目前只有模型列表解析）。页面展示它，
+    #: 但其它供应商照常返回——一个坏键不能把整个配置页变成 500。
+    config_error: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,23 +120,11 @@ def _parse_models(raw: str, provider_name: str) -> tuple[ModelMapping, ...]:
         if provider_name != "default":
             raise ValueError(f"供应商 {provider_name} 的模型列表必须是 JSON 数组")
         return (ModelMapping("llm/default", raw.strip()),)
-    try:
-        parsed = json.loads(raw)
-    except ValueError as exc:
-        raise ValueError("模型列表不是合法 JSON") from exc
-    if not isinstance(parsed, list):
-        raise ValueError("模型列表必须是数组")
-    if len(parsed) > MAX_MODELS:
-        raise ValueError(f"模型最多 {MAX_MODELS} 个")
+    entries = parse_model_entries(raw)
     result: list[ModelMapping] = []
     seen: set[str] = set()
-    for item in parsed:
-        if not isinstance(item, dict):
-            raise ValueError("模型项必须是对象")
-        model_id = normalize_model_id(provider_name, str(item.get("id") or ""))
-        upstream = str(item.get("upstream") or "").strip()
-        if not upstream:
-            raise ValueError("模型的 id 和 upstream 都不能为空")
+    for raw_id, upstream in entries:
+        model_id = normalize_model_id(provider_name, raw_id)
         if model_id in seen:
             raise ValueError(f"模型 id 重复：{model_id}")
         seen.add(model_id)
@@ -171,6 +165,14 @@ def list_providers() -> ProviderListOut:
         base_url, source = effective(url_key, values)
         api_key, _ = effective(key_key, values)
         models_raw, _ = effective(models_key, values)
+        try:
+            models = _parse_models(models_raw, name)
+            config_error = ""
+        except ValueError as exc:
+            # 一个供应商的坏模型列表不能把整个页面变成 500；运行时加载
+            # 该供应商时会明确 400（见 load_provider）。
+            models = ()
+            config_error = f"{models_key}：{exc}"
         providers.append(
             ProviderOut(
                 name=name,
@@ -178,8 +180,9 @@ def list_providers() -> ProviderListOut:
                 api_key_configured=bool(api_key),
                 api_key_masked=_mask(api_key),
                 api_key_fingerprint=_fingerprint(api_key) if api_key else "",
-                models=_parse_models(models_raw, name),
+                models=models,
                 source=source,
+                config_error=config_error,
             )
         )
     return ProviderListOut(tuple(providers))
@@ -211,9 +214,9 @@ def _encode_models(models: Sequence[ModelMapping]) -> str:
     )
 
 
-def _validate_value(label: str, value: str) -> str:
-    if len(value) > _MAX_VALUE_LEN:
-        raise ValueError(f"{label} 超过 {_MAX_VALUE_LEN} 字符")
+def _validate_value(label: str, value: str, *, max_len: int = _MAX_VALUE_LEN) -> str:
+    if len(value) > max_len:
+        raise ValueError(f"{label} 超过 {max_len} 字符")
     if any(ch in value for ch in ("\n", "\r", "\x00")):
         raise ValueError(f"{label} 不能包含换行或空字符")
     return value.strip()
@@ -297,7 +300,7 @@ def save_provider(
         pass
 
     changes[models_key] = _validate_value(
-        "模型列表", _encode_models(models)
+        "模型列表", _encode_models(models), max_len=_MAX_MODELS_VALUE_LEN
     )
     _prune_chain(changes, name, models)
 
@@ -327,6 +330,7 @@ def save_provider(
         api_key_fingerprint=_fingerprint(final_key) if final_key else "",
         models=models,
         source="env_file",
+        config_error="",
     )
 
 

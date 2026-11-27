@@ -82,6 +82,35 @@ describe('LLM 配置页', () => {
     await waitFor(() => expect(chainMock).toHaveBeenCalledWith(['minimax/flash']));
   });
 
+  it('模型映射解析失败时提示该供应商配置有误，不挡住其它供应商', async () => {
+    listMock.mockResolvedValue({
+      providers: [
+        { ...provider, models: [], configError: 'LLM_MINIMAX_MODELS：不是合法 JSON' },
+        {
+          ...provider,
+          name: 'bailian',
+          models: [{ id: 'bailian/qwen', upstream: 'qwen-plus' }],
+        },
+      ],
+      modelChain: [],
+    });
+    renderPage();
+    expect(await screen.findByText(/模型映射配置有误/)).toBeInTheDocument();
+    expect(screen.getByText(/LLM_MINIMAX_MODELS/)).toBeInTheDocument();
+    expect(screen.getByText('bailian')).toBeInTheDocument();
+  });
+
+  it('降级链配置有误时显示原因', async () => {
+    listMock.mockResolvedValue({
+      providers: [],
+      modelChain: [],
+      modelChainError: 'LLM_MODEL_CHAIN 不是合法 JSON',
+    });
+    renderPage();
+    expect(await screen.findByText(/当前降级顺序配置有误/)).toBeInTheDocument();
+    expect(screen.getByText(/不是合法 JSON/)).toBeInTheDocument();
+  });
+
   it('编辑时密钥框留空 —— 掩码在占位符，不回显明文', async () => {
     const user = userEvent.setup();
     listMock.mockResolvedValue({ providers: [provider] });

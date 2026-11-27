@@ -30,12 +30,16 @@ class LlmProviderOut(CamelModel):
     api_key_fingerprint: str = ""
     models: list[LlmModelOut] = Field(default_factory=list)
     source: str = "default"
+    #: 该供应商自己的配置错误（模型列表解析失败）；其它供应商照常返回。
+    config_error: str = ""
 
 
 class LlmProvidersOut(CamelModel):
     providers: list[LlmProviderOut] = Field(default_factory=list)
     # 全局默认模型/降级链；第一项即默认模型。
     model_chain: list[str] = Field(default_factory=list)
+    #: LLM_MODEL_CHAIN 解析失败时的原因；此时 model_chain 为空，页面仍可展示供应商。
+    model_chain_error: str = ""
 
 
 class SaveProviderIn(CamelModel):

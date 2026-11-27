@@ -49,12 +49,15 @@ WriteDep = Annotated[CurrentUser, Depends(require("llm_config:write"))]
 def _providers_out(result: ProviderListOut) -> LlmProvidersOut:
     try:
         chain = list(read_model_chain())
+        chain_error = ""
     except ValueError as exc:
-        # 链是手工可编辑的 .env 键；坏了要说清楚是哪一项，而不是页面整体 500。
-        raise BadRequest(f"LLM_MODEL_CHAIN 配置有误：{exc}") from exc
+        # 链坏了只影响链本身：供应商列表照常返回，页面能继续编辑/修复。
+        chain = []
+        chain_error = str(exc)
     return LlmProvidersOut(
         providers=[_provider_out(item) for item in result.providers],
         model_chain=chain,
+        model_chain_error=chain_error,
     )
 
 
@@ -67,6 +70,7 @@ def _provider_out(item) -> LlmProviderOut:
         api_key_fingerprint=item.api_key_fingerprint,
         models=[LlmModelOut(id=m.id, upstream=m.upstream) for m in item.models],
         source=item.source,
+        config_error=item.config_error,
     )
 
 
@@ -203,6 +207,8 @@ async def test_provider(
     provider = next((p for p in result.providers if p.name == name), None)
     if provider is None:
         raise BadRequest(f"供应商 {name} 不存在")
+    if provider.config_error:
+        raise BadRequest(f"供应商 {name} 的模型映射配置有误：{provider.config_error}")
     if not provider.models:
         raise BadRequest("该供应商还没有配置模型映射")
     mapping = next((m for m in provider.models if m.id == model_id), provider.models[0])

@@ -19,7 +19,12 @@ from typing import ClassVar
 from core.exceptions import BadRequest
 from infra.driver_config import DriverSettings, driver_config
 from infra.env_settings import vendor_settings
-from infra.llm.providers.source import ProviderConfig, normalize_model_id, provider_config
+from infra.llm.providers.source import (
+    ProviderConfig,
+    normalize_model_id,
+    parse_model_entries,
+    provider_config,
+)
 
 
 class LLMSettings(DriverSettings):
@@ -61,21 +66,11 @@ class LLMSettings(DriverSettings):
         return self.model.strip()
 
     def model_table(self) -> dict[str, str]:
-        """解析页面存的模型映射表。坏 JSON 视为无映射（由页面侧校验给出明确报错）。"""
+        """解析 ``LLM_MODELS``。坏 JSON 直接抛 ``ValueError``，不静默当空表。"""
         raw = self.models.strip()
-        if not raw or not raw.startswith("["):
+        if not raw:
             return {}
-        try:
-            parsed = json.loads(raw)
-        except ValueError:
-            return {}
-        if not isinstance(parsed, list):
-            return {}
-        table: dict[str, str] = {}
-        for item in parsed:
-            if isinstance(item, dict) and item.get("id") and item.get("upstream"):
-                table[str(item["id"])] = str(item["upstream"])
-        return table
+        return dict(parse_model_entries(raw))
 
     def model_chain_ids(self) -> tuple[str, ...]:
         """解析 ``LLM_MODEL_CHAIN``；坏值抛 ``ValueError``（由调用方转 400）。"""
@@ -144,6 +139,12 @@ def load_provider(name: str) -> ProviderRuntime:
         raise BadRequest(
             f"LLM 供应商 {config.name} 未配置：请设置 {config.base_url_env}（OpenAI 兼容端点）"
         )
+    try:
+        entries = parse_model_entries(config.models)
+    except ValueError as exc:
+        raise BadRequest(
+            f"LLM 供应商 {config.name} 的模型映射（{config.models_env}）有误：{exc}"
+        ) from exc
     settings = LLMSettings(
         base_url=config.base_url,
         api_key=config.api_key,
@@ -155,13 +156,15 @@ def load_provider(name: str) -> ProviderRuntime:
         # 具名供应商的旧配置可能还是 llm/*；运行时也做一次归一，避免
         # 页面已能调用、手工/环境变量配置却 400。
         table: dict[str, str] = {}
-        for model_id, upstream in settings.model_table().items():
+        for model_id, upstream in entries:
             normalized = normalize_model_id(config.name, model_id)
             if normalized in table:
                 raise ValueError(f"模型 id 迁移后重复：{normalized}")
             table[normalized] = upstream
     except ValueError as exc:
-        raise BadRequest(f"LLM 供应商 {config.name} 的模型映射有误：{exc}") from exc
+        raise BadRequest(
+            f"LLM 供应商 {config.name} 的模型映射（{config.models_env}）有误：{exc}"
+        ) from exc
     return ProviderRuntime(
         name=config.name,
         settings=settings,

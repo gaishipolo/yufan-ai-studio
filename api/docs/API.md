@@ -3151,6 +3151,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `providers` | `LlmProviderOut[]` | 否 |  |
 | `modelChain` | `string[]` | 否 |  |
+| `modelChainError` | `string` | 否 |  |
 
 #### `GET /api/v1/llm-config/providers`
 
@@ -3162,6 +3163,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `providers` | `LlmProviderOut[]` | 否 |  |
 | `modelChain` | `string[]` | 否 |  |
+| `modelChainError` | `string` | 否 |  |
 
 #### `PUT /api/v1/llm-config/providers`
 
@@ -3187,6 +3189,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `apiKeyFingerprint` | `string` | 否 |  |
 | `models` | `LlmModelOut[]` | 否 |  |
 | `source` | `string` | 否 |  |
+| `configError` | `string` | 否 |  |
 
 #### `DELETE /api/v1/llm-config/providers/{name}`
 
@@ -3202,6 +3205,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 |---|---|---|---|
 | `providers` | `LlmProviderOut[]` | 否 |  |
 | `modelChain` | `string[]` | 否 |  |
+| `modelChainError` | `string` | 否 |  |
 
 #### `POST /api/v1/llm-config/providers/{name}/models:fetch`
 
@@ -5176,6 +5180,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `apiKeyFingerprint` | `string` | 否 |  |
 | `models` | `LlmModelOut[]` | 否 |  |
 | `source` | `string` | 否 |  |
+| `configError` | `string` | 否 |  |
 
 ### `LlmProvidersOut`
 
@@ -5183,6 +5188,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 |---|---|---|---|
 | `providers` | `LlmProviderOut[]` | 否 |  |
 | `modelChain` | `string[]` | 否 |  |
+| `modelChainError` | `string` | 否 |  |
 
 ### `LoginEventListOut`
 

@@ -979,12 +979,14 @@ export interface LlmProviderOut {
   apiKeyFingerprint?: string;
   models?: LlmModelOut[];
   source?: string;
+  configError?: string;
 }
 
 /** LlmProvidersOut */
 export interface LlmProvidersOut {
   providers?: LlmProviderOut[];
   modelChain?: string[];
+  modelChainError?: string;
 }
 
 /** LoginEventListOut */

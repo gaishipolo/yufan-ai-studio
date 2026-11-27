@@ -14236,6 +14236,11 @@
             "type": "string",
             "title": "Source",
             "default": "default"
+          },
+          "configError": {
+            "type": "string",
+            "title": "Configerror",
+            "default": ""
           }
         },
         "type": "object",
@@ -14260,6 +14265,11 @@
             },
             "type": "array",
             "title": "Modelchain"
+          },
+          "modelChainError": {
+            "type": "string",
+            "title": "Modelchainerror",
+            "default": ""
           }
         },
         "type": "object",

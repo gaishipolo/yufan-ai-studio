@@ -48,6 +48,7 @@ interface ChainModel {
 function ModelChainPanel({
   models,
   chain,
+  chainError,
   canWrite,
   saving,
   onMove,
@@ -57,6 +58,7 @@ function ModelChainPanel({
 }: {
   models: ChainModel[];
   chain: string[];
+  chainError?: string;
   canWrite: boolean;
   saving: boolean;
   onMove: (index: number, delta: number) => void;
@@ -89,6 +91,12 @@ function ModelChainPanel({
           </Button>
         )}
       </div>
+
+      {chainError && (
+        <p className="mt-2 rounded-md border border-line-soft bg-panel-soft px-2 py-1 text-meta text-danger-deep">
+          当前降级顺序配置有误：{chainError}。保存一条新的顺序会覆盖它。
+        </p>
+      )}
 
       {chain.length === 0 ? (
         <p className="mt-3 text-meta text-ink-mute">
@@ -409,7 +417,11 @@ function ProviderCard({
         </div>
       </dl>
 
-      {provider.models?.length ? (
+      {provider.configError ? (
+        <p className="mt-3 rounded-md border border-line-soft bg-panel-soft px-2 py-1 text-meta text-danger-deep">
+          模型映射配置有误：{provider.configError}。修正 .env 里的模型列表，或点「编辑」重新填写（保存会覆盖这份无效配置）。
+        </p>
+      ) : provider.models?.length ? (
         <ul className="mt-3 flex flex-col gap-1.5">
           {provider.models.map((model) => (
             <li key={model.id} className="flex items-center gap-2 text-meta">
@@ -584,6 +596,7 @@ export default function LlmConfigPage() {
         <ModelChainPanel
           models={chainModels}
           chain={chainDraft}
+          chainError={data?.modelChainError}
           canWrite={canWrite}
           saving={saveChainMutation.isPending}
           onMove={moveChain}

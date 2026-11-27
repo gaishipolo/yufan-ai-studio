@@ -22,6 +22,7 @@ default:  LLM_BASE_URL / LLM_API_KEY / LLM_MODELS / LLM_MODEL / LLM_TIMEOUT_SEC
 
 from __future__ import annotations
 
+import json
 import os
 import re
 from dataclasses import dataclass
@@ -36,6 +37,9 @@ LINE_RE = re.compile(r"^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$")
 _NAME_RE = re.compile(r"^[a-z][a-z0-9_]{0,29}$")
 _DEFAULT_TIMEOUT_SEC = 120.0
 
+#: 一个供应商最多挂多少模型。页面写入与运行时加载共用这个上限。
+MAX_MODELS = 100
+
 
 def normalize_provider_name(raw: str) -> str:
     name = raw.strip().lower()
@@ -48,6 +52,37 @@ def keys_of(name: str) -> tuple[str, str, str]:
     """(base_url, api_key, models) 三个 env 键。"""
     prefix = "LLM" if name == "default" else f"LLM_{name.upper()}"
     return f"{prefix}_BASE_URL", f"{prefix}_API_KEY", f"{prefix}_MODELS"
+
+
+def parse_model_entries(raw: str) -> tuple[tuple[str, str], ...]:
+    """解析 ``LLM_*_MODELS`` 的 JSON 数组，返回 ``(平台 id, 上游名)``。
+
+    页面读取、保存和运行时加载共用这一处：坏 JSON 不再出现"页面 500、
+    运行时静默忽略"两套行为。空串表示没配置，返回空元组。
+    """
+    text = raw.strip()
+    if not text:
+        return ()
+    try:
+        parsed = json.loads(text)
+    except ValueError as exc:
+        raise ValueError("不是合法 JSON") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("必须是 JSON 数组")
+    if len(parsed) > MAX_MODELS:
+        raise ValueError(f"最多 {MAX_MODELS} 个模型")
+    entries: list[tuple[str, str]] = []
+    for item in parsed:
+        if not isinstance(item, dict):
+            raise ValueError("每个模型项必须是对象")
+        model_id = item.get("id")
+        upstream = item.get("upstream")
+        if not isinstance(model_id, str) or not model_id.strip():
+            raise ValueError("模型的 id 不能为空")
+        if not isinstance(upstream, str) or not upstream.strip():
+            raise ValueError(f"模型 {model_id.strip()} 的上游名不能为空")
+        entries.append((model_id.strip(), upstream.strip()))
+    return tuple(entries)
 
 
 def provider_keys(name: str, file_values: dict[str, str]) -> tuple[str, str, str]:
@@ -187,6 +222,7 @@ class ProviderConfig:
     timeout_sec: float
     base_url_env: str
     api_key_env: str
+    models_env: str
 
 
 def provider_config(name: str) -> ProviderConfig:
@@ -208,6 +244,7 @@ def provider_config(name: str) -> ProviderConfig:
         timeout_sec=_timeout(timeout_raw, f"{prefix}_TIMEOUT_SEC"),
         base_url_env=url_key,
         api_key_env=key_key,
+        models_env=models_key,
     )
 
 
@@ -219,6 +256,7 @@ def credentials_of(name: str) -> tuple[str, str]:
 
 __all__ = [
     "LINE_RE",
+    "MAX_MODELS",
     "ProviderConfig",
     "credentials_of",
     "discover_provider_names",
@@ -227,6 +265,7 @@ __all__ = [
     "model_prefix",
     "normalize_model_id",
     "normalize_provider_name",
+    "parse_model_entries",
     "provider_config",
     "provider_keys",
     "provider_of",

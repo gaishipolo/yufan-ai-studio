@@ -13,6 +13,7 @@ from pathlib import Path
 import pytest
 
 from core.config import ENV_FILE
+from core.exceptions import BadRequest
 from modules.llm_config.store import (
     ModelMapping,
     credentials_of,
@@ -341,3 +342,58 @@ def test_模型优先链被环境变量覆盖时拒绝页面保存(
     monkeypatch.setenv("LLM_MODEL_CHAIN", '["llm/a"]')
     with pytest.raises(ValueError, match="环境变量"):
         save_model_chain([], known=set())
+
+
+def test_坏模型列表只影响该供应商并返回configError(clean_env: None) -> None:
+    """一个供应商的坏键不能把整个配置页变成 500。"""
+    ENV_PATH.write_text(
+        "LLM_BAD_BASE_URL=https://bad.example/v1\n"
+        "LLM_BAD_MODELS=not-json\n"
+        "LLM_GOOD_BASE_URL=https://good.example/v1\n"
+        'LLM_GOOD_MODELS=[{"id":"good/flash","upstream":"Flash"}]\n',
+        encoding="utf-8",
+    )
+    by_name = {provider.name: provider for provider in list_providers().providers}
+    assert by_name["bad"].config_error.startswith("LLM_BAD_MODELS")
+    assert by_name["bad"].models == ()
+    assert by_name["good"].config_error == ""
+    assert by_name["good"].models == (ModelMapping("good/flash", "Flash"),)
+
+
+def test_坏模型列表运行时明确400(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
+    from infra.llm.providers.openai_compatible import load_provider
+
+    monkeypatch.setenv("LLM_BAD_BASE_URL", "https://bad.example/v1")
+    monkeypatch.setenv("LLM_BAD_MODELS", "not-json")
+    with pytest.raises(BadRequest, match="LLM_BAD_MODELS"):
+        load_provider("bad")
+
+
+def test_一百个模型可保存且不被2048长度卡住(clean_env: None) -> None:
+    """上限是「100 个模型」，不能在实际只有二十几个时被行长先拦住。"""
+    models = tuple(ModelMapping(f"x/m{i}", "u" * 80) for i in range(100))
+    save_provider(
+        "x",
+        base_url="https://x.example/v1",
+        api_key="k",
+        models=models,
+    )
+    assert len(list_providers().providers[0].models) == 100
+
+    with pytest.raises(ValueError, match="最多"):
+        save_provider(
+            "x",
+            base_url="https://x.example/v1",
+            api_key="",
+            models=models + (ModelMapping("x/extra", "u"),),
+        )
+
+
+def test_坏降级链不阻断供应商列表(clean_env: None) -> None:
+    from modules.llm_config.router import _providers_out
+    from modules.llm_config.store import ProviderListOut
+
+    ENV_PATH.write_text("LLM_MODEL_CHAIN=not-json\n", encoding="utf-8")
+    out = _providers_out(ProviderListOut(()))
+    assert out.model_chain == []
+    assert "不是合法 JSON" in out.model_chain_error
