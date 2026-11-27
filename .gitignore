@@ -58,3 +58,7 @@ Thumbs.db
 /var/
 # videos/：本地生成的视频产物（mp4），体积大且与源码无关
 /videos/
+# .codebuddy/：另一个工具的本地笔记目录，不属于工程内容
+.codebuddy/
+# .mavis/：画布等工具的本地资产缓存，不属于工程内容
+.mavis/
