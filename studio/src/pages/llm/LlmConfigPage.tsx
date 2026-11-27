@@ -86,7 +86,7 @@ function ProviderEditor({
   return (
     <Modal open={open} onClose={onClose} title={initial.name ? '编辑供应商' : '新增供应商'} width={640}>
       <form
-        className="flex flex-col gap-4"
+        className="flex flex-col gap-4 px-[18px] py-4"
         onSubmit={(event) => {
           event.preventDefault();
           onSave(draft);

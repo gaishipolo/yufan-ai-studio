@@ -168,7 +168,7 @@ export function AssetPicker({
 
   return (
     <Modal open={open} onClose={onClose} title={title ?? TITLES[kind]} width={880}>
-      <div className="flex flex-col gap-3">
+      <div className="flex flex-col gap-3 px-[18px] py-4">
         {/* 「我的素材 / 案例池」两档。设置展示案例、给槽位挑素材时都出现：
             前者是作者传过的案例第二次挑不到，后者是钉住的那条要随模板公开，
             公开的素材就在案例池里。 */}
