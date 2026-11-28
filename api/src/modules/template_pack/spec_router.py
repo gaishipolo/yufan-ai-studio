@@ -74,8 +74,14 @@ _TAG_LIMIT = Depends(rate_limit("template_pack.tag", limit=settings.rate_limit_d
 
 
 @router.get("/tags", summary="模板标签词表（两级平铺，含每个标签的模板数）")
-async def list_tags(session: SessionDep, actor: TemplatePackReadDep) -> ApiResponse[list[TagOut]]:
-    return ApiResponse.ok(await TagService(session).list_tags())
+async def list_tags(
+    session: SessionDep,
+    actor: TemplatePackReadDep,
+    scope: Literal["all", "mine", "published"] = Query(
+        default="all", description="计数口径：all / 我的全部状态 / 已发布"
+    ),
+) -> ApiResponse[list[TagOut]]:
+    return ApiResponse.ok(await TagService(session).list_tags(actor, scope=scope))
 
 
 @router.post(

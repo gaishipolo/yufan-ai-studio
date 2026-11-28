@@ -70,8 +70,8 @@ import {
   type SlotFillMode,
 } from './randomness';
 import { hasFallbackSlotRef, requiredSlotCount } from './slotIndexRefs';
-import { SpecTagBar } from './SpecTagBar';
-import { templateTagLabel } from './specTagUtils';
+import { SpecTagBar } from '@/features/template-specs/SpecTagBar';
+import { templateTagLabel } from '@/features/template-specs/specTagUtils';
 import { tagRequestIds } from '@/shared/lib/tagSelection';
 
 /** `POST /generations/image` 的结果有 `name`，`POST /tasks` 的结果有 `title`。 */
@@ -249,7 +249,7 @@ export function SpecLibrary() {
   /* 标签筛选留在组件 state（不进 URL）：模板库是填表入口，筛选只是这次浏览的
      视角，不该变成可以分享/回退的页面状态。 */
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  const tagsQuery = useTemplateTags();
+  const tagsQuery = useTemplateTags('published');
   const tags = useMemo(() => tagsQuery.data ?? [], [tagsQuery.data]);
   /* 界面上可以「维度 + 取值」同时高亮，但请求只发二级取值。 */
   const effectiveTagIds = useMemo(

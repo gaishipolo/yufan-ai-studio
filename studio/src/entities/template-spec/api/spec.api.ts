@@ -45,8 +45,9 @@ export const specApi = {
   compile: (key: string, payload: SpecCompileIn) =>
     api.post<SpecCompileOut>(`/template-specs/${key}/compile`, payload),
 
-  /** 模板独立标签词表（与素材库词表互不影响）。 */
-  tags: () => api.get<TagOut[]>('/template-specs/tags'),
+  /** 模板独立标签词表（与素材库词表互不影响）；计数口径随入口收窄。 */
+  tags: (scope: 'all' | 'mine' | 'published' = 'all') =>
+    api.get<TagOut[]>('/template-specs/tags', { scope }),
   createTag: (payload: modules__template_pack__spec_schema__TagIn) => api.post<TagOut>('/template-specs/tags', payload),
   renameTag: (id: string, payload: modules__template_pack__spec_schema__TagIn) =>
     api.patch<TagOut>(`/template-specs/tags/${id}`, payload),

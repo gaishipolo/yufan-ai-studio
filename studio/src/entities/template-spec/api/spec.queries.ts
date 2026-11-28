@@ -69,11 +69,16 @@ export function usePublishedSpecs(tagIds: string[] = []) {
   });
 }
 
-/** 模板独立标签词表。词表改动影响所有模板卡片，缓存 30 秒够用。 */
-export function useTemplateTags() {
+/**
+ * 模板独立标签词表。词表改动影响所有模板卡片，缓存 30 秒够用。
+ *
+ * `scope` 是**计数口径**，不是词表范围：词表始终是同一份，只是数字按入口
+ * 对齐（模板封装=我的全部状态，模板库=已发布）——否则标签写 N、点进去不是 N。
+ */
+export function useTemplateTags(scope: 'all' | 'mine' | 'published' = 'all') {
   return useQuery({
-    queryKey: ['template-specs', 'tags'],
-    queryFn: specApi.tags,
+    queryKey: ['template-specs', 'tags', scope],
+    queryFn: () => specApi.tags(scope),
     staleTime: 30_000,
   });
 }

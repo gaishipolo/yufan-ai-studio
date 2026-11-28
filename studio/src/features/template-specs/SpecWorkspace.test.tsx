@@ -307,39 +307,56 @@ describe('模板封装 · 两级标签', () => {
 
     const top = within(screen.getByRole('group', { name: '模板维度标签' }));
     const second = within(screen.getByRole('group', { name: '模板取值标签' }));
-    expect(top.getByRole('button', { name: '产品' })).toBeInTheDocument();
-    expect(second.getByRole('button', { name: '写实' })).toBeInTheDocument();
-    /* 组合语义挂在行标题 title 上，常驻版面不再摆一行小字。 */
+    expect(top.getByRole('button', { name: /^产品/ })).toBeInTheDocument();
+    expect(second.getByRole('button', { name: /^写实/ })).toBeInTheDocument();
+    /* 与模板库共用一套：两行都是单选，规则挂在行标题 title 上。 */
     expect(screen.getByText('维度')).toHaveAttribute(
       'title',
-      expect.stringContaining('或'),
+      expect.stringContaining('单选'),
     );
 
-    await user.click(top.getByRole('button', { name: '产品' }));
-    expect(second.queryByRole('button', { name: '写实' })).not.toBeInTheDocument();
-    expect(second.getByRole('button', { name: '6036' })).toBeInTheDocument();
+    await user.click(top.getByRole('button', { name: /^产品/ }));
+    expect(second.queryByRole('button', { name: /^写实/ })).not.toBeInTheDocument();
+    expect(second.getByRole('button', { name: /^6036/ })).toBeInTheDocument();
     /* 真的进了查询键 —— 只改视觉高亮不算筛选。 */
     expect(specFilterCalls.at(-1)).toEqual(['t1']);
   });
 
-  it('点取值切换选中，兄弟取值仍可见；再点一次取消', async () => {
+  it('点取值单选切换，兄弟取值仍可见；再点一次只取消取值', async () => {
     const user = userEvent.setup();
     templateTags.current = TEMPLATE_TAGS;
     renderWorkspace([specOf()]);
 
     const second = within(screen.getByRole('group', { name: '模板取值标签' }));
-    await user.click(second.getByRole('button', { name: '6036' }));
+    await user.click(second.getByRole('button', { name: /^6036/ }));
     expect(specFilterCalls.at(-1)).toEqual(['t11']);
-    expect(second.getByRole('button', { name: 'T35' })).toBeInTheDocument();
+    expect(second.getByRole('button', { name: /^T35/ })).toBeInTheDocument();
 
-    await user.click(second.getByRole('button', { name: 'T35' }));
-    expect(specFilterCalls.at(-1)).toEqual(['t11', 't12']);
+    await user.click(second.getByRole('button', { name: /^T35/ }));
+    expect(specFilterCalls.at(-1)).toEqual(['t12']);
 
-    await user.click(second.getByRole('button', { name: 'T35' }));
-    expect(specFilterCalls.at(-1)).toEqual(['t11']);
+    await user.click(second.getByRole('button', { name: /^T35/ }));
+    /* 取消取值后父维度仍在，所以请求落到整个维度。 */
+    expect(specFilterCalls.at(-1)).toEqual(['t1']);
 
     await user.click(screen.getByRole('button', { name: '清除筛选' }));
     expect(specFilterCalls.at(-1)).toEqual([]);
+  });
+
+  it('跨维度也单选：点另一个维度会替换当前维度与取值', async () => {
+    const user = userEvent.setup();
+    templateTags.current = TEMPLATE_TAGS;
+    renderWorkspace([specOf()]);
+
+    const top = within(screen.getByRole('group', { name: '模板维度标签' }));
+    const second = within(screen.getByRole('group', { name: '模板取值标签' }));
+    await user.click(second.getByRole('button', { name: /^6036/ }));
+    expect(specFilterCalls.at(-1)).toEqual(['t11']);
+
+    await user.click(top.getByRole('button', { name: /^风格/ }));
+    expect(specFilterCalls.at(-1)).toEqual(['t2']);
+    await user.click(second.getByRole('button', { name: /^写实/ }));
+    expect(specFilterCalls.at(-1)).toEqual(['t21']);
   });
 
   it('管理标签入口受 template_pack:create 控制', async () => {

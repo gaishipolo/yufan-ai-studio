@@ -127,10 +127,25 @@ class TagService:
     def __init__(self, session: AsyncSession) -> None:
         self.session = session
 
-    async def list_tags(self) -> list[TagOut]:
+    async def list_tags(
+        self, actor: CurrentUser, *, scope: str = "all"
+    ) -> list[TagOut]:
+        """词表 + 每个标签的模板数。
+
+        `scope` 必须与调用方列表的可见范围一致，否则会出现「标签写 N、
+        点进去不是 N」：
+        - `mine`（模板封装）：本人、未删除的全部状态；
+        - `published`（模板库）：所有已发布、未删除；
+        - `all`：全部未删除。
+        """
         rows = await all_tags(self.session)
         _parent, depth, path = tree_index(rows)
-        specs = (await self.session.scalars(sa.select(TemplateSpec))).all()
+        spec_stmt = sa.select(TemplateSpec).where(TemplateSpec.deleted_at.is_(None))
+        if scope == "mine":
+            spec_stmt = spec_stmt.where(TemplateSpec.owner_id == actor.id)
+        elif scope == "published":
+            spec_stmt = spec_stmt.where(TemplateSpec.status == "published")
+        specs = (await self.session.scalars(spec_stmt)).all()
         counts: dict[str, int] = {row.id: 0 for row in rows}
         children = children_of(rows)
         # 一个标签的数字 = **挂了它自己或它下级的模板数**（按模板去重）。

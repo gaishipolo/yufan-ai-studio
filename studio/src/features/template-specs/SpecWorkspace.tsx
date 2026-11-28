@@ -13,6 +13,7 @@ import {
   Tags,
   Trash2,
 } from 'lucide-react';
+import { SpecTagBar } from './SpecTagBar';
 import { useMutation } from '@tanstack/react-query';
 import { useModels } from '@/entities/model/api/model.queries';
 import { findModelSpec } from '@/entities/model/model/types';
@@ -30,7 +31,7 @@ import {
   tagLabel,
   tagsAtDepth,
 } from '@/entities/library/model/tagTree';
-import { tagRequestIds, tagSelection, toggleTagSelection } from '@/shared/lib/tagSelection';
+import { tagRequestIds } from '@/shared/lib/tagSelection';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
@@ -215,7 +216,7 @@ export function SpecWorkspace() {
   /* 模板独立的两级标签筛选：选中的 id 直接进 useSpecs 的查询键，
      切维度/取值就是切一份列表缓存，不会读到上一组的结果。 */
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  const templateTags = useTemplateTags();
+  const templateTags = useTemplateTags('mine');
   const effectiveTagIds = useMemo(
     () => tagRequestIds(templateTags.data ?? [], selectedTagIds),
     [templateTags.data, selectedTagIds],
@@ -1202,7 +1203,7 @@ export function SpecWorkspace() {
 
         {/* 标签筛选条只在模板列表那档出现：案例库、回收站有自己的口径。 */}
         {!trashed && view === 'list' && (
-          <TemplateTagBar
+          <SpecTagBar
             tags={templateTags.data ?? []}
             selected={selectedTagIds}
             onChange={setSelectedTagIds}
@@ -2081,141 +2082,6 @@ function Section({
         )}
       </div>
       <div className="p-4">{children}</div>
-    </div>
-  );
-}
-
-/* 标签筛选条的胶囊样式：与全局 Button 区分开，它不是动作而是筛选状态。 */
-const FILTER_PILL =
-  'inline-flex shrink-0 items-center rounded-xs border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
-const FILTER_IDLE =
-  'border-line-soft bg-panel-soft text-ink-soft hover:border-primary-line hover:bg-primary-soft/60 hover:text-primary-deep';
-const FILTER_ACTIVE = 'border-primary bg-primary text-white shadow-sm';
-
-/**
- * 模板封装列表页的两级标签筛选条。
- *
- * 第一行维度、第二行取值；第二行按当前选中的维度收窄（选了一个取值时保留
- * 它的兄弟取值，否则没法做「同维度 OR」）。组合语义（同维度 OR / 跨维度 AND）
- * 挂在两行标题的 `title` 上，常驻版面保持干净。
- *
- * 这里比素材库的 `LibraryTagBar` 简化：没有每行搜索框、计数徽标与管理入口
- * （管理入口在工具栏），因为模板词表还小。选中的 id 交给容器写进
- * `useSpecs(status, tagIds)` 的查询键。
- */
-function TemplateTagBar({
-  tags,
-  selected,
-  onChange,
-  busy,
-}: {
-  tags: TagOut[];
-  selected: string[];
-  onChange: (next: string[]) => void;
-  busy?: boolean;
-}) {
-  const selection = useMemo(() => tagSelection(tags, selected), [tags, selected]);
-  const top = selection.dimensions;
-  const second = selection.values;
-  const active = selection.activeIds;
-
-  const clear = () => onChange([]);
-  /* 封装页保留多选（同维度 OR / 跨维度 AND）；请求 id 由共享模块收敛。 */
-  const toggle = (tag: TagOut) =>
-    onChange(toggleTagSelection(tags, selected, tag, {single: false}));
-
-  return (
-    <div className="space-y-1.5" role="group" aria-label="模板标签筛选">
-      {selected.length > 0 && (
-        <button
-          type="button"
-          onClick={clear}
-          className="text-body text-ink-mute hover:text-primary-deep"
-        >
-          清除筛选
-        </button>
-      )}
-      <div
-        role="group"
-        aria-label="模板维度标签"
-        className="flex min-h-[30px] flex-wrap items-center gap-1.5"
-      >
-        <span
-          className="w-12 shrink-0 truncate text-body font-medium text-ink-mute"
-          title="同一维度内多选是「或」（OR）；跨维度多选是「且」（AND）"
-        >
-          维度
-        </span>
-        <button
-          type="button"
-          onClick={clear}
-          aria-label="全部维度标签"
-          aria-pressed={selected.length === 0}
-          title="清空所有层级的标签筛选"
-          className={cn(FILTER_PILL, selected.length === 0 ? FILTER_ACTIVE : FILTER_IDLE)}
-        >
-          全部
-        </button>
-        {top.map((tag) => {
-          const isActive = active.has(tag.id);
-          return (
-            <button
-              key={tag.id}
-              type="button"
-              onClick={() => toggle(tag as unknown as TagOut)}
-              aria-label={tag.name}
-              aria-pressed={isActive}
-              title={`筛选「${tagLabel(tag)}」`}
-              className={cn(FILTER_PILL, isActive ? FILTER_ACTIVE : FILTER_IDLE)}
-            >
-              {tag.name}
-            </button>
-          );
-        })}
-      </div>
-      <div
-        role="group"
-        aria-label="模板取值标签"
-        className="flex min-h-[30px] flex-wrap items-center gap-1.5"
-      >
-        <span
-          className="w-12 shrink-0 truncate text-body font-medium text-ink-mute"
-          title="同维度多选是「或」；跨维度多选是「且」：只留同时满足这些取值的模板"
-        >
-          取值
-        </span>
-        <button
-          type="button"
-          onClick={clear}
-          aria-label="全部取值标签"
-          aria-pressed={selected.length === 0}
-          title="清空所有层级的标签筛选"
-          className={cn(FILTER_PILL, selected.length === 0 ? FILTER_ACTIVE : FILTER_IDLE)}
-        >
-          全部
-        </button>
-        {second.map((tag) => {
-          const isActive = active.has(tag.id);
-          return (
-            <button
-              key={tag.id}
-              type="button"
-              onClick={() => toggle(tag as unknown as TagOut)}
-              aria-label={tag.name}
-              aria-pressed={isActive}
-              title={`筛选「${tagLabel(tag)}」`}
-              className={cn(FILTER_PILL, isActive ? FILTER_ACTIVE : FILTER_IDLE)}
-            >
-              {tag.name}
-            </button>
-          );
-        })}
-      </div>
-      {!tags.length && (
-        <p className="text-body text-ink-mute">
-          {busy ? '标签加载中…' : '还没有标签'}
-        </p>
-      )}
     </div>
   );
 }

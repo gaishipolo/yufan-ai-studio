@@ -6942,6 +6942,30 @@
         ],
         "summary": "模板标签词表（两级平铺，含每个标签的模板数）",
         "operationId": "list_tags_api_v1_template_specs_tags_get",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "scope",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "enum": [
+                "all",
+                "mine",
+                "published"
+              ],
+              "type": "string",
+              "description": "计数口径：all / 我的全部状态 / 已发布",
+              "default": "all",
+              "title": "Scope"
+            },
+            "description": "计数口径：all / 我的全部状态 / 已发布"
+          }
+        ],
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6952,13 +6976,18 @@
                 }
               }
             }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
           }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        }
       },
       "post": {
         "tags": [
@@ -6967,15 +6996,20 @@
         ],
         "summary": "新建模板标签（同父同名返回已有那条）",
         "operationId": "create_tag_api_v1_template_specs_tags_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
         "requestBody": {
+          "required": true,
           "content": {
             "application/json": {
               "schema": {
                 "$ref": "#/components/schemas/modules__template_pack__spec_schema__TagIn"
               }
             }
-          },
-          "required": true
+          }
         },
         "responses": {
           "201": {
@@ -6998,12 +7032,7 @@
               }
             }
           }
-        },
-        "security": [
-          {
-            "bearerAuth": []
-          }
-        ]
+        }
       }
     },
     "/api/v1/template-specs/tags/{tag_id}": {

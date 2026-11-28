@@ -85,6 +85,35 @@ def test_两级词表与打标走完整链路(client: TestClient) -> None:
     assert counts[dimension] == 1  # 两个取值挂在同一个模板上，按模板去重仍为 1
 
 
+def test_标签计数按入口收窄(client: TestClient) -> None:
+    """模板封装看「我的」、模板库看「已发布」，计数不能是全库口径。"""
+    owner = _headers(client)
+    other = _headers(client)
+    dimension = _tag(client, owner, "计数口径")
+    value = _tag(client, owner, "计数取值", dimension)
+
+    mine = _spec(client, owner, "我的模板")
+    theirs = _spec(client, other, "别人的模板")
+    for key, headers in ((mine, owner), (theirs, other)):
+        response = client.patch(
+            f"{API}/{key}/tags", json={"tagIds": [value]}, headers=headers
+        )
+        assert response.status_code == 200, response.text
+
+    def count(headers: dict[str, str], scope: str) -> int:
+        rows = client.get(f"{API}/tags", params={"scope": scope}, headers=headers).json()["data"]
+        return next(item["specCount"] for item in rows if item["id"] == value)
+
+    assert count(owner, "all") == 2
+    assert count(owner, "mine") == 1
+    assert count(other, "mine") == 1
+
+    published = client.post(f"{API}/{mine}/publish", headers=owner)
+    assert published.status_code == 200, published.text
+    assert count(owner, "published") == 1
+    assert count(other, "published") == 1
+
+
 def test_分组维度不能直接打在模板上(client: TestClient) -> None:
     headers = _headers(client)
     dimension = _tag(client, headers, "分组维度")
