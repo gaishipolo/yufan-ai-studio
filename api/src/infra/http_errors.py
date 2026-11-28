@@ -59,7 +59,14 @@ def extract_detail(response: httpx.Response) -> str:
     except ValueError:
         body = None
     if isinstance(body, dict):
+        error = body.get("error")
+        if isinstance(error, dict):
+            value = error.get("message") or error.get("code")
+            if isinstance(value, str) and value.strip():
+                detail = value.strip()
         for key in ("error", "message", "detail", "msg"):
+            if detail:
+                break
             value = body.get(key)
             if isinstance(value, str) and value.strip():
                 detail = value.strip()
@@ -84,6 +91,10 @@ def classify_http_error(
     vendor: str,
     status_map: Mapping[int, type[AppError]] | None = None,
     code_overrides: Mapping[tuple[int, str], type[AppError]] | None = None,
+    message_map: Mapping[int, str] | None = None,
+    code_message_map: Mapping[tuple[int, str], str] | None = None,
+    default_hint: str = "",
+    default_hint_5xx: str = "",
     detail: str | None = None,
 ) -> AppError:
     """按驱动声明的映射表把 HTTP 错误分类成平台异常。
@@ -100,10 +111,14 @@ def classify_http_error(
     """
     status = response.status_code
     text = detail if detail is not None else extract_detail(response)
+    code = (
+        extract_code(response)
+        if code_overrides is not None or code_message_map is not None
+        else ""
+    )
 
     exc_cls: type[AppError] | None = None
     if code_overrides:
-        code = extract_code(response)
         exc_cls = code_overrides.get((status, code))
     if exc_cls is None and status_map:
         exc_cls = status_map.get(status)
@@ -113,7 +128,13 @@ def classify_http_error(
         # grsai 的 408→BadRequest 口径由它自己的 status_map 显式声明覆盖。
         exc_cls = DEFAULT_5XX if status >= 500 or status == 408 else DEFAULT_4XX
 
-    error = exc_cls(f"{vendor} 上游异常（HTTP {status}）{suffix(text)}")
+    hint = code_message_map.get((status, code)) if code_message_map else None
+    if hint is None and message_map:
+        hint = message_map.get(status)
+    fallback = default_hint_5xx if status >= 500 or status == 408 else default_hint
+    hint = hint or fallback or f"{vendor} 上游异常"
+    code_part = f" {code}" if code else ""
+    error = exc_cls(f"{hint}（HTTP {status}{code_part}）{suffix(text)}")
     # 保留原始状态：平台异常类会抹平 408 与 5xx（都归 UpstreamError），
     # 但 LLM 降级链要按原始状态区分「明确失败」与「可能已受理」。
     error.upstream_status = status

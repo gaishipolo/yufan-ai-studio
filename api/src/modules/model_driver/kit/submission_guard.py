@@ -423,16 +423,22 @@ async def guarded_submit(
     model: str,
     channel_used: str | None = None,
     call: Callable[[], Awaitable[R]],
+    precheck: Callable[[], Awaitable[None]] | None = None,
+    run_id: str | None = None,
+    identify: Callable[[R], tuple[str | None, str | None]] | None = None,
+    existing_result: Callable[[str], R] | None = None,
+    unknown_error: Callable[[Exception], Exception] | None = None,
     factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> R:
     """把一次提交尝试纳入台账，并在拿到上游标识的**第一时间**落库。
 
-    ## 为什么要它
+    ## 顺序（所有驱动一致）
 
-    框架的 `mark_submitted` 是**拿到 submit 返回值之后**才写 `external_id`。
-    那段窗口里上游可能已经受理并计费，而进程崩了 → 用户付了钱、任务却永远停在
-    「结果未知」。这里在驱动拿到标识的**同一个瞬间**就落库，把这段窗口消掉
-    （台账里留着 task_id，恢复器据此续接 —— 接线在恢复器那一步）。
+    `恢复/轮次键 → precheck（本地校验）→ 抢占 → 付费 POST → 结算`
+
+    百炼的本地校验/素材准备必须发生在抢占之前，否则校验失败会留下
+    `submitting` 回执，把后续合法重试永久锁死。`precheck` 就是给这一步的缝：
+    它抛异常时不写任何台账；通过后 guard 才抢占。
 
     ## 三态怎么判
 
@@ -444,43 +450,66 @@ async def guarded_submit(
 
     ## 轮次
 
-    键是 `{record_id}#{轮次}`，轮次 = 该记录已有的台账行数 + 1。每轮一行，
+    默认键是 `{record_id}#{轮次}`，轮次 = 该记录已有的台账行数 + 1。每轮一行，
     上一轮的历史留着可查；人工重提会开新的一轮，不会被旧行挡住。
 
-    ## 抢占失败
+    `run_id` 给「台账键就是归档 run id」的驱动（百炼）覆盖；它们自己负责
+    只读恢复与本地校验，base guard 仍负责抢占、调用、结算与三态。
 
-    `(provider, run_id)` 唯一约束冲突 = 同一轮已经有人在提交 → 抛
-    `ReceiptConflict`，**不重试**。宁可让这一次提交失败（框架按「可能已受理」
-    处理，转人工核对），也不要并发发两次付费请求。
+    ## 已有提交
+
+    `decide_before_submit` 发现同一键已 `submitted` → 默认抛 `ReceiptConflict`。
+    调用方若能把 external_id 还原成自己的返回类型（百炼返回字符串），传
+    `existing_result` 复用；正常路径下仍应先做只读恢复（百炼在 guard 外做）。
+
+    ## 调用失败
+
+    `unknown_error` 只在台账判为 `submission_unknown` 时用来替换面向用户的异常；
+    其余异常保持原样。落账失败不掩盖原始异常。
     """
     factory = factory or get_session_factory()
     if not record_id.strip():
         # 没有业务记录 id → 入不了账（台账的键就是它）。这时**不做台账**、
         # 直接提交：台账是账本，不该拦停正常业务。
+        if precheck is not None:
+            await precheck()
         logger.warning(f"{provider} 提交缺少 record_id，本次提交不记入台账")
         return await call()
 
-    attempt = await _next_attempt(factory, provider=provider, record_id=record_id)
-    run_id = f"{record_id}{_ATTEMPT_SEPARATOR}{attempt}"
+    if run_id is None:
+        attempt = await _next_attempt(factory, provider=provider, record_id=record_id)
+        run_id = f"{record_id}{_ATTEMPT_SEPARATOR}{attempt}"
 
-    async with factory() as session:
-        await claim_receipt(
-            session,
-            provider=provider,
-            run_id=run_id,
-            model=model,
-            channel_used=channel_used,
-            record_id=record_id,
-        )
-        await session.commit()
+    if precheck is not None:
+        await precheck()
+
+    decision = await decide_before_submit(
+        provider=provider,
+        run_id=run_id,
+        model=model,
+        channel_used=channel_used,
+        record_id=record_id,
+        factory=factory,
+    )
+    if decision.external_id is not None:
+        if existing_result is not None:
+            return existing_result(decision.external_id)
+        raise ReceiptConflict(f"{provider} 已有提交记录；禁止自动重提")
 
     try:
         result = await call()
     except Exception as exc:
-        await _settle_failure(factory, provider=provider, run_id=run_id, exc=exc)
+        status = await settle_failure(
+            provider=provider, run_id=run_id, exc=exc, factory=factory
+        )
+        if status == STATUS_UNKNOWN and unknown_error is not None:
+            raise unknown_error(exc) from exc
         raise
 
-    task_id, external_id = _identifiers(result)
+    if identify is not None:
+        task_id, external_id = identify(result)
+    else:
+        task_id, external_id = _identifiers(result)
     if not external_id:
         # 提交成功却没拿到可续接的标识：不能记「已提交」（缺凭证的行等于没提交过），
         # 也不能记「已拒绝」（上游确实受理了）→ 记「可能已受理」，让人来核对。
@@ -521,17 +550,13 @@ async def settle_failure(
     - 「可能已受理」（5xx / 超时 / 读响应失败 / 响应畸形）→ `submission_unknown`：
       **禁止自动重提**，只能人工核对。
 
-    ## 给谁用：自己编排提交顺序的驱动
+    ## 给谁用
 
-    百炼的本地校验与素材上传必须发生在**抢占之前**（否则上传阶段的一次崩溃会
-    把这一轮永远卡在 `submitting`，合法重提也被拒之门外），抢占之后只剩付费
-    POST —— 所以它不能直接套 `guarded_submit`。但**三态判定必须与它、与框架
-    runner 是同一份**：否则会出现「台账说可重试、框架说禁止重提」两边打架。
+    `guarded_submit` 内部调用它；需要自己处理「可能已受理」文案的驱动
+    （百炼）通过 `unknown_error` 回调把异常换成面向用户的说明。
 
-    返回值让调用方据此组织**面向用户**的措辞（百炼在「可能已受理」时把异常
-    换成「禁止自动重提」的说明）。
-
-    落库失败**不掩盖原始异常** —— 上游的错误信息比「台账写不进去」重要得多。
+    返回值让调用方据此组织措辞。落库失败**不掩盖原始异常** —— 上游的错误
+    信息比「台账写不进去」重要得多。
     """
     status = STATUS_UNKNOWN if possibly_delivered(exc) else STATUS_REJECTED
     error = f"{type(exc).__name__}: {exc}"
@@ -548,15 +573,7 @@ async def settle_failure(
     return status
 
 
-async def _settle_failure(
-    factory: async_sessionmaker[AsyncSession],
-    *,
-    provider: str,
-    run_id: str,
-    exc: Exception,
-) -> None:
-    """`guarded_submit` 内部的失败落账（对外版本见 `settle_failure`）。"""
-    await settle_failure(provider=provider, run_id=run_id, exc=exc, factory=factory)
+
 
 
 async def find_recoverable_external_id(

@@ -103,12 +103,8 @@ from modules.model_driver.kit.credentials import require_api_key
 from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.kit.status import resolve_state
 from modules.model_driver.kit.submission_guard import (
-    STATUS_SUBMITTED,
-    STATUS_UNKNOWN,
-    decide_before_submit,
+    guarded_submit,
     recover_external_id,
-    settle_failure,
-    settle_submission,
 )
 from modules.model_driver.spec import DriverMeta
 
@@ -544,57 +540,48 @@ class BailianProvider:
         run_id = self._ensure_supported(request)
         folder = await asyncio.to_thread(run_path, run_id)
 
-        # 回执在 DB（2026-11-23 落库）：工作区被删/换机器也能恢复，
-        # 不会再因为读不到文件回执而把同一个 run 重复提交给上游（二次计费）。
-        # 文件锁仍保留 —— 它管的是**进程内互斥**（含素材上传），和回执是两个职责。
-        #
-        # 顺序：只读恢复 → 本地校验 → **抢占** → 付费 POST → 结算。
-        # 抢占必须在校验之后 —— 否则校验失败会留下 submitting 回执，把后续
-        # 合法重试永久锁死（原来的文件回执也是这个顺序）。
+        # 回执在 DB（2026-11-23 落库）：工作区被删/换机器也能恢复。
+        # 只读恢复放在 guard 外：已有提交必须直接复用，不能先跑本地校验
+        # （工作区可能已经不在，校验会把一条已提交的任务误判成坏任务）。
         existing = await recover_external_id(
             provider="bailian", run_id=run_id, model=request.model
         )
         if existing is not None:
             return existing
+
         headers = {
             **self._headers(),
             "X-DashScope-Async": "enable",
             "X-DashScope-OssResourceResolve": "enable",
         }
-        prepared = folder / "records/bailian-request.json"
-        if not await asyncio.to_thread(prepared.exists):
-            payload = await self.prepare_inputs(run_id, request.model)
-        else:
-            payload = await asyncio.to_thread(_read, prepared)
-        if payload.get("model") != _real_model(request.model):
-            raise BadRequest("百炼素材绑定模型不匹配，请重新准备素材")
-        prompt = payload.get("input", {}).get("prompt")
-        if not isinstance(prompt, str) or len(prompt) > 20000:
-            raise BadRequest("百炼提示词不能超过20000字符")
-        duration = payload.get("parameters", {}).get("duration")
-        if isinstance(duration, bool) or not isinstance(duration, int) or not 2 <= duration <= 30:
-            raise BadRequest("百炼输出时长须为2至30秒的整数")
-        if time.time() - (await asyncio.to_thread(prepared.stat)).st_mtime > 47 * 3600:
-            raise BadRequest("百炼临时素材已过期，请重新准备素材")
+        payload: dict[str, Any] | None = None
 
-        # 校验全部通过，现在才抢占提交权（并发下只能有一个请求进到付费 POST）
-        decision = await decide_before_submit(
-            provider="bailian",
-            run_id=run_id,
-            model=request.model,
-            # 台账的 record_id = **业务记录 id**（恢复器按它反查业务表）。
-            # 百炼的 run_id 本身就是 request.request_id：任务链里等于 VideoTask.id，
-            # 通用入口里等于那条生成记录的 id。
-            record_id=run_id,
-            # 真实选路结果（框架按媒体的接受通道算出来）：有素材走 OSS，纯文本
-            # 生成时为空 —— 不再硬编码 "oss"（那在没有素材时是**假值**）。
-            channel_used=request.channel_used or None,
-        )
-        if decision.external_id is not None:
-            # 抢占裁决发现**这一轮已经有人提交过**（窗口：只读恢复之后、抢占之前
-            # 另一个请求提交成功）→ 复用它的任务号，绝不能再发一次付费 POST。
-            return decision.external_id
-        try:
+        async def precheck() -> None:
+            nonlocal payload
+            prepared = folder / "records/bailian-request.json"
+            if not await asyncio.to_thread(prepared.exists):
+                body: dict[str, Any] = await self.prepare_inputs(run_id, request.model)
+            else:
+                body = await asyncio.to_thread(_read, prepared)
+            payload = body
+            if body.get("model") != _real_model(request.model):
+                raise BadRequest("百炼素材绑定模型不匹配，请重新准备素材")
+            prompt = body.get("input", {}).get("prompt")
+            if not isinstance(prompt, str) or len(prompt) > 20000:
+                raise BadRequest("百炼提示词不能超过20000字符")
+            duration = body.get("parameters", {}).get("duration")
+            if (
+                isinstance(duration, bool)
+                or not isinstance(duration, int)
+                or not 2 <= duration <= 30
+            ):
+                raise BadRequest("百炼输出时长须为2至30秒的整数")
+            if time.time() - (await asyncio.to_thread(prepared.stat)).st_mtime > 47 * 3600:
+                raise BadRequest("百炼临时素材已过期，请重新准备素材")
+
+        async def call() -> str:
+            # payload 一定由 precheck 写过；guard 不会跳过 precheck 直接 call。
+            assert payload is not None
             async with self._client() as client:
                 result = await self._json(
                     client,
@@ -606,28 +593,26 @@ class BailianProvider:
             task_id = result.get("output", {}).get("task_id")
             if not isinstance(task_id, str) or not re.fullmatch(r"[a-zA-Z0-9_-]+", task_id):
                 raise ValueError("missing task id")
-        except Exception as exc:
-            # 三态判定用 kit 的**同一份**实现（`infra/delivery.py::possibly_delivered`，
-            # 与框架 runner 一致）：
-            #   「确定没送达」（4xx）→ rejected：**可以安全重试**；
-            #   「可能已受理」（5xx / 超时 / 读响应失败 / 响应畸形）→ submission_unknown：
-            #   **禁止自动重提**，只能人工核对。
-            # 顺带补掉一个洞：以前只结算 BadRequest / UpstreamError / ValueError /
-            # TypeError 四类，其它异常（上游回了意料之外的 JSON 结构等）会把这一轮
-            # 永远卡在 submitting，合法重提也被拒之门外。
-            status = await settle_failure(provider="bailian", run_id=run_id, exc=exc)
-            if status == STATUS_UNKNOWN:
-                raise UpstreamError("百炼提交回执未知，请核对上游；禁止自动重提") from exc
-            raise
-        external_id = f"{run_id}:{task_id}"
-        await settle_submission(
+            return f"{run_id}:{task_id}"
+
+        def identify(result: str) -> tuple[str, str]:
+            _, _, task_id = result.partition(":")
+            return task_id, result
+
+        return await guarded_submit(
             provider="bailian",
+            record_id=run_id,
+            model=request.model,
+            channel_used=request.channel_used or None,
             run_id=run_id,
-            status=STATUS_SUBMITTED,
-            task_id=task_id,
-            external_id=external_id,
+            precheck=precheck,
+            call=call,
+            identify=identify,
+            existing_result=lambda external_id: external_id,
+            unknown_error=lambda exc: UpstreamError(
+                "百炼提交回执未知，请核对上游；禁止自动重提"
+            ),
         )
-        return external_id
 
     # ------------------------------------------------------------------ 轮询
     async def poll(self, external_id: str, *, model: str = "") -> GenerationProgress:

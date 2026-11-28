@@ -86,6 +86,7 @@ from infra.driver_config import DriverSettings, driver_config
 from infra.media_channel import MediaChannel
 from infra.media_probe import image_size
 from modules.model_driver.kit.credentials import require_api_key
+from modules.model_driver.kit.errors import classify_http_error
 from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.kit.status import progress_from_status
 from modules.model_driver.kit.submission_guard import guarded_submit
@@ -626,77 +627,25 @@ def _json_body(response: httpx.Response) -> dict[str, Any]:
 
 
 def _http_error(response: httpx.Response) -> Exception:
-    """把上游状态码翻译成本项目的异常。
-
-    分类依据与生图驱动一致：4xx = 供应商明确拒绝（可安全失败），
-    429/5xx = 临时故障（交给框架退避重试）。
-
-    `detail` 的取法要兼容三套形状：
-    `{error:{message}}`（查询接口）、`{code, message, data}`（`.cn` 网关）、
-    `{detail}`（官方文档示例）。
-    """
-    body: Any = None
-    try:
-        body = response.json()
-    except ValueError:
-        body = None
-    detail = _error_detail(body) or response.text[:200]
-    code = _error_code(body)
-    suffix = f"（HTTP {response.status_code}{' ' + code if code else ''}）{detail}"
-
-    if response.status_code == 401:
-        return Unauthorized(f"Agnes 鉴权失败：请检查 AGNES_API_KEY{suffix}")
-    if response.status_code == 403:
-        return Forbidden(f"Agnes 拒绝访问：当前密钥无权调用该模型{suffix}")
-    if response.status_code == 404:
-        return BadRequest(
-            f"Agnes 不认这个模型或任务：当前密钥分组可能未开通视频模型{suffix}；"
-            "可用模型见 GET /api/v1/models"
-        )
-    if response.status_code == 429:
-        return RateLimited(f"Agnes 限流，请稍后重试{suffix}")
-    if response.status_code >= 500:
-        if code == "video_queue_full":
-            # 上游明确说「队列满、没建任务」，这是**容量不足**（429 语义），
-            # 不是「可能已受理」。归 `UpstreamError`（502）会被 runner 的
-            # `_possibly_delivered` 判成「请求可能已送达」→ 任务直接判失败、
-            # 禁止自动重试，并且把这条真正的原因盖成「提交结果未知」（实测过）。
-            # 归 429 后：确认没受理（4xx → 不担心重复计费）+ 可重试，
-            # 队列一松就自动补交，用户不再看到一句误导性的「请核对上游」。
-            return RateLimited(
-                f"{detail or 'Agnes 视频队列已满，请稍后重试'}（HTTP 503 {code}）"
-            )
-        return UpstreamError(f"Agnes 服务暂时不可用{suffix}")
-    if response.status_code == 400:
-        return BadRequest(f"Agnes 参数校验失败{suffix}")
-    # 未枚举的 4xx：供应商**明确拒绝**（没受理、不会计费）→ 落 4xx 侧，
-    # 与生图驱动同口径。落 `UpstreamError`(502) 会被判成「可能已受理」→
-    # 自动重试 3 次且把真实原因盖成「提交结果未知」。2026-11-24 行为修正。
-    return BadRequest(f"Agnes 调用失败{suffix}")
-
-
-def _error_detail(body: Any) -> str:
-    if not isinstance(body, dict):
-        return ""
-    error = body.get("error")
-    if isinstance(error, dict):
-        return str(error.get("message") or error.get("code") or "").strip()
-    if error:
-        return str(error).strip()
-    for key in ("message", "detail", "msg"):
-        value = body.get(key)
-        if isinstance(value, str) and value.strip():
-            return value.strip()
-    return ""
-
-
-def _error_code(body: Any) -> str:
-    if not isinstance(body, dict):
-        return ""
-    code = body.get("code")
-    # `code` 可能是 HTTP 数字（查询接口的 error.code 已在上面取过 message），
-    # 这里只要「错误的业务码」，数字码不再重复展示。
-    return code if isinstance(code, str) else ""
-
+    """Agnes 视频的错误口径：只声明映射表，分类执行统一走 kit。"""
+    return classify_http_error(
+        response,
+        vendor="Agnes 视频",
+        status_map={401: Unauthorized, 403: Forbidden, 429: RateLimited},
+        code_overrides={(503, "video_queue_full"): RateLimited},
+        message_map={
+            400: "Agnes 参数校验失败",
+            401: "Agnes 鉴权失败：请检查 AGNES_API_KEY",
+            403: "Agnes 拒绝访问：当前密钥无权调用该模型",
+            404: (
+                "Agnes 不认这个模型或任务：当前密钥分组可能未开通视频模型；"
+                "可用模型见 GET /api/v1/models"
+            ),
+            429: "Agnes 限流，请稍后重试",
+        },
+        code_message_map={(503, "video_queue_full"): "Agnes 视频队列已满，请稍后重试"},
+        default_hint="Agnes 调用失败",
+        default_hint_5xx="Agnes 服务暂时不可用",
+    )
 
 Driver = AgnesVideoDriver

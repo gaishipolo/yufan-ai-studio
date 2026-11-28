@@ -77,6 +77,7 @@ from infra.ai.base import (
 from infra.driver_config import DriverSettings, driver_config
 from infra.media_channel import MediaChannel
 from modules.model_driver.kit.credentials import require_api_key
+from modules.model_driver.kit.errors import classify_http_error
 from modules.model_driver.kit.settings import vendor_settings
 from modules.model_driver.kit.submission_guard import guarded_submit
 from modules.model_driver.spec import DriverMeta
@@ -366,54 +367,21 @@ def _first_item(body: Any) -> dict[str, Any]:
 
 
 def _http_error(response: httpx.Response) -> Exception:
-    """把上游状态码翻译成本项目的异常类型。
-
-    分类依据是 runner 的计费口径：4xx 表示供应商明确拒绝（没受理，可安全重试或直接失败），
-    5xx / 429 表示临时故障（可能已受理，交给框架的重试与「结果未知」逻辑）。
-
-    `404` 单列：Agnes 用它表示「当前密钥分组不支持这个模型」。那是最典型的
-    永久错误，落到 `UpstreamError` 会被重试三次、每次都失败得一样，最后还把
-    真正的提示（"当前分组不支持模型 xxx"）盖掉。归到 `BadRequest` 后
-    `runner._retryable` 直接判 false，用户第一次就能看到原因。
-    """
-    detail = ""
-    try:
-        body = response.json()
-        error = body.get("error") if isinstance(body, dict) else None
-        if isinstance(error, dict):
-            detail = str(error.get("message") or error.get("code") or "")
-        elif error:
-            detail = str(error)
-        else:
-            detail = str(body)[:200]
-    except Exception:  # noqa: BLE001 - 上游返回非 JSON 时只是少一段说明
-        detail = response.text[:200]
-
-    suffix = f"（{response.status_code}）{detail}"
-    if response.status_code == 401:
-        return Unauthorized(f"Agnes 鉴权失败：请检查 AGNES_API_KEY{suffix}")
-    if response.status_code == 403:
-        return Forbidden(f"Agnes 拒绝访问：当前密钥无权调用该模型{suffix}")
-    if response.status_code == 404:
-        return BadRequest(
-            f"Agnes 不认这个模型：当前密钥的分组可能未开通{suffix}；"
-            "可用模型见 GET /api/v1/models"
-        )
-    if response.status_code == 429:
-        return RateLimited(f"Agnes 限流，请稍后重试{suffix}")
-    if response.status_code >= 500:
-        return UpstreamError(f"Agnes 服务异常{suffix}")
-    if response.status_code == 400:
-        return BadRequest(f"Agnes 参数校验失败{suffix}")
-    # 未枚举的 4xx（402 付费失败、405、409、422 参数错…）：供应商**明确拒绝**，
-    # 没受理、不会计费 → 落 4xx 侧。
-    #
-    # 落 `UpstreamError`(502) 有两个后果（2026-11-24 行为修正）：
-    # 1. `retryable` 为真 → runner 自动重试 3 次，每次失败得一样；
-    # 2. `_possibly_delivered` 把 5xx 判成「可能已受理」→ 任务显示「提交结果
-    #    未知，请到上游核对」，供应商明说的原因被整段盖掉。
-    # 改后与本函数 400/404 分支、以及 kit 默认口径、Grsai 口径一致。
-    return BadRequest(f"Agnes 调用失败{suffix}")
+    """Agnes 生图的错误口径：只声明映射表，分类执行统一走 kit。"""
+    return classify_http_error(
+        response,
+        vendor="Agnes",
+        status_map={401: Unauthorized, 403: Forbidden, 429: RateLimited},
+        message_map={
+            400: "Agnes 参数校验失败",
+            401: "Agnes 鉴权失败：请检查 AGNES_API_KEY",
+            403: "Agnes 拒绝访问：当前密钥无权调用该模型",
+            404: "Agnes 不认这个模型：当前密钥的分组可能未开通；可用模型见 GET /api/v1/models",
+            429: "Agnes 限流，请稍后重试",
+        },
+        default_hint="Agnes 调用失败",
+        default_hint_5xx="Agnes 服务异常",
+    )
 
 
 Driver = AgnesDriver
