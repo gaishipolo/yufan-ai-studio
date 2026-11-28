@@ -367,12 +367,11 @@ export function optionalSlotRefError(
 }
 
 /**
- * 随机档提示词里的可选槽位：最多只能被**单张引用一次**。
+ * 主提示词里的可选槽位：最多只能被**单张引用一次**。
  *
- * 随机档没有「框选段」—— 它的插入点就是那处引用本身。后端
- * `validate_optional_slot_refs` 对两段提示词各算各的：同一可选槽位出现
- * 两处单张引用时，界面上两处长得一模一样，编译期不知道哪一处该换成
- * 「未选时文案」。这里补上前端提示，避免发布才 400。
+ * 那一处就是它的插入点（填了素材插编号，没填插「未选时文案」）。同一可选
+ * 槽位出现两处单张引用时，编译期不知道哪一处该换成兜底文案。这里补上前端
+ * 提示，避免发布才 400（后端 `validate_optional_slot_refs` 同一判据）。
  */
 export function optionalSlotRefCountError(
   prompt: string,

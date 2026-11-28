@@ -430,7 +430,8 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         allowed_models=list(snapshot.allowed_models),
         params=dict(snapshot.params),
         prompt=snapshot.prompt,
-        random_prompt=snapshot.random_prompt,
+        # random_prompt 是死字段：历史行保留旧值，新版本不再写（2026-11-28 W5）。
+        random_prompt="",
         fingerprint=fingerprint,
         published_by=actor.id,
     )

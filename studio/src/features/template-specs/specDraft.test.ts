@@ -636,15 +636,6 @@ describe('authoredFingerprint：判有没有改动', () => {
     expect(authoredFingerprint(base())).toBe(authoredFingerprint(base()));
   });
 
-  it('随机档提示词变了 → 指纹变（否则改那一段不提示未保存）', () => {
-    const withRandom = (text: string): TemplateSpecIn => ({...base(), randomPrompt: text});
-    expect(authoredFingerprint(withRandom('白天的庭院'))).not.toBe(
-      authoredFingerprint(withRandom('夜晚的街道')),
-    );
-    // 没写与写了空串是同一份：清空那一段不该被判成「有改动」
-    expect(authoredFingerprint(withRandom(''))).toBe(authoredFingerprint(base()));
-  });
-
   /* 这条是这次改动的起因：`SlotCard` 切回「用户填」时写 `assetId: null`，
      而 `blankSlot()` 根本不带这个键 —— 切一圈内容没变，JSON 却不等。 */
   it('`assetId: null` 与压根没有 `assetId` 是同一件事', () => {
@@ -878,27 +869,6 @@ describe('引用写法', () => {
     expect(renumberRefs(before, inserted).prompt).toBe('{{Mixed 2}} 和 {{Mixed 3}}');
   });
 
-  /* 两段提示词引用同一批槽位，编号也跟着同一套位置算。漏掉随机档那一段，
-     删/插一个槽位后它的引用会指向别的槽位，而界面看不出任何异常。 */
-  it('随机档提示词也跟着重编号', () => {
-    const slots: SpecSlotIn[] = [
-      {key: 'a', type: 'image', position: 0},
-      {key: 'b', type: 'image', position: 1},
-    ];
-    const before = {
-      ...blankSpec(),
-      prompt: '{{Mixed 1}}',
-      randomPrompt: '随机 {{Mixed 2}}',
-      slots,
-    };
-    const inserted = [
-      {key: 'z', type: 'image' as const, position: 0},
-      ...slots.map((slot, index) => ({...slot, position: index + 1})),
-    ];
-
-    expect(renumberRefs(before, inserted).randomPrompt).toBe('随机 {{Mixed 3}}');
-  });
-
   /* 图片改成文本：它退出视觉编号，后面的槽位整体前移。 */
   it('把视觉槽位改成文本后，后面的编号前移', () => {
     const before = {...blankSpec(), prompt: '{{Mixed 1}} 和 {{Mixed 2}}', slots: SLOTS};
@@ -920,7 +890,6 @@ describe('案例复用', () => {
     model: 'model_x',
     allowedModels: ['model_x', 'model_y'],
     prompt: '一张图，暖色调',
-    randomPrompt: '随机 {{Mixed 1}}',
     demoAssetId: 'asset_demo',
     slots: [
       {key: 'image_1', type: 'image', position: 0},

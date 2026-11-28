@@ -113,7 +113,7 @@ import {
   unwrapAnchor,
 } from './defaultText';
 import {DefaultTextMenu} from './DefaultTextMenu';
-import {assignDefaultText as assignPromptDefaultText, cancelDefaultText as cancelPromptDefaultText, editMainPrompt, editRandomPrompt, publishPreflight} from './promptDocument';
+import {assignDefaultText as assignPromptDefaultText, cancelDefaultText as cancelPromptDefaultText, editMainPrompt, publishPreflight} from './promptDocument';
 import { ImageSlotPresetModal } from './ImageSlotPresetModal';
 import { TemplateTagManager } from './TemplateTagManager';
 import type { CaretPoint } from './CursorMenu';
@@ -382,7 +382,6 @@ export function SpecWorkspace() {
   const clear = () => {
     setError('');
     setHint('');
-    setRandomHint('');
   };
 
   const fail = (reason: unknown) =>
@@ -544,13 +543,7 @@ export function SpecWorkspace() {
   );
   const [error, setError] = useState('');
   const [hint, setHint] = useState('');
-  /* 两个提示词框各自一条提示：共用一个的话，在随机档那段里写错引用，
-     错误会显示在主提示词下面，作者会去改错的那一段。 */
-  const [randomHint, setRandomHint] = useState('');
-  /* 「设为槽位默认描述」菜单：框选正文后弹出来。
-     **只对主提示词**：随机档那段是整段替换的（不是追加），
-     那里的默认描述会跟主提示词互相矛盾 —— 两处都要一份同一个槽位的兜底，
-     编译期只会用其中一处，另一处就成了没人认领的死数据。 */
+  /* 「设为槽位默认描述」菜单：框选正文后弹出来。 */
   const [defaultTextRange, setDefaultTextRange] = useState<{start: number; end: number} | null>(null);
   /* 框选菜单的锚点：编辑器上报选区时一起给（视口坐标），菜单浮在框选的那段字旁。 */
   const [defaultTextPoint, setDefaultTextPoint] = useState<CaretPoint | null>(null);
@@ -1013,21 +1006,6 @@ export function SpecWorkspace() {
     [draft?.slots],
   );
 
-  /* 随机档提示词：与主提示词**同一套**引用规则（都引用同一批槽位），
-     只是写进另一个字段。校验也要各管各的提示，见 `randomHint` 的注释。 */
-  const applyRandomPromptText = (text: string): boolean => {
-    if (!draft) return false;
-    const result = editRandomPrompt(draft, text);
-    if (!result.ok) {
-      setRandomHint(result.hint ?? '');
-      return false;
-    }
-    if (result.draft) setDraft(result.draft);
-    setRandomHint('');
-    return true;
-  };
-
-
   /**
    * 把正文里选中的那段设为某槽位的「默认描述」。
    *
@@ -1068,12 +1046,9 @@ export function SpecWorkspace() {
 
 
   /* 提示词上限：**能不能发布**的那个数（执行层，按原文字数比）。
-     没取到时显示 `—`，不猜一个数字 —— 猜错了比不显示更糟。
-     两段各自比：随机档那段是整段替换，不是追加，所以不合并算。 */
+     没取到时显示 `—`，不猜一个数字 —— 猜错了比不显示更糟。 */
   const promptLimit = limits.data?.promptExecutionLimit;
   const promptOver = promptLimit != null && (draft?.prompt ?? '').length > promptLimit;
-  const randomPromptOver =
-    promptLimit != null && (draft?.randomPrompt ?? '').length > promptLimit;
 
   /* 移进回收站：先问一句，问的是「这次会发生什么」。
      确认框是页面内的 `ConfirmDialog`（能摊开事实清单），不是浏览器的
@@ -1742,32 +1717,6 @@ export function SpecWorkspace() {
               </span>
             </div>
 
-            {/* 随机档提示词：和上面那框长得一样（同样能 @ 槽位），因为它俩是
-                **同一件事的两份**——随机档时整段替换，不是追加。标题必须留：
-                两个一样的框并排放，没有标题就分不清哪个是默认。 */}
-            <div className="mt-4 border-t border-line-soft pt-3">
-              <p className="mb-2 text-meta font-medium text-ink">随机档提示词</p>
-              <PromptBox
-                value={draft.randomPrompt ?? ''}
-                chips={chips}
-                slotNames={slotNames}
-                onChange={applyRandomPromptText}
-                onInsert={applyRandomPromptText}
-                placeholder="模板库选「随机」时整段替换上面那段；留空则这一档不可用"
-                ariaLabel="随机档提示词"
-              />
-              <div className="mt-2 flex flex-wrap items-center gap-2">
-                {randomHint && <p className="text-meta text-warn-deep">{randomHint}</p>}
-                <span
-                  className={cn(
-                    'ml-auto font-mono text-micro tabular-nums',
-                    randomPromptOver ? 'text-danger-deep' : 'text-ink-mute',
-                  )}
-                >
-                  {(draft.randomPrompt ?? '').length} / {promptLimit ?? '—'}
-                </span>
-              </div>
-            </div>
           </div>
 
           <Section

@@ -4,6 +4,9 @@
 
 本文件记的是**本轮已核实的机制事实**与**已拍板的规则**，供后续会话直接照做，不必重读全链路代码。
 
+> **2026-11-28 注**：改写闸门已迁到 `modules/template_pack/slot_text_overrides.py::apply_slot_text_overrides`；
+> `random_prompt` 已不参与归一 / 校验 / 编译。本文其余行号是 2026-11-26 的代码快照。
+
 ## 1. 反馈与根因
 
 模板封装者的反馈要点：

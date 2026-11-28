@@ -208,7 +208,6 @@ export function blankSpec(): TemplateSpecIn {
     allowedModels: [],
     params: {},
     prompt: '',
-    randomPrompt: '',
     slots: [blankSlot(0, 'image', [])],
     // 空模板没有容器（第一个槽位是独立槽位）。加容器时才往里写一条。
     groups: [],
@@ -261,7 +260,6 @@ export function fromSpecOut(out: TemplateSpecOut): TemplateSpecIn {
       allowedModels: out.latest.allowedModels ?? [],
       params: out.latest.params ?? {},
       prompt: out.latest.prompt ?? '',
-      randomPrompt: out.latest.randomPrompt ?? '',
       slots: (out.latest.slots ?? []).map((slot, index) => ({...slot, position: index})),
       attributes: {},
       revision: out.revision,
@@ -300,7 +298,8 @@ export function fromCaseSnapshot(
     allowedModels: raw.allowedModels ?? [],
     params: raw.params ?? {},
     prompt: raw.prompt ?? '',
-    randomPrompt: raw.randomPrompt ?? '',
+    // 死字段：老草稿里可能还有 randomPrompt，下一次保存就清掉。
+    randomPrompt: '',
     slots,
     groups: raw.groups ?? [],
     attributes: raw.attributes ?? {},
@@ -343,7 +342,6 @@ export function renumberRefs(
   return {
     ...spec,
     prompt: fix(spec.prompt ?? ''),
-    randomPrompt: fix(spec.randomPrompt ?? ''),
     slots: nextSlots.map(slot => ({
       ...slot,
       filledText: fix(slot.filledText ?? ''),
@@ -544,9 +542,6 @@ export function authoredFingerprint(spec: TemplateSpecIn): string {
     allowedModels: [...new Set(spec.allowedModels ?? [])],
     params: spec.params ?? {},
     prompt: spec.prompt ?? '',
-    // 两段提示词都要进指纹：改了随机档那段却没提示「未保存」，
-    // 作者会以为已经存上了。
-    randomPrompt: spec.randomPrompt ?? '',
     // 空值的属性 = 没写过这个属性
     attributes: Object.fromEntries(
       Object.entries(spec.attributes ?? {}).filter(([, value]) => value !== ''),

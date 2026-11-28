@@ -10,7 +10,6 @@ import {FORM_LIMITS} from '@/shared/lib/formLimits';
 import {
   assignDefaultText as assignAnchorDefaultText,
   defaultTextRefError,
-  optionalSlotRefCountError,
   optionalSlotRefError,
   parseAnchors,
   readDefaultText,
@@ -61,25 +60,6 @@ export function editMainPrompt(draft: TemplateSpecIn, text: string): PromptEdit 
   const authored = toMixedTokens(text, slots);
   const nextSlots = syncDefaultTexts(authored, slots, draft.prompt ?? '');
   return {ok: true, draft: {...draft, prompt: authored, slots: nextSlots}, hint};
-}
-
-/** 随机档提示词：与主提示词同一套引用规则，但可选槽位最多出现一次。 */
-export function editRandomPrompt(draft: TemplateSpecIn, text: string): PromptEdit {
-  const slots = draft.slots ?? [];
-  if (text.length > FORM_LIMITS.specPrompt) {
-    return {
-      ok: false,
-      hint: `随机档提示词不能超过 ${FORM_LIMITS.specPrompt} 字（存草稿的上限）`,
-    };
-  }
-  const error =
-    promptRefError(text, slots) ?? optionalSlotRefCountError(text, slots);
-  if (error) return {ok: false, hint: error};
-  return {
-    ok: true,
-    draft: {...draft, randomPrompt: toMixedTokens(text, slots)},
-    hint: '',
-  };
 }
 
 /** 把正文里选中的一段设为某槽位的默认描述。 */
@@ -135,7 +115,6 @@ export function publishPreflight(spec: TemplateSpecIn): string | null {
   }
   return (
     requiredSlotRefError(spec.prompt ?? '', slots) ??
-    optionalSlotRefError(spec.prompt ?? '', slots) ??
-    optionalSlotRefCountError(spec.randomPrompt ?? '', slots)
+    optionalSlotRefError(spec.prompt ?? '', slots)
   );
 }

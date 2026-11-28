@@ -200,10 +200,10 @@ def test_random_ends_read_transaction_before_calling_model(
     assert events.index("fills") < events.index("commit") < events.index("llm")
 
 
-def test_dead_random_prompt_is_not_validated_or_inlined(
+def test_dead_random_prompt_is_not_validated_inlined_or_published(
     client: TestClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """旧字段里的怪引用 / 修饰符不该再挡住保存与发布，也不该被内联。"""
+    """旧字段里的怪引用 / 修饰符不该再挡住保存与发布，也不该被内联或写进新版本。"""
     headers = _headers(client)
     video, first, second = _media(client, headers)
     raw = "随机档：{{slot:nope}} {{Mixed 2*}} 都别管"
@@ -212,7 +212,7 @@ def test_dead_random_prompt_is_not_validated_or_inlined(
     _publish(client, headers, draft)
 
     latest = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]["latest"]
-    assert latest["randomPrompt"] == raw
+    assert latest["randomPrompt"] == ""
     assert "{{slot:nope}}" not in latest["prompt"]
 
 

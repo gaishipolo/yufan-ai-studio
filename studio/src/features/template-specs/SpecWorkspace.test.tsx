@@ -457,49 +457,23 @@ describe('模板封装 · 编辑器里的提示词', () => {
     expect(counters.some(node => node.className.includes('text-danger-deep'))).toBe(true);
   });
 
-  it('随机档提示词里同一可选槽位引用两次 → 就地提示', async () => {
-    const user = userEvent.setup();
-    renderWorkspace([
-      specOf({
-        status: 'draft',
-        draft: {
-          key: 'spec-1',
-          name: '商品图模板',
-          model: 'libtv-wan3-replacement',
-          prompt: '主图',
-          slots: [
-            {
-              key: 'image_1',
-              type: 'image',
-              position: 0,
-              label: '角色',
-              minCount: 0,
-              maxCount: 1,
-            },
-          ],
-        },
-      }),
-    ]);
-    await user.click(cardOf('商品图模板').getByRole('button', { name: '编辑' }));
-
-    const box = screen.getByRole('textbox', { name: '随机档提示词' });
-    await user.click(box);
-    await user.paste('{{slot:image_1}} 和 {{slot:image_1}}');
-
-    expect(await screen.findByText(/最多引用一次/)).toBeInTheDocument();
-  });
-
   it('不再有「+ 文本素材」这个重复入口（左栏加号菜单已覆盖）', async () => {
     await enterEditor();
 
     expect(screen.queryByRole('button', { name: /文本素材/ })).not.toBeInTheDocument();
   });
 
+  it('不再有「随机档提示词」编辑框（死字段已下线）', async () => {
+    await enterEditor();
+
+    expect(screen.queryByRole('textbox', { name: '随机档提示词' })).not.toBeInTheDocument();
+  });
+
   /* 字数是一门**约束**（超了发不出去），取消板块时不能连带删掉。 */
   it('字数上限显示的是**能不能发布**的那个数（7000），不是存草稿的 20000', async () => {
     await enterEditor();
 
-    // 两段提示词（主 / 随机档）都用同一个可发布上限
+    // 提示词框显示的是可发布上限
     expect(screen.getAllByText(new RegExp(`/\\s*7000`)).length).toBeGreaterThan(0);
     expect(screen.queryByText(new RegExp(`/\\s*20000`))).not.toBeInTheDocument();
   });

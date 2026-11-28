@@ -2,12 +2,8 @@ import { describe, expect, it } from 'vitest';
 import type { SpecSlotIn, TemplateSpecIn } from '@/shared/api/schema';
 import { publishPreflight } from './promptDocument';
 
-function spec(
-  slots: SpecSlotIn[],
-  prompt: string,
-  randomPrompt = '',
-): TemplateSpecIn {
-  return { key: 'k', name: '模板', model: 'm', prompt, randomPrompt, slots };
+function spec(slots: SpecSlotIn[], prompt: string): TemplateSpecIn {
+  return { key: 'k', name: '模板', model: 'm', prompt, slots };
 }
 
 function slot(overrides: Partial<SpecSlotIn> = {}): SpecSlotIn {
@@ -46,18 +42,6 @@ describe('publishPreflight', () => {
 
     expect(error).toContain('可选槽位');
     expect(error).toContain('框选');
-  });
-
-  it('随机档里同一可选槽位出现两次时提前拦截', () => {
-    const error = publishPreflight(
-      spec(
-        [slot({ minCount: 0, emptyText: '雪原', emptyTextFromAnchor: true })],
-        '⟦e:hero⟧雪原⟦/e⟧',
-        '{{slot:hero}} 和 {{slot:hero}}',
-      ),
-    );
-
-    expect(error).toContain('最多引用一次');
   });
 
   it('合法模板返回 null', () => {

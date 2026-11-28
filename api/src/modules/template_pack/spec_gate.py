@@ -68,7 +68,6 @@ class PublishSnapshot:
     allowed_models: tuple[str, ...]
     params: Mapping[str, Any]
     prompt: str
-    random_prompt: str
     slots: tuple[InputSlot, ...]
     groups: tuple[SpecGroup, ...]
 
@@ -96,7 +95,6 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
         allowed_models=tuple(payload.allowed_models),
         params=dict(payload.params),
         prompt=payload.prompt,
-        random_prompt=payload.random_prompt,
         slots=tuple(
             InputSlot(
                 key=slot.key,
@@ -262,8 +260,6 @@ async def review_publish(
             allowed_models=spec.allowed_models,
             params=spec.params,
             prompt=prompt,
-            # 死字段：原样存，供历史回看；不再内联、不再校验、不进指纹。
-            random_prompt=spec.random_prompt,
             slots=inlined_slots,
             groups=spec.groups,
         ),
