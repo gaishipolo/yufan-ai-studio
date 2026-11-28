@@ -10,7 +10,7 @@ from __future__ import annotations
 import pytest
 
 from core.ports.library_lookup import LibraryAssetKind, LibraryAssetState, LibraryVisibility
-from modules.template_pack.spec_service import _is_publicly_readable
+from modules.template_pack.spec_gate import _is_publicly_readable
 
 
 def _ref(*, state: LibraryAssetState, visibility: LibraryVisibility, purpose: str = ""):

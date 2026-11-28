@@ -39,8 +39,8 @@ from modules.template_pack.case_schema import (
 )
 from modules.template_pack.models import TemplateCase
 from modules.template_pack.models import TemplateSpec as SpecRow
+from modules.template_pack.spec_gate import review_publish
 from modules.template_pack.spec_schema import TemplateSpecIn
-from modules.template_pack.spec_service import validate_draft
 
 __all__ = [
     "publish_case",
@@ -249,7 +249,9 @@ async def publish_case(
         raise Conflict(f"已有同名案例：{payload.name}")
 
     spec_payload = TemplateSpecIn.model_validate(head.draft)
-    await validate_draft(session, actor, spec_payload, executable=True)
+    report = await review_publish(session, actor, spec_payload)
+    if report.blockers:
+        raise BadRequest(report.blockers[0].message)
 
     # 存草稿时 `revision` 已经被 exclude 掉（见 `spec_service.save`），这里拷一份
     # 出来只当快照用。快照里带着源模板的 `key` 与 `name` —— 复用时**要换成新的**

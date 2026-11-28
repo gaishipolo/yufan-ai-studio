@@ -252,7 +252,7 @@
 草稿指纹没变，发布靠比对内联后的 prompt 决定是否出新版本。
 
 **换算只在一处**：后端 `rules.normalize_refs` 在入口（`validate_spec` /
-`compile_spec` / `_check_executable`）把 `{{Mixed N}}` 换成 `{{slot:key}}`，
+`compile_spec` / `spec_gate._check_executable`）把 `{{Mixed N}}` 换成 `{{slot:key}}`，
 后面的逻辑只认一种写法。前端同理：`specDraft.toSlotTokens` / `toMixedTokens`
 是唯一的换算对，解析函数都先换再解析。
 
@@ -569,7 +569,7 @@ override 必得同一结果。
 
 | 方法 | 路径 | 说明 |
 |---|---|---|
-| `POST` | `/template-specs/validate` | 只预检不落库（**必须挂 `rate_limit`**，`test_route_policy` 按方法扫） |
+| `POST` | `/template-specs/validate` | 发布级预演，不落库：与 `publish` 同一把尺（含固定素材/展示案例全员可读、固定文本内联、内联后上限）；**必须挂 `rate_limit`**，`test_route_policy` 按方法扫 |
 | `POST` | `/template-specs` | 保存草稿；`key + fingerprint` 幂等，`revision` 冲突 409 |
 | `GET` | `/template-specs` / `/template-specs/{key}` | 列表 / 详情（含 draft 与最新版本） |
 | `POST` | `/template-specs/{key}/publish` | 冻结发布：draft → version + slots，回执含 `version` 与 `tokensPreview` |
@@ -855,7 +855,7 @@ service 层（`compile_for`），`compile_spec` 看到的始终是一份确定�
 **与档位无关**，三档下都一样（它来自提示词本身）。
 
 > 发布闸门已经在**发布**时拦掉「单张引用且无兜底文案」的可选槽位
-> （`rules.py::_validate_slot_texts` 之后的 `_check_executable`），
+> （`rules.py::_validate_slot_texts` 之后的 `spec_gate._check_executable`），
 > 所以这条分支实际只对**闸门加上之前发布的旧模板**生效。
 
 #### 实测（2026-11-18，真实后端）
@@ -1351,10 +1351,10 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
    - `EXECUTION_PROMPT_LIMIT = 7000` 是**执行**上限，即 `CreateTaskIn.prompt` 的
      `max_length`，放在 `core/template_spec`。（2026-11-16 从 2000 放宽到 7000：
      多段描述 + 槽位引用的真实模板轻松过 2000，而百炼驱动本身允许 20000。）
-   判据分三处：保存草稿**不判**（`validate_draft(executable=False)`，否则旧模板里
-   2 万字级别的提示词连草稿都存不进来，P3 迁移会被一刀切）；预检与发布按两段原文之和
-   **粗判**（运营正看着屏幕，这里说清最省事）；`compile` 按**展开后的成品**精判
-   （`{{slot:key*}}` 一次可能多出几十字）。漂移由
+   判据分三处：保存草稿**不判**（`review_draft`，否则旧模板里 2 万字级别的提示词
+   连草稿都存不进来，P3 迁移会被一刀切）；预检与发布走同一档
+   （`review_publish`：固定文本先内联，再按成品判）；`compile` 按**展开后的成品**
+   精判（`{{slot:key*}}` 一次可能多出几十字）。漂移由
    `test_execution_prompt_limit_matches_task_schema` 钉住 —— 它直接读 `CreateTaskIn`
    的 `MaxLen`，改哪边都会先红。
    等第二个执行端点进来，这个数应随**该能力**声明（届时按模型取），而不是继续全局一个。

@@ -49,7 +49,7 @@ from modules.template_pack.spec_service import (
     restore,
     save,
     set_tags,
-    validate_draft,
+    validate,
 )
 from modules.template_pack.tags import TagService
 
@@ -66,7 +66,7 @@ async def validate_spec_draft(
     session: SessionDep,
     actor: TemplatePackCreateDep,
 ) -> ApiResponse[SpecValidateOut]:
-    return ApiResponse.ok(await validate_draft(session, actor, payload))
+    return ApiResponse.ok(await validate(session, actor, payload))
 
 
 # ---- 模板独立标签词表（必须在 /{key} 之前声明，否则 tags 会被当成 key）----
@@ -235,7 +235,7 @@ async def publish_spec(
     **所有登录用户都读得到**（`purpose=case` 或 `visibility=team`），否则 400。
 
     草稿阶段不这么判 —— 作者在自己的工作区里引用自己的私有素材完全正常。
-    收紧的理由见 `spec_service._check_fixed_refs`：复用者填表时是用**复用者的
+    收紧的理由见 `spec_gate._check_fixed_refs`：复用者填表时是用**复用者的
     身份**再判一次可见性的，而固定槽位在编译期必须等于作者钉的那一条
     （复用者没法自己换一张），所以作者的私有素材一发布，这个模板对所有人
     就是坏的 —— 错误还要延迟到别人点「生成」才炸出来。

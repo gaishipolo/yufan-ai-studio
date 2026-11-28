@@ -964,6 +964,29 @@ def test_a_draft_may_reference_a_private_fixed_asset(client: TestClient) -> None
     assert saved.status_code == 200, saved.text
 
 
+def test_validate_is_a_publish_dry_run_for_visibility(client: TestClient) -> None:
+    """预检与发布同一把尺：预检通过就必须能发布，不能只查作者可读。"""
+    headers = _headers(client)
+    video, first, second = _media(client, headers)
+    set_visibility(video, "personal")
+    draft = _draft(video, first, second)
+
+    validated = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert validated.status_code == 400, validated.text
+    assert "只有你自己能看到" in validated.json()["message"]
+
+
+def test_validate_checks_the_inlined_prompt_limit(client: TestClient) -> None:
+    """预检也要按内联后的长度判，否则 validate 绿、publish 才红。"""
+    headers = _headers(client)
+    text_id = _text_asset(client, headers, "长" * (EXECUTION_PROMPT_LIMIT + 100))
+    draft = _text_draft(text_id)
+
+    validated = client.post(f"{API}/validate", json=draft, headers=headers)
+    assert validated.status_code == 400, validated.text
+    assert "执行层上限" in validated.json()["message"]
+
+
 def test_publish_rejects_a_fixed_asset_only_the_author_can_see(
     client: TestClient,
 ) -> None:

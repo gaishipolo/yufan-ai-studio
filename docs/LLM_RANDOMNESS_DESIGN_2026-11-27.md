@@ -216,7 +216,7 @@ if payload.use_random_prompt:
 
 ### 6.3 影响面
 
-- **已发布的版本不受影响**：这条校验只在「保存草稿 / 预检」与「发布」时跑（`validate_draft` / `publish`），编译期不跑 → 老模板照常能用。
+- **已发布的版本不受影响**：这条校验只在「保存草稿 / 预检」与「发布」时跑（`review_publish` / `publish`），编译期不跑 → 老模板照常能用。
 - **老模板下次被编辑保存时**若命中（必填槽位只在 `empty ∩ filled` 里被引用）→ 400，作者要把引用挪进正文。属于「本来就该修的隐患」，但要在发布说明里写一句。
 - **前端**已加同口径预检（2026-11-27 实施）：`studio/src/features/template-specs/requiredRefs.ts` 的 `requiredSlotRefError`，判据与后端同源，注释里互相指认后端的 `validate_required_slot_refs`。
   落点选独立文件而不是 `specDraft.ts`：它要用锚点解析（`defaultText.ts`），而 `defaultText.ts` 反过来 import `specDraft.ts`，塞进去就成环。

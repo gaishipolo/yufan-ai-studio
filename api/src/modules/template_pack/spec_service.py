@@ -17,8 +17,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from collections.abc import Mapping, Sequence
 from dataclasses import replace
 from typing import Any, cast
@@ -30,34 +28,22 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.context import CurrentUser
 from core.exceptions import BadRequest, Conflict, NotFound, StateChanged
 from core.param_schema import resolve_params
-from core.ports.library_lookup import (
-    LibraryAssetRef,
-    LibraryAssetState,
-    LibraryVisibility,
-    get_library_lookup,
-)
-from core.ports.model_generation import ModelSummary, get_model_generation
+from core.ports.library_lookup import get_library_lookup
+from core.ports.model_generation import get_model_generation
 from core.template_spec import (
-    EXECUTION_PROMPT_LIMIT,
-    MAX_SLOT_REFS,
     CompiledRequest,
     FilledAsset,
     FilledSlot,
     InputSlot,
-    SpecGroup,
     TemplateSpec,
     always_filled_slot_keys,
     compile_spec,
-    inline_slot_ref,
     normalize_refs,
     normalize_text_refs,
     prompt_limit_for_capability,
     slot_ref_modes,
     slot_refs,
     strip_valid_refs,
-    validate_optional_slot_refs,
-    validate_required_slot_refs,
-    validate_spec,
 )
 from db.base import utcnow
 from modules.template_pack.models import (
@@ -67,6 +53,13 @@ from modules.template_pack.models import (
     TemplateSpecSlot,
     TemplateSpecVersion,
 )
+from modules.template_pack.spec_catalog import (
+    capability_label,
+    effective_model_ids,
+    model_capability,
+    model_catalog,
+)
+from modules.template_pack.spec_gate import GateReport, review_draft, review_publish
 from modules.template_pack.spec_schema import (
     CompiledSlotOut,
     SpecCompileIn,
@@ -85,53 +78,6 @@ from modules.template_pack.spec_schema import (
 # --------------------------------------------------------------------------- #
 # 形状转换
 # --------------------------------------------------------------------------- #
-def to_core(payload: TemplateSpecIn) -> TemplateSpec:
-    """入参 → core 词汇。校验只发生在 core，不在这里复制一份。"""
-    return TemplateSpec(
-        key=payload.key,
-        name=payload.name,
-        description=payload.description,
-        model=payload.model,
-        allowed_models=tuple(payload.allowed_models),
-        params=dict(payload.params),
-        prompt=payload.prompt,
-        random_prompt=payload.random_prompt,
-        slots=tuple(
-            InputSlot(
-                key=slot.key,
-                type=slot.type,
-                binding=slot.binding,
-                ref_mode=slot.ref_mode,
-                group=slot.group,
-                min_count=slot.min_count,
-                max_count=slot.max_count,
-                label=slot.label,
-                asset_id=slot.asset_id,
-                tag_ids=tuple(slot.tag_ids),
-                filled_text=slot.filled_text,
-                empty_text=slot.empty_text,
-                empty_text_from_anchor=slot.empty_text_from_anchor,
-                position=slot.position,
-            )
-            for slot in payload.slots
-        ),
-        attributes=dict(payload.attributes),
-        demo_asset_id=payload.demo_asset_id,
-        groups=tuple(SpecGroup(key=group.key, label=group.label) for group in payload.groups),
-    )
-
-
-def fingerprint_of(payload: TemplateSpecIn) -> str:
-    """草稿摘要：按 key 排序的规范 JSON 的 sha256。
-
-    `revision` 不参与：它只是"第几次保存"，同一份内容重发不该产生新指纹。
-    """
-    data = payload.model_dump(mode="json", by_alias=True, exclude={"revision"})
-    return hashlib.sha256(
-        json.dumps(data, sort_keys=True, ensure_ascii=False).encode("utf-8")
-    ).hexdigest()
-
-
 def _slot_tag_ids(row: TemplateSpecSlot) -> list[str]:
     """读一个槽位的候选集标签。
 
@@ -322,383 +268,27 @@ async def _spec_outs_of(
 # --------------------------------------------------------------------------- #
 # 预检：结构（core） + 现实（模型目录 / 资产库）
 # --------------------------------------------------------------------------- #
-def _spec_prompt_limit(spec: TemplateSpec) -> tuple[int, str]:
-    """这份模板可能落到的执行端点里最严的上限。
-
-    作者可以给模板配多款允许模型；使用者挑到哪一款都不该在提交时 422，
-    所以按**全部可选模型**取最小值。模板固定模型永远在清单里，正常情况下
-    各模型同能力；混了图片模型时按图片上限判，正是要的效果。
-    """
-    catalog = _model_catalog()
-    limits = [
-        (prompt_limit_for_capability(model.capability), model.capability)
-        for model_id in effective_model_ids(spec.model, spec.allowed_models)
-        if (model := catalog.get(model_id)) is not None
-    ]
-    if not limits:
-        return EXECUTION_PROMPT_LIMIT, "video"
-    return min(limits)
+def _raise_first(report: GateReport) -> None:
+    if report.blockers:
+        raise BadRequest(report.blockers[0].message)
 
 
-def _capability_label(capability: str) -> str:
-    return {"video": "视频", "image": "生图", "audio": "音频"}.get(
-        capability, capability
-    )
-
-
-def _model_capability(model_id: str) -> str:
-    model = _model_catalog().get(model_id)
-    return model.capability if model is not None else "video"
-
-
-def _check_executable(spec: TemplateSpec) -> None:
-    """发布前判「这份模板跑得起来吗」：提示词长度 + 素材候选集够不够明确。
-
-    提示词部分只是**早提醒**：槽位文案展开后可能比原文更长，真正的判据在
-    `compile_for()` 里按展开后的成品长度算。两处都按模板模型所属能力取上限
-    （`PROMPT_LIMITS_BY_CAPABILITY`），图片模板不会按视频的 7000 放过。
-    """
-    # 只认一种写法：作者写的 `{{Mixed N}}` 先换算成 key，
-    # 不然后面按 prompt 判「哪些可选槽位被单张引用」会一个都判不到。
-    spec = normalize_refs(spec)
-    total = len(spec.prompt)
-    limit, capability = _spec_prompt_limit(spec)
-    if total > limit:
-        raise BadRequest(
-            f"提示词共 {total} 字，超过执行层上限 {limit} 字"
-            f"（{_capability_label(capability)}模型）"
-        )
-
-    # 模板库的填表区按「标签 · 槽位名」分组展示候选素材，所以**要让用户填的
-    # 图片/视频槽位必须圈至少一个标签**：没有标签时那一段只能退化成"全部素材"，
-    # 素材一多就没法挑（这正是这一轮要消灭的形态）。
-    #
-    # 只要求 `binding=user`：固定槽位的内容作者已经选死了，模板使用者根本不挑，
-    # 逼作者再填一个标签只是多一步。文本/音频也不要求 —— 它们走各自的列表
-    # 选择器，没有"按标签分组"的概念。
-    missing = [
-        slot.label.strip() or slot.key
-        for slot in spec.slots
-        if slot.type in ("image", "video") and slot.binding == "user" and not slot.tag_ids
-    ]
-    if missing:
-        raise BadRequest(
-            "这些槽位要圈候选标签（模板库靠它列候选；来源=封装包的槽位还靠它判断"
-            "包里哪一张进这一格）：" + "、".join(missing)
-        )
-
-    _check_optional_slots_have_fallback(spec)
-
-
-def _check_optional_slots_have_fallback(spec: TemplateSpec) -> None:
-    """**可选**槽位（`min_count == 0`）被**单张引用**时，必须有「未选时文案」。
-
-    可选槽位不填素材也能编译 —— 那时提示词里这一段由「未选时文案」接管。
-    没有它的话，使用者在模板库不填素材就会在点生成时被 400 打回，而那句话
-    与「我刚才没选素材」看不出关系。
-
-    只看**单张引用**（`{{slot:x}}`）：一槽一素材后，整组（`{{slot:x*}}`）与
-    第 N 张（`{{slot:x.N}}`）已由结构校验直接拒，不再是「另一种没填时的语义」。
-    所以「被引用」就等于「单张引用」，没有别的形态要排除。
-
-    放在**发布**这一道闸（而不是编译）：作者在封装页把槽位改成可选、还没写
-    兜底文案时，草稿能存（`validate_spec` 也被保存草稿调用，拦了会逼作者
-    先想清楚才能存草稿），但**发布出去之前**必须写好 —— 发布意味着「别人会
-    拿去用」，别人不该替作者填这个坑。
-
-    只看**被引用**的可选槽位：没被引用的槽位填不填都不影响提示词，
-    要求它写兜底文案是白加一步。
-
-    **两段提示词一起看**：随机档用 `random_prompt` 整段替换主提示词，而随机档
-    同样不传可选素材 —— 只在主提示词上查，会放行「随机档引用了可选槽位却没写
-    兜底」的模板，使用者只在切到随机档那一次被 400 打回。
-    """
-    modes = slot_ref_modes(spec.prompt)
-    if spec.random_prompt.strip():
-        for key, ref_modes in slot_ref_modes(spec.random_prompt).items():
-            modes.setdefault(key, set()).update(ref_modes)
-    missing = [
-        slot.label.strip() or slot.key
-        for slot in spec.slots
-        if slot.key in modes
-        # 只有**单张引用**这一种写法（整组 / 第 N 张已被结构校验拒），所以
-        # 「被引用」就等于「单张引用」，不需要再分形态。
-        and slot.min_count == 0
-        and slot.binding == "user"
-        and not slot.empty_text.strip()
-    ]
-    if missing:
-        raise BadRequest(
-            "这些可选槽位被提示词引用了，要写「未选时文案」"
-            "（使用者不填素材时这一段怎么说）：" + "、".join(missing)
-        )
-
-
-def effective_model_ids(fixed_model: str, allowed_models: Sequence[str]) -> tuple[str, ...]:
-    """这份模板能跑的全部模型：**固定模型 + 作者声明的允许清单**（去重、保序）。
-
-    固定模型永远在可选项里：它是模板自己的模型，作者没把它写进清单也不该让
-    使用者无路可走。清单是「再加几款让使用者挑」的声明，所以是并集而不是替换。
-    """
-    ids = [fixed_model]
-    for model_id in allowed_models:
-        if model_id not in ids:
-            ids.append(model_id)
-    return tuple(ids)
-
-
-def _model_catalog() -> dict[str, ModelSummary]:
-    """按 id 与兼容别名索引模型目录，避免同一份解析逻辑写两遍。"""
-    catalog: dict[str, ModelSummary] = {}
-    for item in get_model_generation().models():
-        catalog[item.id] = item
-        for alias in item.aliases:
-            catalog.setdefault(alias, item)
-    return catalog
-
-
-async def _check_model(spec: TemplateSpec) -> None:
-    """模型必须存在，参数键必须落在它的 `param_schema` 内。
-
-    不做这一步的话，发布成功、用户在模板库填完表、点提交才被 422 —— 那时候
-    用户已经贴不上原因了（"前几天还好好的"）。
-
-    清单里的**每一款**都要过同一道闸：使用者挑的是清单里的某一款，挑到哪一款
-    都不该被拒 —— 否则「清单里第三款一选就报错」这种坑要等使用者自己踩到。
-    """
-    catalog = _model_catalog()
-    for model_id in effective_model_ids(spec.model, spec.allowed_models):
-        model = catalog.get(model_id)
-        if model is None:
-            raise BadRequest(f"模型不存在或未启用：{model_id}")
-        _check_model_params(spec, model)
-
-
-def _check_model_params(spec: TemplateSpec, model: ModelSummary) -> None:
-    """一款模型的参数与参考素材上限能不能承接这份模板。"""
-    schema = dict(model.param_schema or {})
-    unknown = sorted(set(spec.params) - set(schema))
-    if unknown:
-        raise BadRequest(
-            f"模型 {model.id} 不支持参数 {'、'.join(unknown)}；"
-            f"可用：{'、'.join(sorted(schema)) or '（无）'}"
-        )
-    # 标了 `userSelectable` 的参数**由使用模板的人选**，作者不许写死。
-    # 写死 = 作者替每个使用者决定了要不要花积分，而积分是用的人的钱。
-    # 这类参数由模板库在填表时呈现，使用者的选择不落进 spec.params。
-    locked = sorted(
-        key
-        for key in spec.params
-        if isinstance(schema.get(key), dict) and schema[key].get("userSelectable")
-    )
-    if locked:
-        labels = "、".join(
-            str(schema[key].get("label") or key)
-            for key in locked  # type: ignore[index]
-        )
-        raise BadRequest(
-            f"{labels} 由使用模板的人来选，封装时不用设置；它会在模板库填表时让用户自己选",
-            details={"userSelectableParams": locked},
-        )
-    mixed = [slot for slot in spec.slots if slot.ref_mode == "mixed"]
-    # 固定槽位是确定的（1 个），用户槽位按上限算 —— 超了现在就报，别等提交。
-    upper = sum(1 if slot.binding == "fixed" else slot.max_count for slot in mixed)
-    if upper > MAX_SLOT_REFS:
-        raise BadRequest(f"参与编号的素材上限 {upper} 个，超过 {MAX_SLOT_REFS}")
-    # 与模型的承接能力比：**不能只判 `max_references == 0`**。只判 0 的话，
-    # 「最多接 4 张」的模型配了 5 个槽位照样发布成功，使用者填满才在提交时
-    # 被 400 打回 —— 那时作者已经把模板发出去了。
-    if upper > model.max_references:
-        if model.max_references == 0:
-            raise BadRequest(f"模型 {model.id} 不接受参考素材，去掉需要编号的槽位")
-        raise BadRequest(
-            f"模型 {model.id} 最多接 {model.max_references} 张参考素材，"
-            f"这份模板按上限算要 {upper} 张（固定槽位 1 张 + 用户槽位的张数）"
-        )
-
-
-def _is_publicly_readable(ref: LibraryAssetRef) -> bool:
-    """这条素材是否**任何登录用户**都能读。
-
-    判据来自 `modules/library/access.py` 的 `can_read`：
-    `state=active` 是前置条件 —— 草稿与回收站里的素材任何可见性都不算数
-    （`can_read` 会把 trash 直接拒掉）。过了这一关，
-    `purpose == "case"` 对所有人可读（且这一条刻意排在 `visibility` 之前），
-    `visibility == "team"` 对所有人可读。
-
-    漏掉 `state` 的症状很隐蔽：作者把团队可见的素材丢进回收站，发布闸照样放行；
-    别人复用时 `can_read` 才拒绝，于是模板库里安静地少一张图。
-
-    刻意**不**在这里重写一遍「共享到小组」的判定：`visibility=group` 只对
-    组内成员可读，而组外的人恰恰是复用模板的大多数 —— 它不满足「全员可读」。
-    """
-    if ref.state != LibraryAssetState.ACTIVE:
-        return False
-    return ref.purpose == "case" or ref.visibility == LibraryVisibility.TEAM
-
-
-async def _check_fixed_refs(
-    session: AsyncSession,
-    actor: CurrentUser,
-    spec: TemplateSpec,
-    *,
-    require_public: bool = False,
-) -> None:
-    """固定槽位的素材必须**作者读得到**；发布时还必须**所有复用者都读得到**。
-
-    两级判据的分界在**发布**那一刻：草稿是作者自己的工作区，引用自己的
-    私有素材完全正常（既有流程就是这样）；模板一旦发布就要给别人用，
-    那时素材读不到就是坏模板。
-
-    为什么发布时要收紧：模板是**发布出去给别人用**的。只判作者可读时，
-    作者自己的 personal 素材照样放行 —— 但复用者填表时是用**复用者的
-    身份**再判一次（见 `_fills`），必然读不到，于是模板一发布就对所有人
-    不可用，错误还延迟到复用者点「生成」才炸出来。
-
-    `core/template_spec/compile.py` 的 `_assets_of` 规定 fixed 槽位在编译期
-    必须等于 `slot.asset_id`，所以没有「让复用者换一个」的余地：
-    固定槽位的素材读不到，模板就是坏的。发布时拦住，是唯一能拦住的地方。
-    """
-    lookup = get_library_lookup()
-    # **固定文本槽位不在这里判可见性**：发布时它的正文会被抄进提示词
-    # （见 `_inline_fixed_text`），模板里不再有对那份素材的引用 —— 复用者
-    # 根本不需要读它。图 / 视频没法内联，仍必须全员可读。
-    asset_ids = [slot.asset_id for slot in spec.slots if slot.asset_id and slot.type != "text"]
-    if not asset_ids:
-        return
-    readable = await lookup.readable_ids(session, actor, asset_ids)
-    missing = [item for item in asset_ids if item not in readable]
-    if missing:
-        raise BadRequest(f"固定素材不可用或无权访问：{'、'.join(missing)}")
-    if not require_public:
-        return
-    refs = await lookup.get_many(session, asset_ids)
-    private = [item for item in asset_ids if item in refs and not _is_publicly_readable(refs[item])]
-    if private:
-        raise BadRequest(
-            f"固定素材只有你自己能看到，发布后别人用不了：{'、'.join(private)}。"
-            "请把它移进案例池，或改成团队可见。"
-        )
-
-
-async def _check_demo_ref(
-    session: AsyncSession,
-    actor: CurrentUser,
-    spec: TemplateSpec,
-    *,
-    require_public: bool = False,
-) -> None:
-    """展示案例必须**现在就能读**；发布时还必须**所有复用者都读得到**。
-
-    为什么这一条不能省：`demoAssetId` 是删除保护的依据（见
-    `SpecDemoCases`）。零校验时，写一个**别人的私有 id** 进去就能让那条
-    资产从此永远 purge 不掉（409 说「仍被引用」），而作者根本不知道自己
-    占了别人的东西；那个 id 甚至可能是随手编的，引用检查永远查无此人。
-
-    读不到就拒绝保存（fail-closed）：宁可保存不进去，也不能留一条查不出来的
-    引用 —— 后者会让 owner 在回收站里卡死，且没有任何线索能定位到是谁占的。
-
-    为什么发布时还要「全员可读」：展示案例是**模板库卡片上的那一帧**。
-    别人打开模板库看到的封面就是它 —— 素材只有作者可见时，
-    别人那里安静退化成「暂无案例」，卡片看着像没加载出来。
-    """
-    asset_id = spec.demo_asset_id
-    if not asset_id:
-        return
-    lookup = get_library_lookup()
-    readable = await lookup.readable_ids(session, actor, [asset_id])
-    if asset_id not in readable:
-        raise BadRequest("展示案例不可用或无权访问")
-    if not require_public:
-        return
-    refs = await lookup.get_many(session, [asset_id])
-    ref = refs.get(asset_id)
-    if ref is not None and not _is_publicly_readable(ref):
-        raise BadRequest(
-            "展示案例只有你自己能看到，别人打开模板库看不到。请把它移进案例池，或改成团队可见。"
-        )
-
-
-async def _inline_fixed_text(
-    session: AsyncSession, actor: CurrentUser, spec: TemplateSpec
-) -> tuple[str, str, tuple[InputSlot, ...]]:
-    """发布时把**固定文本槽位**的正文抄进提示词，并从发布快照里移除这些槽位。
-
-    文本与图 / 视频的根本区别：正文可以直接写进字符串，图片只能传引用。
-    所以固定文本槽位不需要「素材对所有人可读」—— 发布后模板里连 id 都没有，
-    复用者不会再读它；也不会随作者后来改稿而改变（发布即冻结）。
-
-    **为什么移除槽位行**：文本是 `attachment`，不占 `{{Mixed N}}` 编号；内联后
-    `{{slot:key}}` 已变成正文，`{{Text N}}` / `textLibraryIds` 都不再需要。
-    留着那一行只会在模板库右栏多出一个空的可选文案框。
-
-    老版本（发布即冻结）不受影响：仍原样带着 `{{slot:key}}` 与槽位行。
-    """
-    fixed = [
-        slot
-        for slot in spec.slots
-        if slot.type == "text" and slot.binding == "fixed" and slot.asset_id
-    ]
-    if not fixed:
-        return spec.prompt, spec.random_prompt, spec.slots
-
-    lookup = get_library_lookup()
-    texts = await lookup.read_text_many(
-        session, actor, [slot.asset_id for slot in fixed if slot.asset_id]
-    )
-    prompt, random_prompt = spec.prompt, spec.random_prompt
-    for slot in fixed:
-        ref = texts.get(slot.asset_id or "")
-        if ref is None:
-            raise BadRequest(
-                f"固定文案「{slot.label or slot.key}」读不到正文或已被删除：{slot.asset_id}"
-            )
-        # 传替换函数而不是字符串模板：正文里的反斜杠 / `\1` 不能被 re 解释。
-        prompt = inline_slot_ref(prompt, slot.key, ref.content)
-        random_prompt = inline_slot_ref(random_prompt, slot.key, ref.content)
-
-    dropped = {slot.key for slot in fixed}
-    return prompt, random_prompt, tuple(slot for slot in spec.slots if slot.key not in dropped)
-
-
-async def validate_draft(
-    session: AsyncSession,
-    actor: CurrentUser,
-    payload: TemplateSpecIn,
-    *,
-    executable: bool = True,
+async def validate(
+    session: AsyncSession, actor: CurrentUser, payload: TemplateSpecIn
 ) -> SpecValidateOut:
-    """结构 + 模型 + 固定素材的全套预检；不落库，返回幂等指纹。
-
-    `executable=False` 只给**保存草稿**用：草稿允许写超过执行上限的提示词（旧模板里
-    有 2 万字级别的那种，P3 迁移要能先落成草稿）。预检与发布才判"这段文字跑得起来吗"。
-    """
-    spec = to_core(payload)
-    validate_spec(spec)
-    if executable:
-        _check_executable(spec)
-    await _check_model(spec)
-    # 「必填且使用者自己挑」的槽位必须真的被提示词引用：
-    # 素材会无条件传给供应商，提示词里不点名它就是白传。
-    # 放在模型检查**之后**：模型接不下这些素材时，先说模型的事。
-    validate_required_slot_refs(spec)
-    # 可选槽位**只能被框选**：正文里最多一处引用，且「未选时文案」必须来自
-    # 正文里的框选段。老数据没有这个标记 → 这里红，强制作者重新框选一次。
-    validate_optional_slot_refs(spec)
-    await _check_fixed_refs(session, actor, spec)
-    await _check_demo_ref(session, actor, spec)
-    return SpecValidateOut(valid=True, fingerprint=fingerprint_of(payload))
+    """按发布级检查预演；不落库，只回 valid / fingerprint。"""
+    report = await review_publish(session, actor, payload)
+    _raise_first(report)
+    return SpecValidateOut(valid=True, fingerprint=report.fingerprint)
 
 
-# --------------------------------------------------------------------------- #
-# 写：保存草稿 / 发布 / 停用
-# --------------------------------------------------------------------------- #
 async def save(
     session: AsyncSession, actor: CurrentUser, payload: TemplateSpecIn
 ) -> TemplateSpecOut:
     """保存草稿。同 key 同内容幂等；`revision` 不匹配则 409。"""
-    await validate_draft(session, actor, payload, executable=False)
-    fingerprint = fingerprint_of(payload)
+    report = await review_draft(session, actor, payload)
+    _raise_first(report)
+    fingerprint = report.fingerprint
     draft = payload.model_dump(mode="json", by_alias=True, exclude={"revision"})
     head = await _find(session, payload.key)
 
@@ -777,35 +367,20 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         raise BadRequest("还没有保存任何内容，无法发布")
 
     payload = TemplateSpecIn.model_validate(head.draft)
-    spec = to_core(payload)
-    validate_spec(spec)
-    await _check_model(spec)
-    # 「必填且使用者自己挑」的槽位必须真的被提示词引用：
-    # 素材会无条件传给供应商，提示词里不点名它就是白传。
-    # 放在模型检查**之后**：模型接不下这些素材时，先说模型的事。
-    validate_required_slot_refs(spec)
-    # 可选槽位**只能被框选**（与保存草稿同一套判据）。
-    validate_optional_slot_refs(spec)
-    # 发布 = 对外公开的那一刻：图/视频固定素材与展示案例必须**所有复用者都读得到**。
-    # 固定文本例外：正文会抄进提示词，模板里不再引用素材（见 `_inline_fixed_text`）。
-    # 草稿阶段不这么判（见 `_check_fixed_refs` 的两级判据说明）。
-    await _check_fixed_refs(session, actor, spec, require_public=True)
-    await _check_demo_ref(session, actor, spec, require_public=True)
-
-    # 固定文本内联：读不到正文当场报错，不能拖到使用者填表时才炸。
-    prompt, random_prompt, inlined_slots = await _inline_fixed_text(session, actor, spec)
-    # 执行上限要在**内联之后**判 —— 正文抄进来之后提示词会变长，先判等于没判。
-    _check_executable(replace(spec, prompt=prompt, slots=inlined_slots))
+    report = await review_publish(session, actor, payload)
+    _raise_first(report)
+    snapshot = report.snapshot
+    assert snapshot is not None
 
     latest = await _latest(session, head)
-    fingerprint = fingerprint_of(payload)
+    fingerprint = report.fingerprint
     # 只比指纹不够：作者没改草稿、但文本资产改了正文，内联后的 prompt 也会变，
     # 那时必须发新版本，否则使用者拿到的还是旧文案。
     if (
         latest is not None
         and latest.fingerprint == fingerprint
-        and latest.prompt == prompt
-        and (latest.random_prompt or "") == random_prompt
+        and latest.prompt == snapshot.prompt
+        and (latest.random_prompt or "") == snapshot.random_prompt
     ):
         # 同一份草稿重发：版本号不动，也不新增快照行（回执要能重复调）。
         #
@@ -842,8 +417,8 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         if (
             latest_now is not None
             and latest_now.fingerprint == fingerprint
-            and latest_now.prompt == prompt
-            and (latest_now.random_prompt or "") == random_prompt
+            and latest_now.prompt == snapshot.prompt
+            and (latest_now.random_prompt or "") == snapshot.random_prompt
         ):
             out = await _spec_out_of(session, head)
             await session.commit()
@@ -853,11 +428,11 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     row = TemplateSpecVersion(
         spec_id=head.id,
         version=version,
-        model=spec.model,
-        allowed_models=list(spec.allowed_models),
-        params=dict(spec.params),
-        prompt=prompt,
-        random_prompt=random_prompt,
+        model=snapshot.model,
+        allowed_models=list(snapshot.allowed_models),
+        params=dict(snapshot.params),
+        prompt=snapshot.prompt,
+        random_prompt=snapshot.random_prompt,
         fingerprint=fingerprint,
         published_by=actor.id,
     )
@@ -865,8 +440,8 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
     await session.flush()  # 主键在 flush 后才有，槽位要用它
     # 容器名存组内每一行（冗余）：发布快照只有槽位行，没有「容器表」。
     # 只写组内第一行会依赖 position 顺序 —— 拖一下顺序就取不到名字了。
-    group_labels = {group.key: group.label for group in spec.groups}
-    for slot in inlined_slots:
+    group_labels = {group.key: group.label for group in snapshot.groups}
+    for slot in snapshot.slots:
         session.add(
             TemplateSpecSlot(
                 version_id=row.id,
@@ -1277,12 +852,12 @@ async def compile_for(
         )
     # 展开后的成品才是真正要发出去的那段，按**使用者选中的模型**所属能力判：
     # 同一模板的允许清单里可能有不同能力，选图就按图片上限。
-    capability = _model_capability(chosen)
+    capability = model_capability(chosen)
     limit = prompt_limit_for_capability(capability)
     if len(compiled.prompt) > limit:
         raise BadRequest(
             f"编译后的提示词 {len(compiled.prompt)} 字，超过执行层上限 "
-            f"{limit} 字（{_capability_label(capability)}模型）；"
+            f"{limit} 字（{capability_label(capability)}模型）；"
             "少填几张参考图或缩短描述"
         )
     return _compile_out(version_no, compiled, spec, fills)
@@ -1295,7 +870,7 @@ def _checked_overrides(model_id: str, overrides: Mapping[str, Any]) -> dict[str,
     （模板参数），要么模型根本不认 —— 两种都不该由使用者在这里传。
     值按 schema 收敛（枚举必须落在 options 内），非法值当场 400。
     """
-    catalog = _model_catalog()
+    catalog = model_catalog()
     model = catalog.get(model_id)
     if model is None:
         raise BadRequest(f"模型不存在或未启用：{model_id}")
