@@ -14,8 +14,6 @@ import { tokenPattern } from '@/shared/lib/promptTokens';
  */
 export const MAX_SLOT_TEXT = FORM_LIMITS.slotText;
 
-
-
 function tokensOf(text: string): string[] {
   return [...text.matchAll(tokenPattern())].map(match => match[0].replace(/\s+/g, ''));
 }

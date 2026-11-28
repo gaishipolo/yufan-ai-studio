@@ -47,8 +47,6 @@ export interface PromptRefsProps {
 
 type ZoomTarget = {kind: 'asset'; assetId: string};
 
-
-
 /** 正文太长就别整段塞进预览：这里只是「这段引用是什么」，不是阅读器。 */
 const MAX_INLINE_CHARS = 300;
 

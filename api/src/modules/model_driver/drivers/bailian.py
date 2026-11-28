@@ -604,6 +604,8 @@ class BailianProvider:
             record_id=run_id,
             model=request.model,
             channel_used=request.channel_used or None,
+            # 台账键就是归档 run id（= 幂等键）：同一逻辑提交重放时必须复用既有
+            # task，不能按轮次开新键 —— 见 `SubmissionReceipt` 的两种 run_id 语义。
             run_id=run_id,
             precheck=precheck,
             call=call,

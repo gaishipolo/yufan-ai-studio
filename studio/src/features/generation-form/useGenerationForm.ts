@@ -274,14 +274,15 @@ export function useGenerationForm<R>({
       return;
     }
 
-    const payload = { ...plan.payload } as GenerationPayload & { model?: string };
-    if (kind === 'image') {
+    let payload: GenerationPayload = plan.payload;
+    if (plan.kind === 'image') {
       // 直接生图页以前不发空数组：没有参考/文本时字段直接不存在。
-      const image = payload as GenerateImagePayload;
+      const image = { ...plan.payload };
       if (!image.referenceLibraryIds?.length) delete image.referenceLibraryIds;
       if (!image.textLibraryIds?.length) delete image.textLibraryIds;
+      if (omitDefaultModel && currentModel.isDefault) delete image.model;
+      payload = image;
     }
-    if (omitDefaultModel && currentModel.isDefault) delete payload.model;
     await submission.submit(payload);
   };
 

@@ -371,7 +371,12 @@ def _http_error(response: httpx.Response) -> Exception:
     return classify_http_error(
         response,
         vendor="Agnes",
-        status_map={401: Unauthorized, 403: Forbidden, 429: RateLimited},
+        status_map={
+            401: Unauthorized,
+            403: Forbidden,
+            408: BadRequest,
+            429: RateLimited,
+        },
         message_map={
             400: "Agnes 参数校验失败",
             401: "Agnes 鉴权失败：请检查 AGNES_API_KEY",

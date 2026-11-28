@@ -270,7 +270,8 @@ async def _spec_outs_of(
 # --------------------------------------------------------------------------- #
 def _raise_first(report: GateReport) -> None:
     if report.blockers:
-        raise BadRequest(report.blockers[0].message)
+        blocker = report.blockers[0]
+        raise BadRequest(blocker.message, details=blocker.details)
 
 
 async def validate(

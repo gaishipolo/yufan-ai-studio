@@ -33,6 +33,7 @@ from modules.model_driver.drivers import agnes, agnes_video, grsai, grsai_video
         (404, BadRequest, 400),
         (429, RateLimited, 429),
         (400, BadRequest, 400),
+        (408, BadRequest, 400),
         (500, UpstreamError, 502),
     ],
 )
@@ -70,6 +71,16 @@ def test_agnes_video_treats_other_503_as_upstream_error():
     )
 
     assert isinstance(err, UpstreamError)
+
+
+def test_agnes_video_408_is_a_clear_rejection():
+    """408 = 上游明确没受理，不能归成「可能已计费」。"""
+    err = agnes_video._http_error(
+        httpx.Response(408, json={"error": {"message": "timeout"}})
+    )
+
+    assert isinstance(err, BadRequest)
+    assert err.retryable is False
 
 
 @pytest.mark.parametrize(

@@ -7,6 +7,7 @@
 from __future__ import annotations
 
 import asyncio
+from datetime import UTC, datetime, timedelta
 
 from db.session import get_session_factory
 from generation.recovery import recover_kind
@@ -66,6 +67,59 @@ def test_resume_resubmits_only_tasks_without_external_id() -> None:
     assert submitted.external_id == "echo-video-deadbeef-1700000000"
     assert submitted.progress == 42
     assert submitted.status == TaskStatus.RUNNING.value
+
+
+def test_resubmit_resets_stale_display_fields_before_dispatch() -> None:
+    """没提交过、却停在 running 的旧记录：派发前必须把现场复位。
+
+    不复位时页面会一直显示「运行中 · 62%」，直到 worker 真正开始跑；
+    错误文案与开始时间也会残留到下一轮。
+    """
+
+    async def scenario() -> tuple[list[dict], VideoTask]:
+        factory = get_session_factory()
+        async with factory() as session:
+            stale = VideoTask(
+                title="停在 running 的",
+                prompt="晚霞",
+                status=TaskStatus.RUNNING.value,
+                progress=62,
+                error_message="上一轮的旧错误",
+                started_at=datetime.now(tz=UTC) - timedelta(hours=1),
+                model="Seedance 2.5",
+                author_id="u_001",
+                author_name="老大",
+            )
+            session.add(stale)
+            await session.commit()
+            stale_id = stale.id
+
+        queue = MemoryJobQueue()
+        await recover_kind("video", runner=get_runner(queue))
+
+        async with factory() as session:
+            after = await session.get(VideoTask, stale_id)
+            assert after is not None
+            return queue.snapshot(), after
+
+    jobs, task = asyncio.run(scenario())
+    try:
+        keys = {job["key"] for job in jobs}
+
+        assert f"submit:video:{task.id}" in keys
+        assert task.status == TaskStatus.QUEUED.value
+        assert task.progress == 0
+        assert task.error_message is None
+        assert task.started_at is None
+    finally:
+        async def cleanup() -> None:
+            async with get_session_factory()() as session:
+                row = await session.get(VideoTask, task.id)
+                if row is not None:
+                    await session.delete(row)
+                    await session.commit()
+
+        asyncio.run(cleanup())
 
 
 def test_resume_does_not_resubmit_when_submit_result_unknown() -> None:

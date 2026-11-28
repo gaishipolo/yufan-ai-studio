@@ -446,6 +446,71 @@ async def test_guarded_submit_without_record_id_skips_the_ledger(
     assert rows == []
 
 
+async def test_guarded_submit_precheck_failure_does_not_claim(
+    session: AsyncSession,
+) -> None:
+    """本地校验失败时不能留下 submitting 回执，否则后续合法重试会被锁死。"""
+    record_id = "rec-precheck"
+
+    async def precheck() -> None:
+        raise BadRequest("本地校验失败")
+
+    async def call() -> str:
+        pytest.fail("precheck 失败后不该调用上游")
+
+    with pytest.raises(BadRequest):
+        await guarded_submit(
+            provider="agnes",
+            record_id=record_id,
+            model=MODEL,
+            precheck=precheck,
+            call=call,
+        )
+
+    rows = (await session.execute(select(SubmissionReceipt))).scalars().all()
+    assert rows == []
+
+
+async def test_guarded_submit_custom_key_identify_and_existing_result(
+    session: AsyncSession,
+) -> None:
+    """自定义台账键 + 结果标识提取 + 已有提交复用（百炼那条路）。"""
+    record_id = "rec-custom"
+    run_id = "archive-run"
+
+    async def call() -> str:
+        return "archive-run:task-9"
+
+    result = await guarded_submit(
+        provider="bailian",
+        record_id=record_id,
+        model=MODEL,
+        run_id=run_id,
+        identify=lambda raw: (raw.partition(":")[2], raw),
+        call=call,
+    )
+    assert result == "archive-run:task-9"
+
+    receipt = await get_receipt(session, provider="bailian", run_id=run_id)
+    assert receipt is not None
+    assert receipt.record_id == record_id
+    assert receipt.task_id == "task-9"
+    assert receipt.external_id == "archive-run:task-9"
+
+    async def must_not_call() -> str:
+        pytest.fail("已有提交时必须复用，不能再打一次付费 POST")
+
+    reused = await guarded_submit(
+        provider="bailian",
+        record_id=record_id,
+        model=MODEL,
+        run_id=run_id,
+        existing_result=lambda external_id: f"reused:{external_id}",
+        call=must_not_call,
+    )
+    assert reused == "reused:archive-run:task-9"
+
+
 async def test_guarded_submit_marks_unknown_when_no_identifier(
     session: AsyncSession,
 ) -> None:

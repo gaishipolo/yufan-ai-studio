@@ -631,7 +631,12 @@ def _http_error(response: httpx.Response) -> Exception:
     return classify_http_error(
         response,
         vendor="Agnes 视频",
-        status_map={401: Unauthorized, 403: Forbidden, 429: RateLimited},
+        status_map={
+            401: Unauthorized,
+            403: Forbidden,
+            408: BadRequest,
+            429: RateLimited,
+        },
         code_overrides={(503, "video_queue_full"): RateLimited},
         message_map={
             400: "Agnes 参数校验失败",

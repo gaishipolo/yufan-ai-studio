@@ -21,7 +21,7 @@ import { CursorMenu, CursorMenuItem, CursorMenuGroup, type CaretPoint } from './
 import { caretPointOf, selectionEndPoint } from './caretPoint';
 /* 正则与计数拆到 capsuleCount.ts：fast-refresh 要求组件文件只导出组件。 */
 import { expectedCapsuleCount } from './capsuleCount';
-import { tokenPattern } from '@/shared/lib/promptTokens';
+import { parsePromptExpression, tokenPattern } from '@/shared/lib/promptTokens';
 
 /** 去掉空白后的 token：正文里的写法可能带空格，候选里的是规范形式。 */
 const normalizeToken = (raw: string) => raw.replace(/\s+/g, '');
@@ -452,7 +452,11 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
       if (direct) return direct;
       /* 内部写法（`{{slot:hero}}`）也要认得：删过槽位的旧草稿里就有这种形态，
          认不出的话胶囊上显示的是一串原始 token，而不是槽位名。 */
-      const key = norm.match(/^\{\{slot:([a-z][a-z0-9_]{0,39})/)?.[1];
+      const inner = norm.startsWith('{{') && norm.endsWith('}}')
+        ? norm.slice(2, -2)
+        : '';
+      const parsed = parsePromptExpression(inner);
+      const key = parsed?.kind === 'slot' ? parsed.key : undefined;
       const label = key ? slotNames?.[key] : undefined;
       return label ? {token, label, all: false} : undefined;
     };

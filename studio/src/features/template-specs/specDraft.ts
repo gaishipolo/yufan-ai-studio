@@ -972,8 +972,6 @@ export function filledTextChips(slot: SpecSlotIn, slots: SpecSlotIn[]): RefChip[
   return [...own, ...others];
 }
 
-
-
 /**
  * 检查提示词里的引用：**只拦错的，不拦花括号**。返回 `null` = 没问题。
  *

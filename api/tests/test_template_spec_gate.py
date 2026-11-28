@@ -203,6 +203,33 @@ def test_发布要求固定素材全员可读_草稿只要求作者可读() -> N
     assert "只有你自己能看到" in report.blockers[0].message
 
 
+def test_发布阻塞保留结构化_details(monkeypatch: pytest.MonkeyPatch) -> None:
+    """经 gate 转成 HTTP 400 后，`details` 不能只剩一句话。"""
+
+    class LockedModels(FakeModels):
+        def __init__(self) -> None:
+            super().__init__()
+            self._model = ModelSummary(
+                id=MODEL,
+                label="Fake Image",
+                capability="image",
+                provider="fake",
+                max_references=5,
+                param_schema={
+                    "quality": {"label": "质量", "userSelectable": True}
+                },
+            )
+
+    monkeypatch.setattr(spec_catalog, "get_model_generation", lambda: LockedModels())
+    payload = _payload().model_copy(update={"params": {"quality": "hd"}})
+
+    report = asyncio.run(review_draft(None, ACTOR, payload))
+
+    assert not report.ok
+    assert report.blockers[0].code == "model_invalid"
+    assert report.blockers[0].details == {"userSelectableParams": ["quality"]}
+
+
 def test_草稿也拦固定文本读不到() -> None:
     payload = _payload(
         prompt="开头 {{slot:txt}}",

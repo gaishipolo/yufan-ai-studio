@@ -161,7 +161,7 @@ class ImageJobStore:
     async def list_unfinished(
         self,
         session: AsyncSession,
-        limit: int,
+        limit: int | None = None,
         *,
         stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:
@@ -169,7 +169,8 @@ class ImageJobStore:
 
         按创建时间排序并以主键收尾，分页边界才稳定；`limit` 下推到 SQL，
         供应商故障后不会因为堆积把整张表读进内存。`stale_after_sec` 用于
-        周期巡检：只捞超过该秒数没有写入的记录。
+        周期巡检：只捞超过该秒数没有写入的记录。启动恢复传 `limit=None`
+        （不截断），周期巡检传批次上限。
         """
         stmt = select(ImageJob).where(
             ImageJob.status.in_((STATUS_QUEUED, STATUS_RUNNING))
@@ -177,11 +178,10 @@ class ImageJobStore:
         if stale_after_sec is not None:
             cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(0, stale_after_sec))
             stmt = stmt.where(ImageJob.updated_at < cutoff)
-        rows = (
-            await session.scalars(
-                stmt.order_by(ImageJob.created_at, ImageJob.id).limit(limit)
-            )
-        ).all()
+        stmt = stmt.order_by(ImageJob.created_at, ImageJob.id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = (await session.scalars(stmt)).all()
         return [self._to_record(row) for row in rows]
 
     async def mark_submitting(self, record_id: str) -> bool:
@@ -459,7 +459,7 @@ class ImageGenerationPipeline:
     async def list_unfinished(
         self,
         session: AsyncSession,
-        limit: int,
+        limit: int | None = None,
         *,
         stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:

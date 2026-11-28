@@ -66,7 +66,7 @@ class DriverJobStore:
     async def list_unfinished(
         self,
         session: AsyncSession,
-        limit: int,
+        limit: int | None = None,
         *,
         stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:
@@ -77,11 +77,10 @@ class DriverJobStore:
         if stale_after_sec is not None:
             cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(0, stale_after_sec))
             stmt = stmt.where(DriverJob.updated_at < cutoff)
-        rows = (
-            await session.scalars(
-                stmt.order_by(DriverJob.created_at, DriverJob.id).limit(limit)
-            )
-        ).all()
+        stmt = stmt.order_by(DriverJob.created_at, DriverJob.id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = (await session.scalars(stmt)).all()
         return [self._to_record(row) for row in rows]
 
     async def mark_submitting(self, record_id: str) -> bool:

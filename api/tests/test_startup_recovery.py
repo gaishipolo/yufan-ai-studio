@@ -115,6 +115,28 @@ def test_worker_enabled_runs_startup_then_framework_recovery(
     assert order == ["module", "framework"]
 
 
+def test_startup_recovery_does_not_cap_the_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """启动恢复必须扫全部；截到 100 条会让第 101 条等到下一次巡检。"""
+    seen: list[tuple[str, int | None]] = []
+
+    async def fake_recover_kind(
+        kind: str,
+        *,
+        limit: int | None = recovery.RECOVERY_BATCH,
+        stale_after_sec: int | None = None,
+    ) -> dict[str, int]:
+        seen.append((kind, limit))
+        return {}
+
+    monkeypatch.setattr(recovery, "recover_kind", fake_recover_kind)
+
+    asyncio.run(recovery.recover_declared([_spec("task", kinds=("video",))]))
+
+    assert seen == [("video", None)]
+
+
 def test_disabled_worker_lifespan_leaves_records_and_queue_untouched() -> None:
     """真实 lifespan：`WORKER_ENABLED=false` 时启动不许改写记录、不许塞队列。
 

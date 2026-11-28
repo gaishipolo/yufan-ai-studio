@@ -52,7 +52,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-from sqlalchemy import and_, delete, exists, func, or_, select, update
+from sqlalchemy import and_, delete, exists, func, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -615,15 +615,18 @@ class TagService:
         elif state == "active":
             query = query.where(LibraryAsset.purpose != access.PURPOSE_CASE)
         if state == "active":
-            # 与 `LibraryService.list_assets` 的 selector 分支同口径：
-            # 共享封装 ⇒ 成员可读。标签词表是模板库选素材的入口，少了这一支，
-            # 普通用户会看到「素材列表有 47 张、标签却只剩少数几个」。
-            visible = access.tab_clause(actor, groups, library)
-            if include_pack_members and library is LibraryTab.ALL:
-                inherited = await access.pack_inherited_member_ids(self.session, actor)
-                if inherited:
-                    visible = or_(visible, LibraryAsset.id.in_(inherited))
-            query = query.where(LibraryAsset.deleted_at.is_(None), visible)
+            # 与 `LibraryService.list_assets` 共用同一条可见条件：标签词表也是
+            # 模板库选素材的入口，两处各写一遍会让普通用户看到
+            # 「素材列表有 47 张、标签却只剩少数几个」。
+            query = query.where(
+                await access.visible_asset_clause(
+                    self.session,
+                    actor,
+                    groups,
+                    library,
+                    include_pack_members=include_pack_members,
+                )
+            )
         elif state == "draft":
             if not actor.has(access.PERM_DRAFT_REVIEW):
                 query = query.where(LibraryAsset.owner_id == actor.id)

@@ -52,7 +52,7 @@ from generation.events import EVT_GENERATION_FAILED
 from generation.pipeline import get_pipeline
 from generation.runner import SUBMIT_UNKNOWN_MESSAGE, GenerationRunner, get_runner
 from generation.spec import GenerationRecord
-from generation.store import ExternalIdRecoverable
+from generation.store import ExternalIdRecoverable, ResettableForResubmit
 from infra import get_model_router
 from infra.ai.base import PollCapable
 
@@ -71,7 +71,7 @@ class RecoverablePipeline(Protocol):
     async def list_unfinished(
         self,
         session: AsyncSession,
-        limit: int,
+        limit: int | None = None,
         *,
         stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]: ...
@@ -146,6 +146,21 @@ async def _mark_running(kind: str, record: GenerationRecord) -> bool:
     return True
 
 
+async def _reset_for_resubmit(kind: str, record: GenerationRecord) -> bool:
+    """派发前复位展示现场；存储不支持这项能力时直接放行。
+
+    返回 False = 记录已终态/不存在，调用方不该再把它塞进队列。
+    """
+    async with get_session_factory()() as session:
+        store = get_pipeline(kind).store(session)
+        if not isinstance(store, ResettableForResubmit):
+            return True
+        if not await store.reset_for_resubmit(record.id):
+            return False
+        await session.commit()
+    return True
+
+
 async def _recover_external_id(kind: str, record: GenerationRecord) -> GenerationRecord | None:
     """从提交台账把凭证捡回来，回填业务表。
 
@@ -202,13 +217,14 @@ async def recover_kind(
     kind: str,
     *,
     runner: GenerationRunner | None = None,
-    limit: int = RECOVERY_BATCH,
+    limit: int | None = RECOVERY_BATCH,
     stale_after_sec: int | None = None,
 ) -> dict[str, int]:
     """恢复某一类生成能力的未终态记录，返回各类处置的条数。
 
     `stale_after_sec` 只给周期巡检用：启动恢复传 None，扫全部未终态记录；
-    传阈值时只扫「超过 N 秒没有任何写入」的记录。
+    传阈值时只扫「超过 N 秒没有任何写入」的记录。`limit=None` 表示不截断
+    （启动恢复），周期巡检传批次上限，避免一轮把所有残留排进队列。
     """
     pipeline = get_pipeline(kind)
     if not isinstance(pipeline, RecoverablePipeline):
@@ -259,8 +275,11 @@ async def recover_kind(
                     counts["needs_review"] += 1
                     failed_events += 1
             else:
-                await active.dispatch(kind, record.id)
-                counts["resubmit"] += 1
+                # 提交前就中断了：先复位现场，再重新走 submit。不复位的话，
+                # 记录可能停在 running / 旧进度，页面会一直显示「运行中 · 62%」。
+                if await _reset_for_resubmit(kind, record):
+                    await active.dispatch(kind, record.id)
+                    counts["resubmit"] += 1
         except Exception:  # noqa: BLE001 - 单条失败不阻塞其余记录
             logger.exception("恢复失败 kind=%s id=%s", kind, record.id)
 
@@ -299,7 +318,9 @@ async def recover_declared(specs: Sequence[object]) -> dict[str, dict[str, int]]
         if not kinds or startup is not None:
             continue
         for kind in kinds:
-            result[kind] = await recover_kind(kind)
+            # 启动恢复不设批次上限：旧 task worker 也是扫全部；截断会让
+            # 第 101 条以后的记录一直等到下一次周期巡检才被接回。
+            result[kind] = await recover_kind(kind, limit=None)
     return result
 
 

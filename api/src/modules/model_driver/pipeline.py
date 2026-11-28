@@ -40,7 +40,7 @@ class ModelDriverPipeline:
     async def list_unfinished(
         self,
         session: AsyncSession,
-        limit: int,
+        limit: int | None = None,
         *,
         stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:

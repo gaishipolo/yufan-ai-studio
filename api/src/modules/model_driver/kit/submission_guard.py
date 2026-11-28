@@ -573,9 +573,6 @@ async def settle_failure(
     return status
 
 
-
-
-
 async def find_recoverable_external_id(
     record_id: str,
     factory: async_sessionmaker[AsyncSession] | None = None,

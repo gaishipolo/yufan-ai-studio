@@ -274,14 +274,15 @@ class LibraryService:
 
         query = select(LibraryAsset).where(LibraryAsset.state == state)
         if state == "active":
-            visible = access.tab_clause(actor, groups, library)
-            if include_pack_members and library is LibraryTab.ALL:
-                # 只在「全部」这一档开口子：个人 / 小组 / 团队是**归属**筛选，
-                # 不能因为成员挂在可见的包上就把别人的私货算进「我的」。
-                inherited = await access.pack_inherited_member_ids(self.session, actor)
-                if inherited:
-                    visible = or_(visible, LibraryAsset.id.in_(inherited))
-            query = query.where(LibraryAsset.deleted_at.is_(None), visible)
+            query = query.where(
+                await access.visible_asset_clause(
+                    self.session,
+                    actor,
+                    groups,
+                    library,
+                    include_pack_members=include_pack_members,
+                )
+            )
         elif state == "draft":
             # 代审范围：持 draft:review 的人能看到所有人的草稿；否则只看自己的
             if not actor.has(access.PERM_DRAFT_REVIEW):

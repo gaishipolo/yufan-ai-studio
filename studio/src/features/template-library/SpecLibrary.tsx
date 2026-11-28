@@ -74,6 +74,11 @@ import { SpecTagBar } from './SpecTagBar';
 import { templateTagLabel } from './specTagUtils';
 import { tagRequestIds } from '@/shared/lib/tagSelection';
 
+/** `POST /generations/image` 的结果有 `name`，`POST /tasks` 的结果有 `title`。 */
+function isImageJob(result: VideoTask | ImageJob): result is ImageJob {
+  return 'name' in result;
+}
+
 /**
  * 模板库（填表）：左边选模板，右边就地填素材 → 生成。
  *
@@ -813,8 +818,8 @@ export function SpecLibrary() {
     const result = await submission.submit(plan.payload);
     if (!result) return; // 失败已由 submission.onError 收尾
 
-    if (plan.kind === 'image') {
-      const job = result as ImageJob;
+    if (isImageJob(result)) {
+      const job = result;
       /* 任务名已在 `toImagePayload` 里随 payload 传模板名（与视频那条对齐）。
          不读 `job.name` 是因为这里只是「这一刻提交成功了吗」的提示，
          用本地的 spec.name 即可，不必等响应字段。 */
@@ -823,7 +828,7 @@ export function SpecLibrary() {
       // 还要一条会自己消失的反馈，用户才知道「点到了、东西进去了」。
       toast('已提交生图，稍后到资产库查看', 'success');
     } else {
-      const task = result as VideoTask;
+      const task = result;
       setNote(`已提交：${task.title || task.id}`);
       toast('任务已提交，可在任务中心查看进度', 'success');
     }

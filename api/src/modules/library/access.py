@@ -93,6 +93,7 @@ __all__ = [
     "packed_member_clause",
     "readable_rows",
     "tab_clause",
+    "visible_asset_clause",
 ]
 
 #: 草稿箱代审范围：持这个码的人能看到别人的草稿（否则只看自己的）。
@@ -207,6 +208,31 @@ def tab_clause(
             ),
         )
     return active_visible_clause(actor, groups)
+
+
+async def visible_asset_clause(
+    session: AsyncSession,
+    actor: CurrentUser,
+    groups: Sequence[str],
+    tab: LibraryTab,
+    *,
+    include_pack_members: bool = False,
+) -> ColumnElement[bool]:
+    """`state=active` 时「这条资产在界面上可见」的完整条件。
+
+    列表（`LibraryService.list_assets`）与标签计数（`TagService.stats`）共用
+    这一份：两处各写一遍时，最先漂移的总是「共享封装的成员也可读」这一支 ——
+    普通用户会看到「素材列表有 47 张、标签却只剩少数几个」（2026-11-26）。
+
+    `include_pack_members` 只在「全部」这一档开口子：个人 / 小组 / 团队是
+    **归属**筛选，不能因为成员挂在可见的包上就把别人的私货算进「我的」。
+    """
+    visible = tab_clause(actor, groups, tab)
+    if include_pack_members and tab is LibraryTab.ALL:
+        inherited = await pack_inherited_member_ids(session, actor)
+        if inherited:
+            visible = or_(visible, LibraryAsset.id.in_(inherited))
+    return and_(LibraryAsset.deleted_at.is_(None), visible)
 
 
 def can_read(

@@ -125,10 +125,17 @@ export function cancelDefaultText(draft: TemplateSpecIn, slotKey: string): Promp
 
 /** 发布前的本地预检：只做后端会拒、但前端能提前点名的检查。 */
 export function publishPreflight(spec: TemplateSpecIn): string | null {
-  const missing = slotsMissingTag(spec.slots ?? []);
-  if (!missing.length) return null;
+  const slots = spec.slots ?? [];
+  const missing = slotsMissingTag(slots);
+  if (missing.length) {
+    return (
+      `这些槽位还没圈候选标签：${missing.join('、')}。` +
+      '没圈的话列不出可用的候选：素材槽位退化成全部素材，包槽位干脆列不出包。'
+    );
+  }
   return (
-    `这些槽位还没圈候选标签：${missing.join('、')}。` +
-    '没圈的话列不出可用的候选：素材槽位退化成全部素材，包槽位干脆列不出包。'
+    requiredSlotRefError(spec.prompt ?? '', slots) ??
+    optionalSlotRefError(spec.prompt ?? '', slots) ??
+    optionalSlotRefCountError(spec.randomPrompt ?? '', slots)
   );
 }

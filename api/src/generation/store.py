@@ -68,6 +68,20 @@ class GenerationStore(Protocol):
 
 
 @runtime_checkable
+class ResettableForResubmit(Protocol):
+    """重新派发前能把展示现场复位（**可选**）。
+
+    仅用于「没提交过、也没留下凭证」的记录：它可能停在 running / 带上旧进度，
+    直接 dispatch 会让页面一直显示「运行中 · 62%」，直到 worker 真正开始跑。
+    复位是业务表的事（字段各不相同），所以做成可选能力，框架用 `isinstance` 探测。
+    """
+
+    async def reset_for_resubmit(self, record_id: str) -> bool:
+        """状态置 queued、进度归零、清错误与开始时间。False = 已终态/不存在。"""
+        ...
+
+
+@runtime_checkable
 class ExternalIdRecoverable(Protocol):
     """记录能被「回填提交凭证」的存储能力（**可选**）。
 

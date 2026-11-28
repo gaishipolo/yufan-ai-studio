@@ -1,7 +1,11 @@
 import type { GenerateImagePayload } from '@/entities/image/model/types';
 import type { CreateTaskPayload } from '@/entities/task/model/types';
 import type { ParamField } from '@/entities/model/model/types';
-import type { AspectRatio, SpecCompileOut } from '@/shared/api/schema';
+import {
+  AspectRatio_VALUES,
+  type AspectRatio,
+  type SpecCompileOut,
+} from '@/shared/api/schema';
 
 /**
  * `compile` → 提交接口的字段摊平。
@@ -120,6 +124,10 @@ function schemaOf(source: PayloadSchema | undefined): Record<string, ParamField>
   return declared;
 }
 
+function isAspectRatio(value: string): value is AspectRatio {
+  return AspectRatio_VALUES.some((ratio) => ratio === value);
+}
+
 export function toTaskPayload(
   compiled: SpecCompileOut,
   title: string,
@@ -146,13 +154,18 @@ export function toTaskPayload(
   );
   if (!collected.ok) return collected;
 
+  const aspectRatio = String(params.aspectRatio ?? defaults.aspectRatio ?? '9:16');
+  if (!isAspectRatio(aspectRatio)) {
+    return { ok: false, message: `画幅不合法：${aspectRatio}` };
+  }
+
   return {
     ok: true,
     payload: {
       title,
       prompt: compiled.prompt,
       model: compiled.model,
-      aspectRatio: String(params.aspectRatio ?? defaults.aspectRatio ?? '9:16') as AspectRatio,
+      aspectRatio,
       ...(duration > 0 ? { durationSec: duration } : {}),
       referenceLibraryIds: compiled.referenceLibraryIds ?? [],
       textLibraryIds: compiled.textLibraryIds ?? [],

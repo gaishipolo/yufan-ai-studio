@@ -33,6 +33,7 @@ def response(status: int, *, body: dict | None = None, text: str = "") -> httpx.
 AGNES_MAP = {
     401: Unauthorized,
     403: Forbidden,
+    408: BadRequest,
     429: RateLimited,
 }
 AGNES_VIDEO_MAP = {**AGNES_MAP}
@@ -53,7 +54,7 @@ BAILIAN_MAP: dict[int, type[Exception]] = {}  # bailian 4xx 除 408，408 走兜
         (429, RateLimited),
         (400, BadRequest),
         (500, UpstreamError),
-        (408, UpstreamError),  # agnes 兜底按 5xx
+        (408, BadRequest),  # 408 是明确没受理，与其它 4xx 同侧
     ],
 )
 def test_agnes_mapping(status: int, expected: type[Exception]) -> None:

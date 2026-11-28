@@ -18,6 +18,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from core.config import settings
 from core.exceptions import BadRequest
 from core.library_text import inject_text_refs
+from core.logging import get_logger
 from core.naming import generated_file_name
 from core.ports.library_ingest import IngestRequest
 from core.ports.library_lookup import LibraryAssetKind, get_library_lookup
@@ -44,6 +45,8 @@ from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask, parse_params_json
 
 KIND_VIDEO = "video"
+
+logger = get_logger(__name__)
 
 # 执行器把成片下载到运行工作区的这个相对路径下（`runtime/vendor/.../canvas-run.mjs`
 # 的 `downloadResult` 写死的名字）。驱动拿不到公网地址，只能回一个指向工作区的
@@ -201,7 +204,7 @@ class VideoTaskStore:
     async def list_unfinished(
         self,
         session: AsyncSession,
-        limit: int,
+        limit: int | None = None,
         *,
         stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:
@@ -211,11 +214,10 @@ class VideoTaskStore:
         if stale_after_sec is not None:
             cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(0, stale_after_sec))
             stmt = stmt.where(VideoTask.updated_at < cutoff)
-        rows = (
-            await session.scalars(
-                stmt.order_by(VideoTask.updated_at, VideoTask.id).limit(limit)
-            )
-        ).all()
+        stmt = stmt.order_by(VideoTask.updated_at, VideoTask.id)
+        if limit is not None:
+            stmt = stmt.limit(limit)
+        rows = (await session.scalars(stmt)).all()
         return [self._to_recovery_record(row) for row in rows]
 
     async def mark_submitting(self, record_id: str) -> bool:
@@ -250,6 +252,13 @@ class VideoTaskStore:
                 return None
             provider = router.provider_for(model)
         except Exception:  # noqa: BLE001 - 快照是增强，不能让成功提交失败
+            # 恢复时按最保守的同步形态处理；但异常本身要留痕，否则「提交成功、
+            # 恢复策略却悄悄降级」没有任何线索。
+            logger.warning(
+                "冻结提交形态失败，恢复按安全侧处理 model=%s",
+                model,
+                exc_info=True,
+            )
             return None
         return "async" if isinstance(provider, PollCapable) and provider.supports_poll else "sync"
 
@@ -275,6 +284,21 @@ class VideoTaskStore:
                 # 此后任何一次失败后的重试都会被误判为「提交结果未知」（R3-01）
                 "submit_attempts": 0,
                 "submit_mode": self._snapshot_submit_mode(task),
+            },
+        )
+
+    async def reset_for_resubmit(self, record_id: str) -> bool:
+        """重派前复位展示现场（旧 worker 的启动恢复口径）。"""
+        return await update_unless_terminal(
+            self.session,
+            VideoTask,
+            record_id,
+            _TERMINAL,
+            {
+                "status": TaskStatus.QUEUED.value,
+                "progress": 0,
+                "error_message": None,
+                "started_at": None,
             },
         )
 
@@ -389,7 +413,7 @@ class VideoGenerationPipeline:
     async def list_unfinished(
         self,
         session: AsyncSession,
-        limit: int,
+        limit: int | None = None,
         *,
         stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:
