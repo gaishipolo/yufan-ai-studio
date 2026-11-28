@@ -485,7 +485,7 @@
 | 选素材（默认） | 现有的素材网格 | `slotValues[key] = [assetId…]`，可以不挑 |
 | 改提示词 | 一个输入框，**预填作者的 `empty_text`** | `slotTextOverrides[key] = "改后的那段话"`，这一格**不传素材** |
 
-编译前把该槽位的 `empty_text` 换成使用者那段（`spec_service._apply_slot_text_overrides`），
+编译前把该槽位的 `empty_text` 换成使用者那段（`modules/template_pack/slot_text_overrides.py::apply_slot_text_overrides`），
 编号展开仍由 `compile_spec` 一处算 —— 与「随机档整段换 `prompt`」同一个位置、同一个手法，
 编译核心因此保持纯函数。
 
@@ -496,8 +496,9 @@
 
 > 没有插入点还摆输入框，等于让人打了字也不生效 —— 与已删的 `usage` 字段同一类错。
 
-五条 400（`_apply_slot_text_overrides`），都点明是哪一格：槽位不存在 / 必填或固定 /
-同一格既挑素材又改文案 / 没有插入点 / 文案为空或含 `{{`。
+九条 400（`apply_slot_text_overrides`），都点明是哪一格：槽位不存在 / 必填或固定 /
+同一格既挑素材又改文案 / 没有插入点 / 文案为空 / 超过长度上限 / 引用自己 /
+引用可选或不存在槽位 / 残留占位符。
 
 **2026-11-26 放宽**：改写出来的文案里**可以引用必定有素材的槽位**（必填 / 已固定），
 与作者侧同一套判据（§6.1）—— 使用者改写是作者那段的延续，规则不该两套。仍禁止引用
@@ -1315,7 +1316,7 @@ P3 补上 capability 判据后，迁移只需要让这份守卫继续绿，就�
 
 25. **「未选时文案」不许引用自己**（三处同口径）：作者侧的文案由
     `rules._validate_slot_texts` 拦，使用者/模型改写的那份由
-    `spec_service._apply_slot_text_overrides` 就地拦（不靠更深的
+    `slot_text_overrides.apply_slot_text_overrides` 就地拦（不靠更深的
     `validate_spec` 兜底 —— 那样报错说的是「未选时文案」，定位不到是这次改写造成的）。
     理由：未选时文案用的正是「这一格没素材」的时候，那一格自己那时没有编号可指。
     （「选中时文案」相反：允许引用自己，那是「人物参考 {{slot:hero}}」的推荐写法。）

@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import Mapping
 from dataclasses import replace
 from typing import Any
@@ -232,7 +233,15 @@ class OpenAICompatibleClient:
             raw_id=str(body.get("id") or ""),
         )
 
-    async def complete(self, request: LlmRequest) -> LlmResponse:
+    async def complete(
+        self,
+        request: LlmRequest,
+        *,
+        timeout_sec: float | None = None,
+    ) -> LlmResponse:
+        """发一次调用。`timeout_sec` 覆盖客户端默认超时，仅作用这一次请求。"""
+        if timeout_sec is not None and timeout_sec <= 0:
+            raise BadRequest("LLM 单次超时必须大于 0 秒")
         # 平台 id → 上游 model 名：未知 id 抛 BadRequest（G2），不静默回落。
         try:
             upstream_model = resolve_model(request.model, self.settings, self.model_map)
@@ -250,11 +259,15 @@ class OpenAICompatibleClient:
 
         async with self._client() as client:
             # 不重试：chat 是 POST，重复提交等于重复计费（infra/http.py 同一纪律）。
-            response = await client.post(
-                self._url(),
-                json=payload,
-                headers=self._headers(),
-            )
+            # `timeout` 是 per-request 覆盖；传 None 会变成「永不超时」，
+            # 所以只有显式给了才放进请求参数。
+            post_kwargs: dict[str, Any] = {
+                "json": payload,
+                "headers": self._headers(),
+            }
+            if timeout_sec is not None:
+                post_kwargs["timeout"] = timeout_sec
+            response = await client.post(self._url(), **post_kwargs)
             if response.status_code >= 400:
                 # 上游错误正文可能回显 key；先脱敏再构造异常，args/message 都不带明文。
                 detail = self._redact(extract_detail(response))
@@ -292,7 +305,37 @@ def _should_fallback(exc: BaseException) -> bool:
     return isinstance(exc, (httpx.ConnectError, httpx.ConnectTimeout))
 
 
-async def _complete_one(request: LlmRequest, platform_id: str) -> LlmResponse:
+def _now() -> float:
+    """可被测试替换的单调时钟。"""
+    return time.monotonic()
+
+
+def _timeout_for(timeout_sec: float | None, deadline: float | None) -> float | None:
+    """这次尝试实际能用的超时。
+
+    - 没给 deadline：原样返回 `timeout_sec`（`None` = 用客户端默认）。
+    - 给了 deadline：返回 `min(timeout_sec, 剩余预算)`；剩余 ≤ 0 返回 0，
+      调用方据此**不再发请求**，而不是发一个 0 秒超时的请求。
+
+    必须把 deadline 压进单次 timeout，否则一个 20s 的请求可以越过 45s 总预算
+    才失败 —— 总预算就只是「下一轮不再发起」，挡不住正在跑的那一轮。
+    """
+    if deadline is None:
+        return timeout_sec
+    remaining = deadline - _now()
+    if remaining <= 0:
+        return 0.0
+    if timeout_sec is None:
+        return remaining
+    return min(timeout_sec, remaining)
+
+
+async def _complete_one(
+    request: LlmRequest,
+    platform_id: str,
+    *,
+    timeout_sec: float | None = None,
+) -> LlmResponse:
     runtime = load_provider(provider_of(platform_id))
     client = OpenAICompatibleClient(
         runtime.settings,
@@ -300,17 +343,36 @@ async def _complete_one(request: LlmRequest, platform_id: str) -> LlmResponse:
         api_key_env=runtime.api_key_env,
         vendor=runtime.label,
     )
-    return await client.complete(replace(request, model=platform_id))
+    return await client.complete(
+        replace(request, model=platform_id),
+        timeout_sec=timeout_sec,
+    )
 
 
-async def complete(request: LlmRequest) -> LlmResponse:
+async def complete(
+    request: LlmRequest,
+    *,
+    timeout_sec: float | None = None,
+    deadline: float | None = None,
+) -> LlmResponse:
     """默认入口：用运维页配置的 OpenAI 兼容端点发一次调用。
 
     只有 ``llm/default`` 会走 ``LLM_MODEL_CHAIN``（第一项为默认模型）并按
     失败类型降级；显式模型 id 精确调用，不静默换模型。
+
+    `timeout_sec` / `deadline` 是给「一次业务操作只能等 N 秒」的调用方用的：
+    - `timeout_sec` 覆盖该次请求的客户端默认超时；
+    - `deadline` 是**单调时钟的绝对时间点**（`time.monotonic()`），降级链在
+      每次尝试前检查，且单次 timeout 不超过剩余预算。不给就沿用旧行为。
     """
+    if timeout_sec is not None and timeout_sec <= 0:
+        raise BadRequest("LLM 单次超时必须大于 0 秒")
+
     if request.model != DEFAULT_MODEL:
-        return await _complete_one(request, request.model)
+        attempt_timeout = _timeout_for(timeout_sec, deadline)
+        if attempt_timeout is not None and attempt_timeout <= 0:
+            raise UpstreamError("LLM 调用超过总预算：未发出请求")
+        return await _complete_one(request, request.model, timeout_sec=attempt_timeout)
 
     try:
         chain = get_llm_settings().model_chain_ids()
@@ -320,10 +382,21 @@ async def complete(request: LlmRequest) -> LlmResponse:
         # 未配置链时保持旧语义：llm/default → LLM_MODEL / 模型表第一项。
         chain = (DEFAULT_MODEL,)
 
+    last_exc: BaseException | None = None
     for index, platform_id in enumerate(chain):
+        attempt_timeout = _timeout_for(timeout_sec, deadline)
+        if attempt_timeout is not None and attempt_timeout <= 0:
+            if last_exc is not None:
+                raise last_exc
+            raise UpstreamError("LLM 调用超过总预算：未发出请求")
         try:
-            return await _complete_one(request, platform_id)
+            return await _complete_one(
+                request,
+                platform_id,
+                timeout_sec=attempt_timeout,
+            )
         except Exception as exc:
+            last_exc = exc
             is_last = index == len(chain) - 1
             if is_last or not _should_fallback(exc):
                 raise

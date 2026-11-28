@@ -104,11 +104,11 @@ def test_使用者改写未选时文案不能引用自己() -> None:
     以前这里减掉了 `{key}` 放行，靠更深的 `validate_spec` 兜底 —— 报错文案
     说的是「未选时文案不能引用它自己」，定位不到是这次改写造成的。
     """
-    from modules.template_pack.spec_service import _apply_slot_text_overrides
+    from modules.template_pack.slot_text_overrides import apply_slot_text_overrides
 
     spec = spec_of("主图 {{slot:hero}}，场景 {{slot:scene}}")
     with pytest.raises(BadRequest) as exc:
-        _apply_slot_text_overrides(
+        apply_slot_text_overrides(
             spec,
             {"scene": "场景参考 {{slot:scene}}"},
             {},
@@ -118,10 +118,10 @@ def test_使用者改写未选时文案不能引用自己() -> None:
 
 def test_使用者改写可以引用必填槽位() -> None:
     """允许引用**别格**里必定有素材的（hero 必填），与作者侧同一套判据。"""
-    from modules.template_pack.spec_service import _apply_slot_text_overrides
+    from modules.template_pack.slot_text_overrides import apply_slot_text_overrides
 
     spec = spec_of("主图 {{slot:hero}}，场景 {{slot:scene}}")
-    result = _apply_slot_text_overrides(
+    result = apply_slot_text_overrides(
         spec,
         {"scene": "参考主图 {{slot:hero}} 的构图"},
         {},

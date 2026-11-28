@@ -392,6 +392,7 @@ class _FakeClient:
     behavior: dict[str, BaseException | None] = {}
     calls: list[str] = []
     base_urls: list[str] = []
+    timeouts: list[float | None] = []
 
     def __init__(
         self,
@@ -404,9 +405,15 @@ class _FakeClient:
         self.base_url = settings.base_url
         self.model_map = model_map or {}
 
-    async def complete(self, request: LlmRequest) -> LlmResponse:
+    async def complete(
+        self,
+        request: LlmRequest,
+        *,
+        timeout_sec: float | None = None,
+    ) -> LlmResponse:
         _FakeClient.calls.append(request.model)
         _FakeClient.base_urls.append(self.base_url)
+        _FakeClient.timeouts.append(timeout_sec)
         outcome = _FakeClient.behavior.get(self.base_url)
         if isinstance(outcome, BaseException):
             raise outcome
@@ -437,6 +444,7 @@ def llm_runtime(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
     _FakeClient.behavior = {}
     _FakeClient.calls = []
     _FakeClient.base_urls = []
+    _FakeClient.timeouts = []
     yield
     env_settings.clear_cache()
 
@@ -457,6 +465,124 @@ async def _ask_default() -> LlmResponse:
     return await complete_via_chain(
         LlmRequest(model="llm/default", messages=(LlmMessage("user", "hi"),))
     )
+
+
+@pytest.mark.asyncio
+async def test_单次超时覆盖客户端默认() -> None:
+    """per-request timeout 必须真的落到请求上，而不是只存在函数签名里。"""
+    seen: list[httpx.Request] = []
+
+    def record(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return ok_response()
+
+    client = OpenAICompatibleClient(
+        settings(),
+        transport=httpx.MockTransport(record),
+    )
+    await client.complete(
+        LlmRequest(model="llm/qwen-plus", messages=(LlmMessage("user", "hi"),)),
+        timeout_sec=3.5,
+    )
+    assert seen[0].extensions["timeout"]["read"] == 3.5
+
+
+@pytest.mark.asyncio
+async def test_超时为零或负数直接400() -> None:
+    client, seen = client_recording(lambda _: ok_response())
+    with pytest.raises(BadRequest, match="必须大于 0"):
+        await client.complete(
+            LlmRequest(model="llm/qwen-plus", messages=(LlmMessage("user", "hi"),)),
+            timeout_sec=0,
+        )
+    assert seen == []
+
+
+@pytest.mark.asyncio
+async def test_总预算耗尽后不再发请求(
+    monkeypatch: pytest.MonkeyPatch, llm_runtime: None
+) -> None:
+    _set_provider(
+        monkeypatch,
+        "minimax",
+        "https://minimax.example/v1",
+        '[{"id":"minimax/flash","upstream":"MiniMax"}]',
+    )
+    _set_provider(
+        monkeypatch,
+        "default",
+        "https://default.example/v1",
+        '[{"id":"llm/qwen","upstream":"qwen"}]',
+    )
+    monkeypatch.setenv("LLM_MODEL_CHAIN", '["minimax/flash","llm/qwen"]')
+    monkeypatch.setattr(client_module, "_now", lambda: 100.0)
+
+    with pytest.raises(UpstreamError, match="总预算"):
+        await complete_via_chain(
+            LlmRequest(model="llm/default", messages=(LlmMessage("user", "hi"),)),
+            deadline=99.0,
+        )
+    assert _FakeClient.calls == []
+
+
+@pytest.mark.asyncio
+async def test_总预算在降级前用尽时抛当前错误且不调下一个(
+    monkeypatch: pytest.MonkeyPatch, llm_runtime: None
+) -> None:
+    _set_provider(
+        monkeypatch,
+        "minimax",
+        "https://minimax.example/v1",
+        '[{"id":"minimax/flash","upstream":"MiniMax"}]',
+    )
+    _set_provider(
+        monkeypatch,
+        "default",
+        "https://default.example/v1",
+        '[{"id":"llm/qwen","upstream":"qwen"}]',
+    )
+    monkeypatch.setenv("LLM_MODEL_CHAIN", '["minimax/flash","llm/qwen"]')
+    _FakeClient.behavior = {"https://minimax.example/v1": RateLimited("busy")}
+    ticks = iter([0.0, 100.0])
+    monkeypatch.setattr(client_module, "_now", lambda: next(ticks))
+
+    with pytest.raises(RateLimited, match="busy"):
+        await complete_via_chain(
+            LlmRequest(model="llm/default", messages=(LlmMessage("user", "hi"),)),
+            deadline=50.0,
+        )
+    assert _FakeClient.calls == ["minimax/flash"]
+
+
+@pytest.mark.asyncio
+async def test_降级时每次尝试都拿到不超过剩余预算的超时(
+    monkeypatch: pytest.MonkeyPatch, llm_runtime: None
+) -> None:
+    _set_provider(
+        monkeypatch,
+        "minimax",
+        "https://minimax.example/v1",
+        '[{"id":"minimax/flash","upstream":"MiniMax"}]',
+    )
+    _set_provider(
+        monkeypatch,
+        "default",
+        "https://default.example/v1",
+        '[{"id":"llm/qwen","upstream":"qwen"}]',
+    )
+    monkeypatch.setenv("LLM_MODEL_CHAIN", '["minimax/flash","llm/qwen"]')
+    _FakeClient.behavior = {"https://minimax.example/v1": RateLimited("busy")}
+    ticks = iter([0.0, 5.0])
+    monkeypatch.setattr(client_module, "_now", lambda: next(ticks))
+
+    response = await complete_via_chain(
+        LlmRequest(model="llm/default", messages=(LlmMessage("user", "hi"),)),
+        timeout_sec=20.0,
+        deadline=15.0,
+    )
+    assert response.platform_model == "llm/qwen"
+    # 第一次 min(20, 15-0)=15s、第二次 min(20, 15-5)=10s
+    assert _FakeClient.timeouts == [15.0, 10.0]
 
 
 @pytest.mark.asyncio
