@@ -53,6 +53,8 @@ Thumbs.db
 /workbench/
 # .workbuddy/：本地会话与工作记忆，不属于工程内容
 .workbuddy/
+# q-flow 生成的架构图（含 viewer 包，可从 docs/ARCHITECTURE.md 重建）：本地查看，不提交
+/docs/qgraphflow/
 # .tmp/：本地排查用的临时产物（接口快照、抽帧、pytest 输出）
 /.tmp/
 # var/：本地工作副本与排查产物（worktree、CI 日志、临时脚本、抽帧图片等）。
