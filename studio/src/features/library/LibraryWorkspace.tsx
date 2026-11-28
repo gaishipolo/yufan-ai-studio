@@ -18,7 +18,7 @@ import {
   type LibrarySortKey,
   type LibraryView,
 } from '@/entities/library/model/types';
-import { effectiveTagSelection } from '@/entities/library/model/tagTree';
+import { tagRequestIds } from '@/shared/lib/tagSelection';
 import {
   useBulkAction,
   useCreateDownload,
@@ -135,7 +135,7 @@ export function LibraryWorkspace() {
   /* 界面上可以同时高亮「维度 + 取值」，但请求只带取值 —— 父的范围包含子，
      两个一起发会等于整个维度。*/
   const effectiveTagIds = useMemo(
-    () => effectiveTagSelection(tags.data ?? [], tagIds),
+    () => tagRequestIds(tags.data ?? [], tagIds),
     [tags.data, tagIds],
   );
   const list = useLibraryList({

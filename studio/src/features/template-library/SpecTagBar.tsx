@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import type { TagOut } from '@/shared/api/schema';
-import { templateTagDepth, templateTagLabel } from './specTagUtils';
+import { templateTagLabel } from './specTagUtils';
+import { tagSelection, toggleTagSelection } from '@/shared/lib/tagSelection';
 
 const PILL =
   'inline-flex shrink-0 items-center gap-1 rounded-xs border px-2.5 py-[3px] text-body leading-4 transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/40';
@@ -32,51 +33,13 @@ export function SpecTagBar({ tags, selected, busy, onChange }: SpecTagBarProps) 
   const [dimensionQuery, setDimensionQuery] = useState('');
   const [valueQuery, setValueQuery] = useState('');
 
-  const dimensions = useMemo(
-    () => tags.filter((tag) => templateTagDepth(tag) === 1),
-    [tags],
-  );
-  const parentOf = useMemo(
-    () => new Map(tags.map((tag) => [tag.id, tag.parentId ?? null])),
-    [tags],
-  );
-  /* 老状态可能只存了二级：显示时把父维度补上，一级也要高亮。 */
-  const active = useMemo(() => {
-    const next = new Set(selected);
-    for (const id of selected) {
-      const parentId = parentOf.get(id);
-      if (parentId) next.add(parentId);
-    }
-    return next;
-  }, [selected, parentOf]);
-  const selectedDimensions = useMemo(
-    () => new Set(dimensions.filter((tag) => active.has(tag.id)).map((tag) => tag.id)),
-    [active, dimensions],
-  );
-  const values = useMemo(() => {
-    const allValues = tags.filter((tag) => templateTagDepth(tag) === 2);
-    return selectedDimensions.size
-      ? allValues.filter((tag) => tag.parentId && selectedDimensions.has(tag.parentId))
-      : allValues;
-  }, [tags, selectedDimensions]);
+  const selection = useMemo(() => tagSelection(tags, selected), [tags, selected]);
+  const dimensions = selection.dimensions;
+  const values = selection.values;
+  const active = selection.activeIds;
 
   function toggle(tag: TagOut) {
-    if (templateTagDepth(tag) === 1) {
-      if (active.has(tag.id)) {
-        onChange(
-          selected.filter((id) => id !== tag.id && parentOf.get(id) !== tag.id),
-        );
-      } else {
-        onChange([tag.id]);
-      }
-      return;
-    }
-    if (active.has(tag.id)) {
-      onChange(selected.filter((id) => id !== tag.id));
-      return;
-    }
-    if (!tag.parentId) return;
-    onChange([tag.parentId, tag.id]);
+    onChange(toggleTagSelection(tags, selected, tag));
   }
 
   const visibleDimensions = dimensions.filter((tag) =>

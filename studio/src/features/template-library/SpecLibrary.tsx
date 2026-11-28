@@ -69,7 +69,8 @@ import {
 } from './randomness';
 import { hasFallbackSlotRef, requiredSlotCount } from './slotIndexRefs';
 import { SpecTagBar } from './SpecTagBar';
-import { effectiveTemplateTagIds, templateTagLabel } from './specTagUtils';
+import { templateTagLabel } from './specTagUtils';
+import { tagRequestIds } from '@/shared/lib/tagSelection';
 
 /**
  * 模板库（填表）：左边选模板，右边就地填素材 → 生成。
@@ -245,7 +246,7 @@ export function SpecLibrary() {
   const tags = useMemo(() => tagsQuery.data ?? [], [tagsQuery.data]);
   /* 界面上可以「维度 + 取值」同时高亮，但请求只发二级取值。 */
   const effectiveTagIds = useMemo(
-    () => effectiveTemplateTagIds(tags, selectedTagIds),
+    () => tagRequestIds(tags, selectedTagIds),
     [tags, selectedTagIds],
   );
   const published = usePublishedSpecs(effectiveTagIds);

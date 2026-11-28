@@ -15,6 +15,7 @@
  * 的悬浮栏也要用，entities 不能反向依赖 features。
  */
 import type { LibraryTagOut, LibraryTagStatOut } from '@/shared/api/schema';
+import { tagRequestIds } from '@/shared/lib/tagSelection';
 
 type AnyTag = LibraryTagOut | LibraryTagStatOut;
 
@@ -264,23 +265,7 @@ export function effectiveTagSelection(
   tags: LibraryTagStatOut[],
   selected: string[],
 ): string[] {
-  const byId = new Map(tags.map((item) => [item.id, item]));
-  const chosen = [...new Set(selected)].filter((id) => byId.has(id));
-  const result: string[] = [];
-  for (const id of chosen) {
-    const tag = byId.get(id);
-    if (!tag) continue;
-    /* 有更具体的一档被选中了就让位：同一维度里维度与取值只留取值。
-       兄弟取值互不包含 —— 「6036」与「T35」两支都要留着，
-       否则其中一整支素材会被静默筛掉，而胶囊还在高亮。 */
-    const covered = chosen.some((other) => {
-      if (other === id) return false;
-      const otherTag = byId.get(other);
-      return otherTag ? ancestorIds(tags, otherTag).includes(id) : false;
-    });
-    if (!covered) result.push(id);
-  }
-  return result;
+  return tagRequestIds(tags, selected);
 }
 
 

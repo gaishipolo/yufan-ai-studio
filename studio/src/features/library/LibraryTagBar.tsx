@@ -2,11 +2,8 @@ import { useMemo, useState } from 'react';
 import { Settings2, X } from 'lucide-react';
 import { cn } from '@/shared/lib/cn';
 import type { LibraryTagStatOut } from '@/shared/api/schema';
-import {
-  tagLabel,
-  tagsAtDepth,
-  topLevelTags,
-} from '@/entities/library/model/tagTree';
+import { sortByCreated, tagLabel } from '@/entities/library/model/tagTree';
+import { tagSelection, toggleTagSelection } from '@/shared/lib/tagSelection';
 
 export interface LibraryTagBarProps {
   /** 后端已按添加时间排好序；这里再排一次只是防 mock / 旧缓存混进乱序数据 */
@@ -58,44 +55,14 @@ export function LibraryTagBar({
   const [topQuery, setTopQuery] = useState('');
   const [secondQuery, setSecondQuery] = useState('');
 
-  const top = useMemo(() => topLevelTags(tags), [tags]);
-  const parentOf = useMemo(
-    () => new Map(tags.map((tag) => [tag.id, tag.parentId ?? null])),
-    [tags],
-  );
-  /* 老 URL 可能只存了二级 id：显示时把父维度补上，避免“选了 6036 但产品没高亮”。 */
-  const active = useMemo(() => {
-    const next = new Set(selected);
-    for (const id of selected) {
-      const parentId = parentOf.get(id);
-      if (parentId) next.add(parentId);
-    }
-    return next;
-  }, [selected, parentOf]);
-
-  /* 选中的是一级：二级行只列它的取值；没选一级：列全部取值。 */
-  const second = useMemo(() => {
-    const all = tagsAtDepth(tags, 2);
-    const selectedTop = top.find((tag) => active.has(tag.id));
-    return selectedTop ? all.filter((tag) => tag.parentId === selectedTop.id) : all;
-  }, [tags, top, active]);
+  const ordered = useMemo(() => sortByCreated(tags), [tags]);
+  const selection = useMemo(() => tagSelection(ordered, selected), [ordered, selected]);
+  const top = selection.dimensions;
+  const second = selection.values;
+  const active = selection.activeIds;
 
   function toggle(tag: LibraryTagStatOut) {
-    if (!tag.parentId) {
-      /* 一级：再点取消，连同它下面已选的取值一起清掉；换维度也清掉旧取值。 */
-      if (active.has(tag.id)) {
-        onChange(selected.filter((id) => id !== tag.id && parentOf.get(id) !== tag.id));
-      } else {
-        onChange([tag.id]);
-      }
-      return;
-    }
-    /* 二级：再点只取消取值（父维度保留）；选新的自动带上父维度、替换旧取值。 */
-    if (active.has(tag.id)) {
-      onChange(selected.filter((id) => id !== tag.id));
-      return;
-    }
-    onChange([tag.parentId, tag.id]);
+    onChange(toggleTagSelection(ordered, selected, tag));
   }
 
   const visibleTop = top.filter((tag) => tag.name.includes(topQuery.trim()));

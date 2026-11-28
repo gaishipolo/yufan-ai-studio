@@ -27,10 +27,10 @@ import { useLibraryDetail, useLibraryTags } from '@/entities/library/api/library
 import { isPubliclyReadable, viewQuery } from '@/entities/library/model/types';
 import {
   scopeTagOptions,
-  secondLevelForSelection,
   tagLabel,
   tagsAtDepth,
 } from '@/entities/library/model/tagTree';
+import { tagRequestIds, tagSelection, toggleTagSelection } from '@/shared/lib/tagSelection';
 import { CaseCover } from '@/entities/library/ui/CaseCover';
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import {
@@ -215,9 +215,13 @@ export function SpecWorkspace() {
   /* 模板独立的两级标签筛选：选中的 id 直接进 useSpecs 的查询键，
      切维度/取值就是切一份列表缓存，不会读到上一组的结果。 */
   const [selectedTagIds, setSelectedTagIds] = useState<string[]>([]);
-  const list = useSpecs('', selectedTagIds);
-  const trash = useTrashedSpecs();
   const templateTags = useTemplateTags();
+  const effectiveTagIds = useMemo(
+    () => tagRequestIds(templateTags.data ?? [], selectedTagIds),
+    [templateTags.data, selectedTagIds],
+  );
+  const list = useSpecs('', effectiveTagIds);
+  const trash = useTrashedSpecs();
   const specTagMutation = useSpecTagMutations();
   const {validate, save, publish, disable, remove, restore} = useSpecMutations();
   // 规格可以指向视频模型，也可以指向图片模型；两组的参数区都由服务端 schema 驱动。
@@ -2110,23 +2114,15 @@ function TemplateTagBar({
   onChange: (next: string[]) => void;
   busy?: boolean;
 }) {
-  const stats = useMemo(() => tags as unknown as LibraryTagStatOut[], [tags]);
-  const top = useMemo(() => tagsAtDepth(stats, 1), [stats]);
-  /* 收窄规则与素材库共用同一份纯函数，不在这里重写一遍
-     「选中谁就列出谁的维度」的分支。 */
-  const second = useMemo(
-    () => secondLevelForSelection(stats, selected),
-    [stats, selected],
-  );
-  const active = useMemo(() => new Set(selected), [selected]);
+  const selection = useMemo(() => tagSelection(tags, selected), [tags, selected]);
+  const top = selection.dimensions;
+  const second = selection.values;
+  const active = selection.activeIds;
 
   const clear = () => onChange([]);
+  /* 封装页保留多选（同维度 OR / 跨维度 AND）；请求 id 由共享模块收敛。 */
   const toggle = (tag: TagOut) =>
-    onChange(
-      active.has(tag.id)
-        ? selected.filter((id) => id !== tag.id)
-        : [...selected, tag.id],
-    );
+    onChange(toggleTagSelection(tags, selected, tag, {single: false}));
 
   return (
     <div className="space-y-1.5" role="group" aria-label="模板标签筛选">
