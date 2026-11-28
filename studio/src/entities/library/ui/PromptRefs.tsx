@@ -4,6 +4,7 @@ import { useLibraryDetail, useLibraryMedia } from '@/entities/library/api/librar
 import { AssetPreview } from '@/entities/library/ui/AssetPreview';
 import { Modal } from '@/shared/ui/Modal';
 import { cn } from '@/shared/lib/cn';
+import { anyTokenPattern, parsePromptExpression } from '@/shared/lib/promptTokens';
 
 /**
  * 把提示词里的占位符渲染成**真的东西**。
@@ -46,10 +47,7 @@ export interface PromptRefsProps {
 
 type ZoomTarget = {kind: 'asset'; assetId: string};
 
-const TOKEN = /\{\{\s*([^{}]+?)\s*\}\}/g;
-const SLOT = /^slot:([a-z][a-z0-9_]{0,39})(\*|\.(\d+))?$/;
-const TEXT = /^Text\s+(\d+)$/;
-const MIXED = /^Mixed\s+(\d+)$/;
+
 
 /** 正文太长就别整段塞进预览：这里只是「这段引用是什么」，不是阅读器。 */
 const MAX_INLINE_CHARS = 300;
@@ -65,7 +63,7 @@ export function PromptRefs({
 
   const parts: ReactNode[] = [];
   let cursor = 0;
-  for (const match of value.matchAll(TOKEN)) {
+  for (const match of value.matchAll(anyTokenPattern())) {
     const at = match.index ?? 0;
     if (at > cursor) parts.push(value.slice(cursor, at));
     parts.push(
@@ -103,15 +101,16 @@ function Token({
   slot: PromptRefsProps['slot'];
   onZoom: (target: ZoomTarget) => void;
 }) {
-  const text = TEXT.exec(expression);
-  if (text) {
-    const assetId = textIds[Number(text[1]) - 1];
+  const parsed = parsePromptExpression(expression);
+  if (!parsed) return <Raw expression={expression} />;
+
+  if (parsed.kind === 'text') {
+    const assetId = textIds[parsed.index - 1];
     return assetId ? <InlineText assetId={assetId} /> : <Raw expression={expression} />;
   }
 
-  const mixed = MIXED.exec(expression);
-  if (mixed) {
-    const assetId = referenceIds[Number(mixed[1]) - 1];
+  if (parsed.kind === 'mixed') {
+    const assetId = referenceIds[parsed.index - 1];
     return assetId ? (
       <InlineThumb assetId={assetId} onZoom={() => onZoom({kind: 'asset', assetId})} />
     ) : (
@@ -119,16 +118,14 @@ function Token({
     );
   }
 
-  const slotMatch = SLOT.exec(expression);
-  if (slotMatch && slot) {
-    const [, key, modifier, index] = slotMatch;
+  if (slot) {
     const mode: SlotMode =
-      modifier === '*'
+      parsed.modifier === '*'
         ? {kind: 'all'}
-        : index
-          ? {kind: 'index', at: Number(index)}
+        : parsed.at
+          ? {kind: 'index', at: parsed.at}
           : {kind: 'one'};
-    const resolved = slot(key, mode);
+    const resolved = slot(parsed.key, mode);
     if (!resolved) return <Raw expression={expression} />;
     if (resolved.kind === 'empty') {
       return <PickInline label={resolved.label} onPick={resolved.onPick} />;
@@ -154,6 +151,7 @@ function Token({
       </>
     );
   }
+
 
   return <Raw expression={expression} />;
 }

@@ -52,6 +52,7 @@
  */
 
 import type {SpecSlotIn} from '@/shared/api/schema';
+import {singleSlotRefPattern} from '@/shared/lib/promptTokens';
 import {
   isOptionalSlot,
   referencedKeys,
@@ -185,9 +186,7 @@ export function hydrateAnchors(prompt: string, slots: SpecSlotIn[]): string {
     ) {
       continue;
     }
-    const escaped = slot.key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-    const single = new RegExp(`\\{\\{\\s*slot:${escaped}\\s*\\}\\}`, 'g');
-    const hit = single.exec(out);
+    const hit = singleSlotRefPattern(slot.key).exec(out);
     if (!hit) continue;
     out =
       out.slice(0, hit.index) +

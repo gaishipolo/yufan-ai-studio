@@ -1,5 +1,6 @@
 import type {SpecSlotOut} from '@/shared/api/schema';
 import {toSlotTokens} from '@/features/template-specs/specDraft';
+import {slotRefPattern} from '@/shared/lib/promptTokens';
 
 /**
  * 「均衡」档下哪些槽位**不能**被让给模型。
@@ -19,12 +20,9 @@ import {toSlotTokens} from '@/features/template-specs/specDraft';
  *
  * ## 与后端的形状必须一致
  *
- * 后端 `compile.py::_SLOT_REF` 的形状是
- * `\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d{1,3})?\s*\}\}`，
- * **两边允许空格**。这里抄同一份 —— 形状漂移过一次的后果是
+ * 形状只认 `shared/lib/promptTokens.ts` 一份 —— 漂移过一次的后果是
  * 「界面以为不冲突、后端 400」。
  */
-const SLOT_REF = /\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d{1,3})?\s*\}\}/g;
 
 /**
  * 提示词里每个槽位被**哪种写法**引用了。
@@ -39,7 +37,7 @@ export function slotRefModes(
   const modes: Record<string, Set<string>> = {};
   /* 作者写的是 `{{Mixed N}}`（按槽位顺序编号），这里按 key 解析 ——
      编号会随槽位增删而变，key 不会。 */
-  for (const match of toSlotTokens(prompt, slots).matchAll(SLOT_REF)) {
+  for (const match of toSlotTokens(prompt, slots).matchAll(slotRefPattern())) {
     const key = match[1];
     const modifier = match[2] ?? '';
     if (!modes[key]) modes[key] = new Set<string>();

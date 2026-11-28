@@ -4,6 +4,7 @@ import type {
   TemplateSpecIn,
   TemplateSpecOut,
 } from '@/shared/api/schema';
+import {mixedRefPattern, parsePromptExpression, slotRefPattern} from '@/shared/lib/promptTokens';
 import { KIND_LABEL } from '@/entities/library/model/types';
 import { defaultGroupLabel, groupLabels } from '@/entities/template-spec/model/slotGroups';
 
@@ -635,9 +636,6 @@ export function mixedIndexOf(slots: SpecSlotIn[] | undefined, key: string): numb
   return at < 0 ? 0 : at + 1;
 }
 
-/** 正文里的 `{{Mixed N}}`（+ 修饰符）。 */
-const MIXED_REF = /\{\{\s*Mixed\s+(\d+)(\*|\.\d+)?\s*\}\}/g;
-
 /**
  * 正文里的 `{{Mixed N}}` → `{{slot:key}}`（**只给解析用，不回写**）。
  *
@@ -651,7 +649,7 @@ const MIXED_REF = /\{\{\s*Mixed\s+(\d+)(\*|\.\d+)?\s*\}\}/g;
 export function toSlotTokens(text: string, slots: SpecSlotIn[] = []): string {
   if (!text.includes('Mixed')) return text;
   const visual = visualSlots(slots);
-  return text.replace(MIXED_REF, (raw, index: string, modifier?: string) => {
+  return text.replace(mixedRefPattern(), (raw, index: string, modifier?: string) => {
     const slot = visual[Number(index) - 1];
     return slot ? `{{slot:${slot.key}${modifier ?? ''}}}` : raw;
   });
@@ -974,25 +972,7 @@ export function filledTextChips(slot: SpecSlotIn, slots: SpecSlotIn[]): RefChip[
   return [...own, ...others];
 }
 
-/**
- * 提示词里引用某个槽位的正则（`{{slot:key}}` / `{{slot:key*}}` / `{{slot:key.2}}`）。
- *
- * **两边允许空格**（`{{ slot:key }}`）：后端结构校验用的就是容空格版本，编译器也
- * 跟着容了。这里曾经写成不容空格的严格版，于是「带空格引用」在前端被当成"没被
- * 引用"——改槽位类型时会把 key 改名，下一次保存被后端以「引用了不存在的槽位」
- * 拒绝，而界面完全没提这次改名（2026-11-15 审查 3.4）。
- *
- * **两个捕获组**：1 = 槽位 key，2 = 修饰符（`""` / `"*"` / `".2"`）。
- * 修饰符要抓出来，是因为三种写法的语义不同（`slotRefModes` 靠它）。
- * 与后端 `core.template_spec/rules.py::_SLOT_REF` **完全对齐**（同一个形状）。
- *
- * 只有一处定义：`referencedKeys` / `rekeySlot` / `stripSlotRefs` / `slotRefModes`
- * 全用它，别再各写一份。
- */
-function slotRefPattern(key?: string): RegExp {
-  const name = key ? key.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') : '[a-z][a-z0-9_]{0,39}';
-  return new RegExp(`\\{\\{\\s*slot:(${name})(\\*|\\.\\d+)?\\s*\\}\\}`, 'g');
-}
+
 
 /**
  * 检查提示词里的引用：**只拦错的，不拦花括号**。返回 `null` = 没问题。
@@ -1024,41 +1004,37 @@ export function promptRefError(prompt: string, slots: SpecSlotIn[]): string | nu
   let rest = prompt;
   for (const match of prompt.matchAll(/\{\{[\s\S]*?\}\}/g)) {
     const raw = match[0];
-    /* 视觉槽位的引用写法：`{{Mixed N}}`，N 是第几个图片/成片槽位。 */
-    const mixed = /^\{\{\s*Mixed\s+(\d+)(\*|\.\d+)?\s*\}\}$/.exec(raw);
-    if (mixed) {
-      const index = Number(mixed[1]);
-      if (index < 1 || index > visualCount) {
-        return `没有第 ${index} 个图片/成片槽位（现在 ${visualCount} 个）`;
+    const parsed = parsePromptExpression(raw.slice(2, -2));
+    if (!parsed) return '这段引用认不出来，请用 @ 或下方按钮插入';
+
+    if (parsed.kind === 'mixed') {
+      if (parsed.index < 1 || parsed.index > visualCount) {
+        return `没有第 ${parsed.index} 个图片/成片槽位（现在 ${visualCount} 个）`;
       }
-      /* 带修饰符的引用（整组 / 第 N 张）不存在了：一槽一素材。 */
-      const modifier = mixed[2];
-      if (modifier) {
-        return modifier === '*'
+      if (parsed.modifier) {
+        return parsed.modifier === '*'
           ? '整组引用（*）不存在了：一个槽位只有一张素材'
-          : `第 ${modifier.slice(1)} 张引用不存在了：一个槽位只有一张素材`;
+          : `第 ${parsed.modifier.slice(1)} 张引用不存在了：一个槽位只有一张素材`;
       }
       rest = rest.replace(raw, '');
       continue;
     }
-    const ref = /^\{\{\s*slot:([a-z][a-z0-9_]{0,39})(\*|\.\d+)?\s*\}\}$/.exec(raw);
-    if (ref) {
-      if (!known.has(ref[1])) return `没有叫「${ref[1]}」的槽位，检查一下这个引用`;
-      const modifier = ref[2];
-      if (modifier) {
-        return modifier === '*'
+
+    if (parsed.kind === 'slot') {
+      if (!known.has(parsed.key)) return `没有叫「${parsed.key}」的槽位，检查一下这个引用`;
+      if (parsed.modifier) {
+        return parsed.modifier === '*'
           ? '整组引用（*）不存在了：一个槽位只有一张素材'
-          : `第 ${modifier.slice(1)} 张引用不存在了：一个槽位只有一张素材`;
+          : `第 ${parsed.modifier.slice(1)} 张引用不存在了：一个槽位只有一张素材`;
       }
       rest = rest.replace(raw, '');
       continue;
     }
+
     /* `{{Text N}}` 仍是派生编号（文本槽位排第几由槽位顺序决定），手写就错位。 */
-    if (/^\{\{\s*Text\s*\d*\s*\}\}$/i.test(raw)) {
-      return '文本编号（Text N）由填充顺序决定，不要手写';
-    }
-    return '这段引用认不出来，请用 @ 或下方按钮插入';
+    return '文本编号（Text N）由填充顺序决定，不要手写';
   }
+
   /* 剩下还带花括号 = 没闭合（`{{slot:x` 这种） */
   if (/[{}]/.test(rest)) return '花括号没闭合，引用请用 @ 或下方按钮插入';
   return null;

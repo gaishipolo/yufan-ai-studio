@@ -92,37 +92,27 @@ import {
   nextGroupKey,
   nextGroupLabel,
   normalize,
-  promptRefError,
   referenceChips,
   renumberRefs,
   rekeySlot,
   setSlotOptional,
   slotRefToken,
   slotTypeOf,
-  slotsMissingTag,
   splitModelSelection,
   stripSlotRefsAuthored,
   textsToClearForRequired,
-  toMixedTokens,
   type SlotType,
 } from './specDraft';
 import {
   anchorsToRefs,
-  assignDefaultText,
-  defaultTextRefError,
   hydrateAnchors,
-  optionalSlotRefCountError,
-  optionalSlotRefError,
-  parseAnchors,
-  readDefaultText,
   rekeyAnchor,
   replaceAnchorWithRef,
   stripAnchors,
-  syncDefaultTexts,
   unwrapAnchor,
 } from './defaultText';
-import {requiredSlotRefError} from './requiredRefs';
 import {DefaultTextMenu} from './DefaultTextMenu';
+import {assignDefaultText as assignPromptDefaultText, cancelDefaultText as cancelPromptDefaultText, editMainPrompt, editRandomPrompt, publishPreflight} from './promptDocument';
 import { ImageSlotPresetModal } from './ImageSlotPresetModal';
 import { TemplateTagManager } from './TemplateTagManager';
 import type { CaretPoint } from './CursorMenu';
@@ -426,12 +416,9 @@ export function SpecWorkspace() {
       // 而它只会说"这些槽位要圈标签"、不指哪里。先在本地拦一次并点名，
       // 省掉「点发布 → 400 → 回头逐个槽位找」那一轮。保存草稿不判（草稿允许半成品）。
       if (action !== 'save') {
-        const missing = slotsMissingTag(payload.slots ?? []);
-        if (missing.length > 0) {
-          setError(
-            `这些槽位还没圈候选标签：${missing.join('、')}。` +
-              '没圈的话列不出可用的候选：素材槽位退化成全部素材，包槽位干脆列不出包。',
-          );
+        const preflight = publishPreflight(payload);
+        if (preflight) {
+          setError(preflight);
           return false;
         }
       }
@@ -997,59 +984,13 @@ export function SpecWorkspace() {
    */
   const applyPromptText = (text: string): boolean => {
     if (!draft) return false;
-    if (text.length > FORM_LIMITS.specPrompt) {
-      setHint(`提示词不能超过 ${FORM_LIMITS.specPrompt} 字（存草稿的上限）`);
+    const result = editMainPrompt(draft, text);
+    if (!result.ok) {
+      setHint(result.hint ?? '');
       return false;
     }
-    const error = promptRefError(text, draft.slots ?? []);
-    if (error) {
-      setHint(error);
-      return false;
-    }
-    /* 后端规则：默认描述里可以引用**必定有素材**的槽位（必填 / 已固定）——
-       那种槽位每次编译都有编号，引用成立；引用可选槽位仍不行（可能没素材、
-       没编号可指）。正文里已框选的默认描述段是 emptyText 的真相来源，
-       所以段内用同一套判据 —— 否则指派时能拦、在段内打 @ 却溜过去，
-       到发布才吃 400（两处规则不一致，用户很困惑）。 */
-    for (const span of parseAnchors(text)) {
-      const error = defaultTextRefError(
-        text.slice(span.start, span.end),
-        draft.slots ?? [],
-        span.slotKey,
-      );
-      if (error) {
-        setHint(`默认描述里${error}；请在框选段之外引用`);
-        return false;
-      }
-    }
-    /* 「必填槽位必须在正文里被引用」：框选的默认描述里写了**不算数** ——
-       那段话会被另一段顶掉、也会被改写丢弃，正文里必须再提一次。
-       **只提示、不拦写入**：作者可能正在把引用挪到正文，半路上的草稿本来
-       就不合法，拦写入会让人改不动。判据见 requiredRefs.ts（与后端
-       rules.py::validate_required_slot_refs 同一口径）。 */
-    /* 可选槽位**只能被框选**（2026-11-27）：正文里指向可选槽位的单个引用
-       只能落在框选段里 —— 那一处是它的插入点（填了素材插编号，没填插兜底
-       文案），而它必须就是作者框选出来的那一段。多出来的一处是粘贴进来的
-       「普通引用」：库里两处长得一模一样，打开草稿时分辨不出哪一处才是
-       框选段 → 作者原话被顶掉。
-
-       **只提示、不拦写入**：老模板打开时，正文里那处引用（就是它的插入点）
-       天然落在框选段外 —— 而作者要做的恰恰是把它删掉。拦写入会让人连字都
-       改不动。真正的闸在保存时（后端 rules.py::validate_optional_slot_refs：
-       正文里恰好一处 + 标记来自框选段）。
-       判据见 defaultText.ts::optionalSlotRefError。 */
-    const optionalError = optionalSlotRefError(text, draft.slots ?? []);
-    setHint(optionalError ?? requiredSlotRefError(text, draft.slots ?? []) ?? '');
-    /* 存进去的永远是**作者写法**：手打或粘进来的 `{{slot:image_1}}`（内部 key）
-       当场换成 `{{Mixed 1}}`。这样正文里只有一种写法，胶囊也能对上标签。 */
-    const authored = toMixedTokens(text, draft.slots ?? []);
-    /* 正文里的「默认描述段」是**唯一真相来源**：
-       作者在正文里改了某段文字，那段就是对应槽位的「未选时文案」——
-       同步过去，别让槽位卡片里的那份变成过期副本。
-       （`syncDefaultTexts` 顺带处理「作者把整段删了」：该槽位的兜底文案清空，
-       不留一段没人认领的死数据。） */
-    const slots = syncDefaultTexts(authored, draft.slots ?? [], draft.prompt ?? '');
-    setDraft({...draft, prompt: authored, slots});
+    if (result.draft) setDraft(result.draft);
+    setHint(result.hint ?? '');
     return true;
   };
 
@@ -1071,21 +1012,16 @@ export function SpecWorkspace() {
      只是写进另一个字段。校验也要各管各的提示，见 `randomHint` 的注释。 */
   const applyRandomPromptText = (text: string): boolean => {
     if (!draft) return false;
-    if (text.length > FORM_LIMITS.specPrompt) {
-      setRandomHint(`随机档提示词不能超过 ${FORM_LIMITS.specPrompt} 字（存草稿的上限）`);
+    const result = editRandomPrompt(draft, text);
+    if (!result.ok) {
+      setRandomHint(result.hint ?? '');
       return false;
     }
-    const error =
-      promptRefError(text, draft.slots ?? []) ??
-      optionalSlotRefCountError(text, draft.slots ?? []);
-    if (error) {
-      setRandomHint(error);
-      return false;
-    }
+    if (result.draft) setDraft(result.draft);
     setRandomHint('');
-    setDraft({...draft, randomPrompt: toMixedTokens(text, draft.slots ?? [])});
     return true;
   };
+
 
   /**
    * 把正文里选中的那段设为某槽位的「默认描述」。
@@ -1100,30 +1036,17 @@ export function SpecWorkspace() {
    */
   const handleAssignDefaultText = (slotKey: string, range: {start: number; end: number}) => {
     if (!draft) return;
-    const authored = draft.prompt ?? '';
-    /* 偏移换算放在纯函数里（含「重新框选同一段」的情况）：
-       组件里按整段长度平移曾把正文切碎，见 defaultText.assignDefaultText。 */
-    const next = assignDefaultText(authored, slotKey, range);
-    /* 后端规则：默认描述里可以引用**必定有素材**的槽位（必填 / 已固定），
-       引用可选槽位仍不行（可能没素材、没编号可指）。
-       作者框到一段带胶囊的文字时，在这里就拦住并说清为什么 —— 否则要等到
-       发布才吃一个 400，而那时界面早就看不出是哪一段惹的祸。 */
-    const picked = readDefaultText(next, slotKey);
-    const pickedError = defaultTextRefError(picked, draft.slots ?? [], slotKey);
-    if (pickedError) {
-      setHint(`默认描述里${pickedError}；请重新框一段纯文字`);
+    const result = assignPromptDefaultText(draft, slotKey, range);
+    if (!result.ok) {
+      setHint(result.hint ?? '');
       return;
     }
-    const slots = syncDefaultTexts(next, draft.slots ?? [], authored);
-    setDraft({...draft, prompt: next, slots});
-    /* 刚框走一段 → 正文里可能少了一份必填槽位的引用。提示一句（不拦）。 */
-    const requiredError = requiredSlotRefError(next, draft.slots ?? []);
-    if (requiredError) setHint(requiredError);
+    if (result.draft) setDraft(result.draft);
+    setHint(result.hint ?? '');
+    if (result.toast) toast(result.toast, 'success');
     setDefaultTextRange(null);
-    const slot = slots.find(item => item.key === slotKey);
-    const name = slot?.label?.trim() || '该槽位';
-    toast(`「${name}」的默认描述已设为「${slot?.emptyText?.trim() ?? ''}」`, 'success');
   };
+
 
   /**
    * 取消一段默认描述：摘掉锚点标记、文字留在正文（作者写的字不该凭空消失），
@@ -1131,17 +1054,13 @@ export function SpecWorkspace() {
    */
   const handleCancelDefaultText = (slotKey: string) => {
     if (!draft) return;
-    const authored = draft.prompt ?? '';
-    const next = unwrapAnchor(authored, slotKey);
-    if (next === authored) return;
-    const slots = syncDefaultTexts(next, draft.slots ?? [], authored);
-    setDraft({...draft, prompt: next, slots});
-    /* 刚框走一段 → 正文里可能少了一份必填槽位的引用。提示一句（不拦）。 */
-    const requiredError = requiredSlotRefError(next, draft.slots ?? []);
-    if (requiredError) setHint(requiredError);
+    const result = cancelPromptDefaultText(draft, slotKey);
+    if (result.draft) setDraft(result.draft);
+    setHint(result.hint ?? '');
+    if (result.toast) toast(result.toast, 'success');
     setDefaultTextRange(null);
-    toast('已取消默认描述，这段文字仍是普通正文', 'success');
   };
+
 
   /* 提示词上限：**能不能发布**的那个数（执行层，按原文字数比）。
      没取到时显示 `—`，不猜一个数字 —— 猜错了比不显示更糟。

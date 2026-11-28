@@ -20,7 +20,8 @@ import {parseAnchors} from './defaultText';
 import { CursorMenu, CursorMenuItem, CursorMenuGroup, type CaretPoint } from './CursorMenu';
 import { caretPointOf, selectionEndPoint } from './caretPoint';
 /* 正则与计数拆到 capsuleCount.ts：fast-refresh 要求组件文件只导出组件。 */
-import { expectedCapsuleCount, TOKEN_RE } from './capsuleCount';
+import { expectedCapsuleCount } from './capsuleCount';
+import { tokenPattern } from '@/shared/lib/promptTokens';
 
 /** 去掉空白后的 token：正文里的写法可能带空格，候选里的是规范形式。 */
 const normalizeToken = (raw: string) => raw.replace(/\s+/g, '');
@@ -499,7 +500,7 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
              又让人以为那不是引用。胶囊自带底色与边框（一眼看出是引用），
              段自带下划线（一眼看出是默认描述）—— 两个特征叠在一起。 */
           let inner = 0;
-          for (const match of segment.text.matchAll(TOKEN_RE)) {
+          for (const match of segment.text.matchAll(tokenPattern())) {
             const at = match.index ?? 0;
             if (at > inner) {
               span.appendChild(document.createTextNode(segment.text.slice(inner, at)));
@@ -515,7 +516,7 @@ export const RichPromptEditor = forwardRef<MentionTextareaHandle, RichPromptEdit
           continue;
         }
         let last = 0;
-        for (const match of segment.text.matchAll(TOKEN_RE)) {
+        for (const match of segment.text.matchAll(tokenPattern())) {
           const at = match.index ?? 0;
           if (at > last) root.appendChild(document.createTextNode(segment.text.slice(last, at)));
           root.appendChild(capsule(match[0], chipOf(match[0])));
