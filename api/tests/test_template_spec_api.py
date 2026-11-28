@@ -1326,13 +1326,13 @@ def test_compile_override_without_an_insertion_point_is_rejected(
     assert "插入点" in body.json()["message"]
 
 
-def test_compile_override_checks_the_prompt_actually_being_compiled(
+def test_random_rejects_overrides_while_balanced_checks_insertion_point(
     client: TestClient,
 ) -> None:
-    """插入点只在随机档那一段时：均衡档编译 → 400；随机档编译 → 生效。
+    """均衡档改文案仍按主提示词判插入点；随机档不接受改写文案（模型自己写）。
 
-    判据不能把两段提示词合并起来看 —— 合并会放行「均衡档改文案、可插入点
-    只写在随机档里」这种情况，改的话静默丢掉。
+    随机档的冲突检查在前：两套说法同时出现时，不该先跑到插入点判断，
+    更不该调到模型。
     """
     headers = _headers(client)
     video, first, _ = _media(client, headers)
@@ -1358,8 +1358,8 @@ def test_compile_override_checks_the_prompt_actually_being_compiled(
         json={"useRandomPrompt": True, "slotTextOverrides": {"hero": "换成海边的场景"}},
         headers=headers,
     )
-    assert random.status_code == 200, random.text
-    assert "换成海边的场景" in random.json()["data"]["prompt"]
+    assert random.status_code == 400, random.text
+    assert "不能同时提交改写" in random.json()["message"]
 
 
 def test_compile_override_on_a_required_slot_is_rejected(client: TestClient) -> None:
@@ -1766,7 +1766,6 @@ def _text_draft(
     *,
     key: str | None = None,
     prompt: str = "开头 {{slot:brief}} 结尾",
-    random_prompt: str | None = None,
 ) -> dict[str, Any]:
     draft: dict[str, Any] = {
         "key": key or f"spec-text-{suffix()}",
@@ -1786,8 +1785,6 @@ def _text_draft(
             }
         ],
     }
-    if random_prompt:
-        draft["randomPrompt"] = random_prompt
     return draft
 
 
@@ -1801,9 +1798,7 @@ def test_private_fixed_text_is_inlined_and_publishes(client: TestClient) -> None
     # 反斜杠与 `\g<0>` 都是正则替换的坑：用替换函数而不是字符串模板才不会被解释。
     content = "口播：C:\\temp 的 \\g<0> 不要被解释"
     text_id = _text_asset(client, headers, content)
-    draft = _text_draft(
-        text_id, random_prompt="随机版：{{ slot:brief }}（带空格也要换）"
-    )
+    draft = _text_draft(text_id)
     _save(client, headers, draft)
 
     published = _publish(client, headers, draft["key"])
@@ -1812,8 +1807,6 @@ def test_private_fixed_text_is_inlined_and_publishes(client: TestClient) -> None
     latest = client.get(f"{API}/{draft['key']}", headers=headers).json()["data"]["latest"]
     assert content in latest["prompt"]
     assert "{{slot:brief}}" not in latest["prompt"]
-    assert content in latest["randomPrompt"]
-    assert "{{ slot:brief }}" not in latest["randomPrompt"]
     # 内联后模板里不再引用这条素材，槽位行也一并摘掉
     assert [slot["key"] for slot in latest["slots"]] == []
 

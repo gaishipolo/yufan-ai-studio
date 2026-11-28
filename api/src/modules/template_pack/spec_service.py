@@ -49,6 +49,7 @@ from modules.template_pack.models import (
     TemplateSpecSlot,
     TemplateSpecVersion,
 )
+from modules.template_pack.randomness import rewritable_slot_keys, rewrite_slot_texts
 from modules.template_pack.slot_text_overrides import apply_slot_text_overrides
 from modules.template_pack.spec_catalog import (
     capability_label,
@@ -379,7 +380,6 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
         latest is not None
         and latest.fingerprint == fingerprint
         and latest.prompt == snapshot.prompt
-        and (latest.random_prompt or "") == snapshot.random_prompt
     ):
         # 同一份草稿重发：版本号不动，也不新增快照行（回执要能重复调）。
         #
@@ -417,7 +417,6 @@ async def publish(session: AsyncSession, actor: CurrentUser, key: str) -> SpecPu
             latest_now is not None
             and latest_now.fingerprint == fingerprint
             and latest_now.prompt == snapshot.prompt
-            and (latest_now.random_prompt or "") == snapshot.random_prompt
         ):
             out = await _spec_out_of(session, head)
             await session.commit()
@@ -679,12 +678,41 @@ async def list_out(
 # --------------------------------------------------------------------------- #
 # 编译
 # --------------------------------------------------------------------------- #
+def _check_random_request(spec: TemplateSpec, payload: SpecCompileIn) -> None:
+    """随机档的三条冲突，全部在调模型 / 查素材之前拒。
+
+    前端正常不会送前两种（随机档的可选槽位被 `suppressedSlotKeys` 剔除），
+    这两条是给其他 API 调用方的最后一道：随机档的语义是「每一个可选槽位都由
+    模型写兜底文案」，同时送素材或改写文案就变成「半随机」，而界面看不出来。
+    """
+    if payload.slot_text_overrides:
+        raise BadRequest(
+            "随机档不能同时提交改写的未选时文案：一格只能有一种说法；"
+            "想自己写请切「自定义」档"
+        )
+    with_values = sorted(
+        slot.label.strip() or slot.key
+        for slot in spec.slots
+        if slot.min_count == 0
+        and slot.binding != "fixed"
+        and any(item for item in payload.slot_values.get(slot.key, ()))
+    )
+    if with_values:
+        raise BadRequest(
+            "随机档不传可选槽位素材：" + "、".join(with_values)
+            + "；要自己挑素材请切「自定义」档"
+        )
+    if not rewritable_slot_keys(spec):
+        raise BadRequest("该模板没有可随机的槽位：请用均衡档，或给可选槽位写未选时文案")
 
 
 async def compile_for(
     session: AsyncSession, actor: CurrentUser, key: str, payload: SpecCompileIn
 ) -> SpecCompileOut:
-    """把「填表结果」编成执行请求。纯映射：不落库、不调 task。"""
+    """把「填表结果」编成执行请求。不落库、不调 task。
+
+    随机档会调一次大模型改写兜底文案（不落库）；除此之外是纯映射。
+    """
     head = await _find(session, key)
     if head is None:
         raise NotFound(f"配置不存在：{key}")
@@ -716,31 +744,33 @@ async def compile_for(
         allowed_models=allowed,
         params=dict(row.params or {}),
         prompt=row.prompt,
-        random_prompt=row.random_prompt or "",
         slots=tuple(_slot_core(item) for item in slots),
     )
-    # 作者写的是 `{{Mixed N}}`，而下面两处判断（随机档换段之后仍然成立、
-    # 改文案要查插入点）**都只认 `{{slot:key}}`**。换算做在入口一次
-    # （`rules.normalize_refs`，幂等），`compile_spec` 里还会再调一次。
-    #
-    # 不换的话，「这一格在提示词里没有插入点」会把**所有**真实模板误判掉 ——
-    # 现存模板清一色写 `{{Mixed 1}}`，它们其实都有插入点。
+    # 作者写的是 `{{Mixed N}}`，而下面「改文案要查插入点」只认 `{{slot:key}}`。
+    # 换算做在入口一次（`rules.normalize_refs`，幂等），`compile_spec` 里还会
+    # 再调一次。不换的话，「这一格在提示词里没有插入点」会把**所有**真实模板
+    # 误判掉 —— 现存模板清一色写 `{{Mixed 1}}`，它们其实都有插入点。
     spec = normalize_refs(spec)
-    # 「随机」档：整段替换成作者写的随机档提示词。放在 compile_spec **之前**
-    # 改 spec（而不是改 compile），编译核心因此保持纯函数：同一 (spec, fills)
-    # 必得同一结果。
-    #
-    # 没配就**拒绝**，不静默回退主提示词 —— 回退的样子是「随机档和均衡档出来
-    # 一模一样」，使用者会以为随机坏了却查不出原因。前端也会把这一档置灰，
-    # 这里是最后一道。
+
     if payload.use_random_prompt:
-        if not spec.random_prompt.strip():
-            raise BadRequest("该模板未配置随机档提示词，不能用随机档生成")
-        spec = replace(spec, prompt=spec.random_prompt)
-    # 使用者改写的「未选时文案」：同样在编译前换进 spec。顺序放在随机档之后，
-    # 这样查「有没有插入点」查的就是这次真正要编的那一段。
-    spec = apply_slot_text_overrides(spec, payload.slot_text_overrides, payload.slot_values)
+        _check_random_request(spec, payload)
+    else:
+        # 使用者改写的「未选时文案」：编译前换进 spec。
+        spec = apply_slot_text_overrides(
+            spec, payload.slot_text_overrides, payload.slot_values
+        )
+
+    # 所有 DB 访问到此为止（模板、版本、槽位、素材都在上面查完）。
     fills = await _fills(session, actor, spec, payload.slot_values)
+
+    if payload.use_random_prompt:
+        # 随机档要等一次外部模型调用（最长 45s）。先结束只读事务，
+        # 别让一条 DB 连接在整个请求期间被占着。
+        await session.commit()
+        overrides = await rewrite_slot_texts(spec)
+        # 随机档没有可选素材，slot_values 传空；模型稿仍走同一条覆盖闸门。
+        spec = apply_slot_text_overrides(spec, overrides, {})
+
     compiled = compile_spec(spec, fills)
     # 使用者对「运行时参数」的选择（计费模式等）：只在编译结果里生效，
     # **不落进 spec.params** —— 那是作者的部分，模板版本不该被谁用了一次改掉。

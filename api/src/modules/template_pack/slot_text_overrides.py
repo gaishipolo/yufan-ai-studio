@@ -67,6 +67,8 @@ def apply_slot_text_overrides(
     if not overrides:
         return spec
     by_key = {slot.key: slot for slot in spec.slots}
+    known = set(by_key)
+    known_always_filled = always_filled_slot_keys(spec)
     # 与发布闸同一个判据（`slot_ref_modes`）：只认**单张**引用。
     modes = slot_ref_modes(spec.prompt)
     replaced: dict[str, InputSlot] = {}
@@ -113,7 +115,13 @@ def apply_slot_text_overrides(
                     f"「{name}」改写的提示词里引用了它自己："
                     "这段话用的正是这一格没挑素材的时候，那时没有编号可指"
                 )
-            forbidden = sorted(refs - always_filled_slot_keys(spec))
+            unknown = sorted(refs - known)
+            if unknown:
+                raise BadRequest(
+                    f"「{name}」改写的提示词里引用了不存在的槽位「{'、'.join(unknown)}」："
+                    "请删掉它，或改成这份模板里真实存在的槽位"
+                )
+            forbidden = sorted(refs - known_always_filled)
             if forbidden:
                 raise BadRequest(
                     f"「{name}」改写的提示词里引用了「{'、'.join(forbidden)}」："

@@ -220,7 +220,7 @@ async def test_自引用与不存在的槽位走共享闸门() -> None:
         await rewrite_slot_texts(_spec(), complete=fake)
 
     fake = FakeCompleter(payload=_ok(scene="雨后的 {{slot:ghost}} 街道"))
-    with pytest.raises(BadRequest, match="只能引用必定有素材的槽位"):
+    with pytest.raises(BadRequest, match="不存在的槽位"):
         await rewrite_slot_texts(_spec(), complete=fake)
 
 

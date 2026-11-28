@@ -205,11 +205,10 @@ class TemplateSpecIn(StrictIn):
     params: dict[str, Any] = Field(default_factory=dict)
     #: 整段提示词。需要可变的地方用 `text` 槽位，不要指望模板库改文字。
     prompt: str = Field(min_length=1, max_length=MAX_PROMPT)
-    #: **随机档提示词**：作者给「随机」档另写的一整段提示词，随机档时整段替换
-    #: `prompt`。空 = 该模板不支持随机档（模板库把这一档置灰并说明原因）。
+    #: **历史字段**：随机档曾用作者另写的一整段提示词整段替换主提示词。
     #:
-    #: 引用规则与 `prompt` 相同；因为随机档不传可选素材，它引用可选槽位时
-    #: 同样要求该槽位写了「未选时文案」（发布闸口会拦）。
+    #: 2026-11-28 起随机档改为「模型改写可选槽位的未选时文案」，这个字段不再
+    #: 参与编译、校验、指纹或内联；保留只为老数据回看与接口兼容。
     random_prompt: str = Field(default="", max_length=MAX_PROMPT)
     slots: list[SpecSlotIn] = Field(default_factory=list, max_length=MAX_SLOTS)
     #: 封装容器的名字。**可以不声明**（老草稿也没有这个键）：缺省 = 每个容器都
@@ -258,7 +257,8 @@ class SpecVersionOut(CamelModel):
     allowed_models: list[str] = Field(default_factory=list)
     params: dict[str, Any]
     prompt: str
-    #: 「随机」档用的整段提示词（发布时冻结）。空 = 该版本不支持随机档。
+    #: 历史字段：老版本的「随机档提示词」原文。随机档已改为模型改写兜底文案，
+    #: 新版本不再依赖它；前端也不应再用它判断随机档是否可用。
     random_prompt: str = ""
     slots: list[SpecSlotOut]
     #: 封装容器的名字（发布时冻结）。**老版本为空**：那时还没这个字段，
@@ -335,12 +335,13 @@ class SpecCompileIn(StrictIn):
     #: 一切正常。
     model: str | None = Field(default=None, max_length=80)
     slot_values: dict[str, list[str]] = Field(default_factory=dict)
-    #: 「随机」档：整段改用该模板的 `randomPrompt` 编译。
+    #: 随机档：让后端调用模型改写各可选槽位的「未选时文案」。
     #:
-    #: 由**使用者**在模板库选档时决定，不是作者——作者只决定「有没有这一段」。
-    #: 模板没配 `randomPrompt` 时传 `true` 会 400（前端也会把该档置灰），
-    #: 不静默回退主提示词 —— 回退的样子是「随机档和均衡档产出一模一样」。
+    #: 由**使用者**在模板库选档时决定。随机档不传可选素材、也不接受
+    #: `slot_text_overrides`；没有可改写槽位时 400，不静默退化成均衡档。
     #: 不传 = 均衡 / 自定义档，走 `prompt`（老调用方零影响）。
+    #:
+    #: 字段名沿用历史命名（`random_prompt` 时代），语义已换成「模型改写」。
     use_random_prompt: bool = False
     #: 使用者改写「未选时文案」：`{slotKey: 改后的那段话}`。
     #:

@@ -123,8 +123,16 @@ def to_core(payload: TemplateSpecIn) -> TemplateSpec:
 
 
 def fingerprint_of(payload: TemplateSpecIn) -> str:
-    """草稿摘要：按 key 排序的规范 JSON 的 sha256。"""
-    data = payload.model_dump(mode="json", by_alias=True, exclude={"revision"})
+    """草稿摘要：按 key 排序的规范 JSON 的 sha256。
+
+    `random_prompt` 不参与摘要（2026-11-28）：它已不参与编译/校验，改它不该
+    再冻结出一个新版本；历史行仍保留字段本身。
+    """
+    data = payload.model_dump(
+        mode="json",
+        by_alias=True,
+        exclude={"revision", "random_prompt"},
+    )
     return hashlib.sha256(
         json.dumps(data, sort_keys=True, ensure_ascii=False).encode("utf-8")
     ).hexdigest()
@@ -226,7 +234,7 @@ async def review_publish(
             return _blocked(fingerprint, blocker)
 
     try:
-        prompt, random_prompt, inlined_slots = await _inline_fixed_text(session, actor, spec)
+        prompt, inlined_slots = await _inline_fixed_text(session, actor, spec)
     except BadRequest as exc:
         return _blocked(
             fingerprint,
@@ -254,7 +262,8 @@ async def review_publish(
             allowed_models=spec.allowed_models,
             params=spec.params,
             prompt=prompt,
-            random_prompt=random_prompt,
+            # 死字段：原样存，供历史回看；不再内联、不再校验、不进指纹。
+            random_prompt=spec.random_prompt,
             slots=inlined_slots,
             groups=spec.groups,
         ),
@@ -318,13 +327,10 @@ def _check_optional_slots_have_fallback(spec: TemplateSpec) -> None:
     草稿能存（`validate_spec` 也被保存草稿调用，拦了会逼作者先想清楚才能存草稿），
     但发布出去之前必须写好 —— 发布意味着「别人会拿去用」。
 
-    **两段提示词一起看**：随机档用 `random_prompt` 整段替换主提示词，只在
-    主提示词上查，会放行「随机档引用了可选槽位却没写兜底」的模板。
+    只看主提示词：`random_prompt` 已不参与编译（2026-11-28 随机档改成模型改写），
+    它在里面引用什么不再影响任何一次生成。
     """
     modes = slot_ref_modes(spec.prompt)
-    if spec.random_prompt.strip():
-        for key, ref_modes in slot_ref_modes(spec.random_prompt).items():
-            modes.setdefault(key, set()).update(ref_modes)
     missing = [
         slot.label.strip() or slot.key
         for slot in spec.slots
@@ -507,12 +513,14 @@ async def _check_fixed_text_readable(
 
 async def _inline_fixed_text(
     session: AsyncSession, actor: CurrentUser, spec: TemplateSpec
-) -> tuple[str, str, tuple[InputSlot, ...]]:
+) -> tuple[str, tuple[InputSlot, ...]]:
     """发布时把**固定文本槽位**的正文抄进提示词，并从快照里移除这些槽位。
 
     文本与图 / 视频的根本区别：正文可以直接写进字符串，图片只能传引用。
     所以固定文本槽位不需要「素材对所有人可读」—— 发布后模板里连 id 都没有，
     复用者不会再读它；也不会随作者后来改稿而改变（发布即冻结）。
+
+    `random_prompt` 不再内联：它已不参与编译（2026-11-28）。
     """
     fixed = [
         slot
@@ -520,13 +528,13 @@ async def _inline_fixed_text(
         if slot.type == "text" and slot.binding == "fixed" and slot.asset_id
     ]
     if not fixed:
-        return spec.prompt, spec.random_prompt, spec.slots
+        return spec.prompt, spec.slots
 
     lookup = get_library_lookup()
     texts = await lookup.read_text_many(
         session, actor, [slot.asset_id for slot in fixed if slot.asset_id]
     )
-    prompt, random_prompt = spec.prompt, spec.random_prompt
+    prompt = spec.prompt
     for slot in fixed:
         ref = texts.get(slot.asset_id or "")
         if ref is None:
@@ -534,7 +542,6 @@ async def _inline_fixed_text(
                 f"固定文案「{slot.label or slot.key}」读不到正文或已被删除：{slot.asset_id}"
             )
         prompt = inline_slot_ref(prompt, slot.key, ref.content)
-        random_prompt = inline_slot_ref(random_prompt, slot.key, ref.content)
 
     dropped = {slot.key for slot in fixed}
-    return prompt, random_prompt, tuple(slot for slot in spec.slots if slot.key not in dropped)
+    return prompt, tuple(slot for slot in spec.slots if slot.key not in dropped)

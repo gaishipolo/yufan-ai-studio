@@ -58,11 +58,10 @@ def test_正文里的第N张引用被拒() -> None:
     assert "第 2 张引用" in str(exc.value)
 
 
-def test_随机档提示词里的整组引用同样被拒() -> None:
+def test_随机档提示词里的修饰符不再校验() -> None:
+    """random_prompt 已是死字段，旧写法不该继续挡住保存。"""
     spec = replace(_spec("主图 {{Mixed 1}}"), random_prompt="夜景 {{Mixed 2*}}")
-    with pytest.raises(BadRequest) as exc:
-        validate_spec(spec)
-    assert "随机档提示词" in str(exc.value)
+    validate_spec(spec)
 
 
 def test_槽位文案里的整组引用被拒() -> None:

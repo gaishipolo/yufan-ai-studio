@@ -125,6 +125,9 @@ def normalize_refs(spec: TemplateSpec) -> TemplateSpec:
     越界的 N 直接报错。作者写了 `{{Mixed 5}}` 而这里只有 3 个图片/成片槽位，
     等编译期才发现的话，错误会出现在**别人点生成**的时候 —— 那时他既不知道
     这份模板是谁写的，也看不出该怎么改。
+
+    `random_prompt` **不归一**：随机档已改成模型改写兜底文案，这个字段是死数据；
+    里面的旧写法不该继续让保存/编译失败（2026-11-28）。
     """
     def fix(text: str, where: str) -> str:
         return normalize_text_refs(text, spec, where=where)
@@ -135,7 +138,6 @@ def normalize_refs(spec: TemplateSpec) -> TemplateSpec:
     return replace(
         spec,
         prompt=fix(spec.prompt, "提示词"),
-        random_prompt=fix(spec.random_prompt, "随机档提示词"),
         slots=tuple(
             replace(
                 slot,
@@ -214,8 +216,6 @@ def validate_spec(spec: TemplateSpec) -> None:
     _validate_groups(spec)
 
     _validate_prompt_text(spec.prompt, keys, "提示词")
-    if spec.random_prompt.strip():
-        _validate_prompt_text(spec.random_prompt, keys, "随机档提示词")
     # 槽位文案里的引用同理（选中时文案的自引用也只允许单个引用）。
 
     _validate_slot_texts(spec)
@@ -224,11 +224,8 @@ def validate_spec(spec: TemplateSpec) -> None:
 def _validate_prompt_text(text: str, keys: set[str], name: str) -> None:
     """一段提示词的形状校验：引用都存在、不裸写 `{{Text N}}`、长度与空值。
 
-    `prompt` 与 `random_prompt` 走**同一套**规则 —— 两者都是「整段发出去的话」，
-    区别只在用在哪一档。分两套规则的话，作者会撞上「主提示词能写、随机档不行」
-    这种说不通的差别。
-
-    随机档提示词允许为空（表示该模板不支持随机档）；非空时按主提示词的全套规则管。
+    只用于主提示词。`random_prompt` 已不参与校验（随机档改成模型改写，字段是
+    死数据），但历史行保留。
     """
     _validate_ref_modifier(text, name)
     # `{{Text N}}` 有更具体的解释，先判它；通用占位符检查会把这句话吞掉。
@@ -505,24 +502,18 @@ def validate_optional_slot_refs(spec: TemplateSpec) -> None:
             counts[key] = counts.get(key, 0) + 1
         return counts
 
-    # **两段提示词各算各的**：随机档提示词是整段替换主提示词的（另一段话），
-    # 它的插入点与主提示词里的互不相干。发布闸看两段（_check_executable），
-    # 新规则也要跟上 —— 否则随机档里可以写多处引用，编译时同一句兜底文案
-    # 在提示词里出现多次。
-    sections = (
-        ("提示词", single_ref_counts(spec.prompt)),
-        ("随机档提示词", single_ref_counts(spec.random_prompt)),
-    )
+    # 只看主提示词：random_prompt 已不参与编译（随机档改成模型改写），
+    # 它在正文里写几处引用不影响任何一次生成。
+    counts = single_ref_counts(spec.prompt)
 
     for slot in optional:
         name = label_of(slot)
-        for where, counts in sections:
-            hits = counts.get(slot.key, 0)
-            if hits > 1:
-                raise BadRequest(
-                    f"槽位「{name}」是可选的，{where}里却有 {hits} 处单个引用它 —— "
-                    "可选槽位只能被引用一处（那一处是它的插入点）：请删掉多余的引用"
-                )
+        hits = counts.get(slot.key, 0)
+        if hits > 1:
+            raise BadRequest(
+                f"槽位「{name}」是可选的，提示词里却有 {hits} 处单个引用它 —— "
+                "可选槽位只能被引用一处（那一处是它的插入点）：请删掉多余的引用"
+            )
         if slot.empty_text.strip() and not slot.empty_text_from_anchor:
             quoted = slot.empty_text.strip()[:60]
             raise BadRequest(

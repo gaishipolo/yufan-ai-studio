@@ -128,3 +128,38 @@ def test_使用者改写可以引用必填槽位() -> None:
     )
     scene = next(slot for slot in result.slots if slot.key == "scene")
     assert scene.empty_text == "参考主图 {{slot:hero}} 的构图"
+
+
+def test_改写引用不存在的槽位与可选槽位分开报() -> None:
+    """K 场景：不存在 vs 存在但不能引，是两件事。"""
+    from modules.template_pack.slot_text_overrides import apply_slot_text_overrides
+
+    spec = spec_of("主图 {{slot:hero}}，场景 {{slot:scene}}")
+    with pytest.raises(BadRequest) as ghost:
+        apply_slot_text_overrides(spec, {"scene": "参考 {{slot:ghost}}"}, {})
+    assert "不存在的槽位" in str(ghost.value)
+
+    # 另一格是可选槽位：存在，但不是必定有素材
+    spec = TemplateSpec(
+        key="demo",
+        name="演示",
+        model="image/x",
+        prompt="主图 {{slot:hero}}，场景 {{slot:scene}}，细节 {{slot:detail}}",
+        slots=(
+            InputSlot(
+                key="hero", type="image", binding="user", ref_mode="mixed",
+                min_count=1, max_count=1, label="正面图", position=0,
+            ),
+            InputSlot(
+                key="scene", type="image", binding="user", ref_mode="mixed",
+                min_count=0, max_count=1, label="角色", position=1,
+            ),
+            InputSlot(
+                key="detail", type="image", binding="user", ref_mode="mixed",
+                min_count=0, max_count=1, label="细节", position=2,
+            ),
+        ),
+    )
+    with pytest.raises(BadRequest) as optional:
+        apply_slot_text_overrides(spec, {"scene": "参考 {{slot:detail}}"}, {})
+    assert "只能引用必定有素材的槽位" in str(optional.value)
