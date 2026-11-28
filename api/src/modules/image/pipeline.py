@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import ipaddress
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import ClassVar
 from urllib.parse import urljoin, urlparse
@@ -159,22 +159,27 @@ class ImageJobStore:
         return None if job is None else self._to_record(job)
 
     async def list_unfinished(
-        self, session: AsyncSession, limit: int
+        self,
+        session: AsyncSession,
+        limit: int,
+        *,
+        stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:
         """框架恢复器用的可选钩子：捞未终态记录（`generation/recovery.py`）。
 
         按创建时间排序并以主键收尾，分页边界才稳定；`limit` 下推到 SQL，
-        供应商故障后不会因为堆积把整张表读进内存。
-
-        **声明了 `recovery_kinds` 却没实现这个方法，恢复会静默地什么也不做**——
-        框架只认 pipeline 上的这个可选钩子，缺了就跳过，不报错（见走查文档 G10）。
+        供应商故障后不会因为堆积把整张表读进内存。`stale_after_sec` 用于
+        周期巡检：只捞超过该秒数没有写入的记录。
         """
+        stmt = select(ImageJob).where(
+            ImageJob.status.in_((STATUS_QUEUED, STATUS_RUNNING))
+        )
+        if stale_after_sec is not None:
+            cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(0, stale_after_sec))
+            stmt = stmt.where(ImageJob.updated_at < cutoff)
         rows = (
             await session.scalars(
-                select(ImageJob)
-                .where(ImageJob.status.in_((STATUS_QUEUED, STATUS_RUNNING)))
-                .order_by(ImageJob.created_at, ImageJob.id)
-                .limit(limit)
+                stmt.order_by(ImageJob.created_at, ImageJob.id).limit(limit)
             )
         ).all()
         return [self._to_record(row) for row in rows]
@@ -452,10 +457,16 @@ class ImageGenerationPipeline:
         return ImageJobStore(session)
 
     async def list_unfinished(
-        self, session: AsyncSession, limit: int
+        self,
+        session: AsyncSession,
+        limit: int,
+        *,
+        stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:
         """框架恢复器的可选钩子：SQL 仍由 Store 负责，pipeline 只做转发。"""
-        return await self.store(session).list_unfinished(session, limit)
+        return await self.store(session).list_unfinished(
+            session, limit, stale_after_sec=stale_after_sec
+        )
 
     async def build_request(self, record: GenerationRecord) -> GenerationRequest:
         references, channel_used = await _reference_data_uris(record)

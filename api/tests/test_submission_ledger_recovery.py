@@ -30,7 +30,6 @@ import pytest
 from fastapi.testclient import TestClient
 
 import generation.recovery as recovery_mod
-import modules.task.worker as worker_mod
 from core.ports.submission_ledger import (
     has_submission_ledger,
     lookup_recovery_external_id,
@@ -39,7 +38,7 @@ from core.ports.submission_ledger import (
 )
 from db.session import get_session_factory
 from generation.recovery import recover_kind
-from generation.spec import STATUS_QUEUED
+from generation.spec import STATUS_FAILED, STATUS_QUEUED
 from modules.image.models import ImageJob
 from modules.model_driver.kit.submission_guard import find_recoverable_external_id
 from modules.model_driver.models import SubmissionReceipt
@@ -303,7 +302,7 @@ async def _delete_receipts(record_id: str) -> None:
 async def test_framework_recovery_ignores_sync_shape_receipt(
     clean_ids: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """台账里是同步形态的行 → 不回填，保持「交回 runner 判死等人核对」的路径。
+    """台账里是同步形态的行 → 不回填，恢复期直接判「提交结果未知」。
 
     这里**不 monkeypatch 注入口** —— 形态判定在 kit 层（只有「有独立任务号」的行
     才给凭证），要连着真实注入口一起验。
@@ -325,7 +324,8 @@ async def test_framework_recovery_ignores_sync_shape_receipt(
 
     job = await _load_image(rid)
     assert job.external_id is None, "同步形态的凭证撑不起续接，不该回填"
-    assert rid in runner.dispatched, "保持原有「交给 runner 判死等人核对」的路径"
+    assert rid not in runner.dispatched, "已确定结果未知，不再投注定失败的 job"
+    assert job.status == "failed"
     await _delete_receipts(rid)
 
 
@@ -409,10 +409,10 @@ async def test_framework_recovery_backfills_and_resumes(
     await _delete_receipts(rid)
 
 
-async def test_framework_recovery_without_ledger_keeps_review_path(
+async def test_framework_recovery_without_ledger_fails_unknown(
     clean_ids: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """台账里没有可用凭证 → 保持现状：交回 runner 判「提交结果未知」等人核对。"""
+    """台账里没有可用凭证 → 恢复期直接判「提交结果未知」等人核对。"""
     _router(monkeypatch, supports_poll=True)
     rid = await _insert_image(status=STATUS_QUEUED, submit_attempts=1)
     clean_ids.append(rid)
@@ -427,15 +427,16 @@ async def test_framework_recovery_without_ledger_keeps_review_path(
 
     job = await _load_image(rid)
     assert job.external_id is None, "没有凭证就不许编一个"
-    assert rid in runner.dispatched, "保持原有「交给 runner 判死等人核对」的路径"
+    assert rid not in runner.dispatched, "已确定结果未知，不再投注定失败的 job"
+    assert job.status == STATUS_FAILED
 
 
 # ---------------------------------------------------------------------------
-# 任务链自己的恢复器：回填 → 续轮询（视频链）
+# 视频链：回填 → 续轮询（与图片链共用 framework recovery）
 # ---------------------------------------------------------------------------
 
 
-async def test_task_worker_backfills_and_resumes_poll(
+async def test_video_recovery_backfills_and_resumes_poll(
     clean_ids: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """视频链：台账里的凭证回填到 `VideoTask.external_id`，只续轮询不重提。"""
@@ -445,22 +446,21 @@ async def test_task_worker_backfills_and_resumes_poll(
     async def _fake_lookup(record_id: str) -> str | None:
         return "task-from-ledger" if record_id == task_id else None
 
-    monkeypatch.setattr(worker_mod, "lookup_recovery_external_id", _fake_lookup)
+    monkeypatch.setattr(recovery_mod, "lookup_recovery_external_id", _fake_lookup)
 
     runner = _Runner()
-    monkeypatch.setattr(worker_mod, "get_runner", lambda queue: runner)
-
-    await worker_mod.resume_unfinished_tasks(_FakeQueue())
+    await recover_kind("video", runner=runner)
 
     task = await _load_task(task_id)
     assert task.external_id == "task-from-ledger", "凭证必须回填到任务表"
     assert task.status == TaskStatus.RUNNING.value
+    assert task.submit_mode == "async", "回填说明有独立任务号，应冻结为异步形态"
     assert task.submit_attempts == 1, "回填不复位提交计数"
     assert task_id in runner.resumed, "回填后只续轮询"
     assert task_id not in runner.dispatched, "有凭证了绝不重新提交（会二次计费）"
 
 
-async def test_task_worker_without_ledger_still_fails_unknown(
+async def test_video_recovery_without_ledger_fails_unknown(
     clean_ids: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """台账里没有可用凭证 → 仍然判「提交结果未知」等人核对（原有语义不变）。"""
@@ -470,21 +470,12 @@ async def test_task_worker_without_ledger_still_fails_unknown(
     async def _fake_lookup(record_id: str) -> str | None:
         return None
 
-    monkeypatch.setattr(worker_mod, "lookup_recovery_external_id", _fake_lookup)
+    monkeypatch.setattr(recovery_mod, "lookup_recovery_external_id", _fake_lookup)
 
     runner = _Runner()
-    monkeypatch.setattr(worker_mod, "get_runner", lambda queue: runner)
-
-    await worker_mod.resume_unfinished_tasks(_FakeQueue())
+    await recover_kind("video", runner=runner)
 
     task = await _load_task(task_id)
     assert task.external_id is None
     assert task.status == TaskStatus.FAILED.value
     assert task_id not in runner.resumed
-
-
-class _FakeQueue:
-    """任务恢复器只把 queue 转交给 runner，这里用不到真实队列。"""
-
-    def snapshot(self) -> list[dict[str, Any]]:
-        return []

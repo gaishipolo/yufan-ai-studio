@@ -7,9 +7,8 @@
 （poll job 被硬超时 nack、下载重试耗尽、执行器返回不可恢复码），
 记录就停在 `running`：前端一直转圈，而**没有任何东西会再推进它**。
 
-`generation.recovery` 与 `modules/task/worker.py` 的启动恢复都只在**进程启动**时
-跑一次。用户不会为了一个卡住的任务去重启服务，而 `QUEUE_DRIVER=memory` 时
-重启本身就是丢任务的来源。
+`generation.recovery` 的启动恢复只在**进程启动**时跑一次。用户不会为了一个
+卡住的任务去重启服务，而 `QUEUE_DRIVER=memory` 时重启本身就是丢任务的来源。
 
 ## 只处理「很久没有写入」的记录
 
@@ -31,7 +30,8 @@ from __future__ import annotations
 from core.config import settings
 from core.logging import get_logger
 from core.scheduler import periodic
-from modules.task.worker import resume_unfinished_tasks
+from generation.recovery import recover_kind
+from modules.task.pipeline import KIND_VIDEO
 
 logger = get_logger(__name__)
 
@@ -54,11 +54,9 @@ async def reconcile_stale_tasks() -> None:
         # 关掉巡检的显式写法：0 或负数都不能被解释成「立刻全部重排」。
         return
 
-    from infra import get_queue
-
     try:
-        count = await resume_unfinished_tasks(
-            get_queue(),
+        counts = await recover_kind(
+            KIND_VIDEO,
             stale_after_sec=stale_after,
             limit=settings.task_reconcile_batch,
         )
@@ -66,5 +64,11 @@ async def reconcile_stale_tasks() -> None:
         logger.exception("视频任务巡检失败（下一轮继续）")
         return
 
+    count = sum(counts.values())
     if count:
-        logger.info("巡检接回 %d 个未完成的视频任务（超过 %d 秒没有写入）", count, stale_after)
+        logger.info(
+            "巡检接回 %d 个未完成的视频任务（超过 %d 秒没有写入）：%s",
+            count,
+            stale_after,
+            counts,
+        )

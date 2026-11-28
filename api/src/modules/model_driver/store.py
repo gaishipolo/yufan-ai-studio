@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -64,15 +64,22 @@ class DriverJobStore:
         return None if job is None else self._to_record(job)
 
     async def list_unfinished(
-        self, session: AsyncSession, limit: int
+        self,
+        session: AsyncSession,
+        limit: int,
+        *,
+        stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:
-        """框架启动恢复用：捞未终态记录，按创建时间排序并以主键收尾。"""
+        """框架启动/巡检恢复用：捞未终态记录，按创建时间排序并以主键收尾。"""
+        stmt = select(DriverJob).where(
+            DriverJob.status.in_((STATUS_QUEUED, STATUS_RUNNING))
+        )
+        if stale_after_sec is not None:
+            cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(0, stale_after_sec))
+            stmt = stmt.where(DriverJob.updated_at < cutoff)
         rows = (
             await session.scalars(
-                select(DriverJob)
-                .where(DriverJob.status.in_((STATUS_QUEUED, STATUS_RUNNING)))
-                .order_by(DriverJob.created_at, DriverJob.id)
-                .limit(limit)
+                stmt.order_by(DriverJob.created_at, DriverJob.id).limit(limit)
             )
         ).all()
         return [self._to_record(row) for row in rows]

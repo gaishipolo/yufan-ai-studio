@@ -3,10 +3,9 @@
 ## 为什么台账要走注入口，而不是让恢复器直接 import
 
 台账的实现在 `modules/model_driver/` —— 只有它知道台账表长什么样、哪个驱动
-用了哪个 provider。但要查台账的有两处：
+用了哪个 provider。但要查台账的是：
 
-- 框架恢复器 `generation/recovery.py`（图片等走框架恢复的 kind）；
-- 视频链自己的恢复器 `modules/task/worker.py`。
+- 框架恢复器 `generation/recovery.py`（视频、图片等所有 kind 共用）。
 
 而 `modules/image` / `modules/task` **不能 import `modules/model_driver`**
 （`tests/test_architecture.py` 的硬规则：业务模块之间只能经 `core/ports` 通信），

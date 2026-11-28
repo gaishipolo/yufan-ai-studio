@@ -8,14 +8,18 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from collections.abc import Iterator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
+from sqlalchemy import select
 
+from db.outbox import OutboxEvent
 from db.session import get_session_factory
+from generation.events import EVT_GENERATION_FAILED
 from generation.recovery import (
     SYNC_PROVIDER_ORPHAN_MESSAGE,
     recover_declared,
@@ -144,7 +148,7 @@ async def test_sync_provider_orphan_is_failed_not_resumed(
     assert error == SYNC_PROVIDER_ORPHAN_MESSAGE
 
 
-async def test_submit_unknown_is_dispatched_for_review(
+async def test_submit_unknown_is_failed_directly_for_review(
     created_ids: list[str], monkeypatch: pytest.MonkeyPatch
 ) -> None:
     _router(monkeypatch, supports_poll=True)
@@ -155,8 +159,29 @@ async def test_submit_unknown_is_dispatched_for_review(
     counts = await recover_kind("image", runner=runner)  # type: ignore[arg-type]
 
     assert counts["needs_review"] >= 1
-    assert rid in runner.dispatched, "交给 runner 的防线判死，框架不自己重提"
+    assert rid not in runner.dispatched, "已确定结果未知，不再投注定失败的 job"
     assert rid not in runner.resumed
+    assert (await _status(rid))[0] == STATUS_FAILED
+
+
+async def test_failed_recovery_writes_durable_outbox_event(
+    created_ids: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """恢复判死必须把失败事件写进 outbox，而不是 commit 后再 publish。"""
+    _router(monkeypatch, supports_poll=True)
+    rid = await _insert(submit_attempts=1)
+    created_ids.append(rid)
+
+    await recover_kind("image", runner=_Runner())  # type: ignore[arg-type]
+
+    async with get_session_factory()() as session:
+        rows = (
+            await session.scalars(
+                select(OutboxEvent).where(OutboxEvent.name == EVT_GENERATION_FAILED)
+            )
+        ).all()
+    payloads = [json.loads(row.payload) for row in rows]
+    assert any(item.get("record_id") == rid for item in payloads), payloads
 
 
 async def test_queued_without_attempt_is_resubmitted(

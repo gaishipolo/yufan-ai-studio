@@ -3,12 +3,10 @@
 ## 为什么实现放在模块层
 
 台账表与台账语义都属于模型驱动模块 —— 只有它知道哪个驱动用了哪个 provider、
-台账键怎么拼。而要查台账的是：
+台账键怎么拼。而要查台账的是框架恢复器 `generation/recovery.py`（视频、图片
+等所有 kind 共用）。
 
-- 框架恢复器 `generation/recovery.py`（图片等走框架恢复的 kind）；
-- 视频链自己的恢复器 `modules/task/worker.py`。
-
-这两处**都不能直接 import 本模块**（`tests/test_architecture.py` 的硬规则：
+它**不能直接 import 本模块**（`tests/test_architecture.py` 的硬规则：
 业务模块之间只能经 `core/ports` 通信），所以能力经注入口暴露。
 
 ## 能力边界

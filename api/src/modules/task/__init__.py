@@ -25,7 +25,6 @@ from modules.task.usage_provider import VideoUsageProvider
 
 # 必须 import：注册到生成框架的 pipeline 表（副作用导入）
 from modules.task import pipeline  # noqa: E402,F401  isort: skip
-from modules.task.worker import resume_unfinished_tasks  # noqa: E402
 
 from modules.task import maintenance  # noqa: E402,F401  isort: skip  注册周期任务 task.reconcile
 
@@ -56,13 +55,6 @@ LIBRARY_REFERENCE_SOURCES = (
 bind_library_reference_sources("task", LIBRARY_REFERENCE_SOURCES)
 
 
-async def _startup() -> None:
-    """进程启动时恢复上次没跑完的任务。"""
-    from infra import get_queue
-
-    await resume_unfinished_tasks(get_queue())
-
-
 module = ModuleSpec(
     name="task",
     router=router,
@@ -78,9 +70,7 @@ module = ModuleSpec(
             route="/tasks",
         ),
     ),
-    startup=_startup,
-    # 已有自己的恢复器（worker.resume_unfinished_tasks），框架恢复器会跳过，
-    # 但声明负责的 kind 让架构守卫能画出完整的「模块 × 插槽」矩阵。
+    # 恢复统一走 framework：task 只提供 store / unfinished query / stale selector。
     recovery_kinds=(pipeline.KIND_VIDEO,),
     # 启动恢复只跑一次；视频链路断了之后没有第二个人来接手，所以补一条周期巡检
     # （见 modules/task/maintenance.py）。

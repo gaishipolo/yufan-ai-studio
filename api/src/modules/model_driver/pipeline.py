@@ -38,9 +38,15 @@ class ModelDriverPipeline:
         return DriverJobStore(session)
 
     async def list_unfinished(
-        self, session: AsyncSession, limit: int
+        self,
+        session: AsyncSession,
+        limit: int,
+        *,
+        stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]:
-        return await self.store(session).list_unfinished(session, limit)
+        return await self.store(session).list_unfinished(
+            session, limit, stale_after_sec=stale_after_sec
+        )
 
     async def build_request(self, record: GenerationRecord) -> GenerationRequest:
         capability = record.params.get("capability") or self.capability.value

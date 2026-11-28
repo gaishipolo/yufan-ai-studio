@@ -118,6 +118,10 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     # 的窗口里中断，重启时绝不能自动重提（可能已经计费）
     submit_attempts: Mapped[int] = mapped_column(Integer, default=0, nullable=False)
 
+    # 提交时供应商形态的快照（"sync" / "async"）。恢复器用它判断能否续轮询，
+    # 不靠当前模型目录重新解释历史；老记录为 NULL，按安全侧处理。
+    submit_mode: Mapped[str | None] = mapped_column(String(8), nullable=True)
+
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 

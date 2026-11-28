@@ -8,7 +8,8 @@ from __future__ import annotations
 
 import asyncio
 import tempfile
-from datetime import UTC, datetime
+from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 from sqlalchemy import case, select
@@ -25,7 +26,7 @@ from db.session import get_session_factory
 from generation.pipeline import register_pipeline
 from generation.spec import GenerationRecord
 from infra import get_model_router, get_storage
-from infra.ai.base import Capability, GenerationRequest
+from infra.ai.base import Capability, GenerationRequest, PollCapable
 from infra.archive import get_archive_storage
 from infra.archive.runs import run_dir
 from infra.executor_output import EXECUTOR_OUTPUT_RELATIVE, RUN_OUTPUT_URL
@@ -173,8 +174,49 @@ class VideoTaskStore:
             # 与 `model_driver/store.py` 同口径（那边传的是 `job.started_at`）。
             timeout_started_at=task.started_at,
             submit_attempts=task.submit_attempts,
+            submit_mode=task.submit_mode,
             terminal_statuses=_TERMINAL,
         )
+
+    @staticmethod
+    def _to_recovery_record(task: VideoTask) -> GenerationRecord:
+        """恢复只需要决策字段；不在这里物化参考素材（那是轮询/提交的事）。"""
+        return GenerationRecord(
+            id=task.id,
+            kind=KIND_VIDEO,
+            model=task.model_id or task.model,
+            prompt=task.prompt,
+            status=task.status,
+            owner_id=task.author_id,
+            external_id=task.external_id,
+            progress=task.progress,
+            error=task.error_message,
+            created_at=task.created_at,
+            timeout_started_at=task.started_at,
+            submit_attempts=task.submit_attempts,
+            submit_mode=task.submit_mode,
+            terminal_statuses=_TERMINAL,
+        )
+
+    async def list_unfinished(
+        self,
+        session: AsyncSession,
+        limit: int,
+        *,
+        stale_after_sec: int | None = None,
+    ) -> Sequence[GenerationRecord]:
+        stmt = select(VideoTask).where(
+            VideoTask.status.in_((TaskStatus.QUEUED.value, TaskStatus.RUNNING.value))
+        )
+        if stale_after_sec is not None:
+            cutoff = datetime.now(tz=UTC) - timedelta(seconds=max(0, stale_after_sec))
+            stmt = stmt.where(VideoTask.updated_at < cutoff)
+        rows = (
+            await session.scalars(
+                stmt.order_by(VideoTask.updated_at, VideoTask.id).limit(limit)
+            )
+        ).all()
+        return [self._to_recovery_record(row) for row in rows]
 
     async def mark_submitting(self, record_id: str) -> bool:
         """调用供应商前先落一次「提交意图」，崩在中途时重启能识别出来。"""
@@ -198,7 +240,23 @@ class VideoTaskStore:
             {"submit_attempts": 0},
         )
 
+    @staticmethod
+    def _snapshot_submit_mode(task: VideoTask) -> str | None:
+        """提交成功时冻结供应商形态；取不到就留 NULL，恢复按安全侧处理。"""
+        model = task.model_id or task.model
+        try:
+            router = get_model_router()
+            if router.resolve(model) is None:
+                return None
+            provider = router.provider_for(model)
+        except Exception:  # noqa: BLE001 - 快照是增强，不能让成功提交失败
+            return None
+        return "async" if isinstance(provider, PollCapable) and provider.supports_poll else "sync"
+
     async def mark_submitted(self, record_id: str, external_id: str) -> bool:
+        task = await self._get(record_id)
+        if task is None:
+            return False
         progress = case(
             (VideoTask.progress < 1, 1),
             else_=VideoTask.progress,
@@ -216,6 +274,26 @@ class VideoTaskStore:
                 # 提交意图已完成使命：不复位的话，「attempts>0」会一直残留，
                 # 此后任何一次失败后的重试都会被误判为「提交结果未知」（R3-01）
                 "submit_attempts": 0,
+                "submit_mode": self._snapshot_submit_mode(task),
+            },
+        )
+
+    async def set_external_id(self, record_id: str, external_id: str) -> bool:
+        """从提交台账回填凭证：只写 external_id + running，不复位提交计数。"""
+        return await update_unless_terminal(
+            self.session,
+            VideoTask,
+            record_id,
+            _TERMINAL,
+            {
+                "external_id": external_id,
+                "status": TaskStatus.RUNNING.value,
+                # 台账能给出凭证就说明这次提交有独立任务号 = 异步形态；
+                # 已有快照不动，它是「提交当时」的事实。
+                "submit_mode": case(
+                    (VideoTask.submit_mode.is_(None), "async"),
+                    else_=VideoTask.submit_mode,
+                ),
             },
         )
 
@@ -307,6 +385,17 @@ class VideoGenerationPipeline:
 
     def store(self, session: AsyncSession) -> VideoTaskStore:
         return VideoTaskStore(session)
+
+    async def list_unfinished(
+        self,
+        session: AsyncSession,
+        limit: int,
+        *,
+        stale_after_sec: int | None = None,
+    ) -> Sequence[GenerationRecord]:
+        return await self.store(session).list_unfinished(
+            session, limit, stale_after_sec=stale_after_sec
+        )
 
     async def build_request(self, record: GenerationRecord) -> GenerationRequest:
         # 参考素材走哪条通道，由**供应商自己**声明（`infra/media_channel.py`）：

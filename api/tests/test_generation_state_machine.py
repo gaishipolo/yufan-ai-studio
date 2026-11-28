@@ -166,8 +166,11 @@ async def test_recovery_decision_table(
     elif expect == "resume_poll":
         assert ops == ["resume"], "可续查的绝不重新提交"
         assert after["status"] == STATUS_RUNNING
-    elif expect in ("needs_review", "resubmit"):
-        assert ops == ["dispatch"], "交给 runner 的防线，框架不自己判死"
+    elif expect == "needs_review":
+        assert ops == [], "结果未知由 recovery 直接判死，不再投注定失败的 job"
+        assert after["status"] == STATUS_FAILED
+    elif expect == "resubmit":
+        assert ops == ["dispatch"]
     else:
         assert ops == [], "终态记录不参与恢复"
         assert after["status"] == status

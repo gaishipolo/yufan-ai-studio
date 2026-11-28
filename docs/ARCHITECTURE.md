@@ -254,7 +254,7 @@
 | `modules/task/params.py` | 「模型目录 → 创建入参」的校验：入口就把非法请求挡住。 |
 | `modules/task/pipeline.py` | 把 `video_tasks` 表适配到通用生成框架。另实现 `attach_cover`：成片入库后把 `library` 抽好的首帧 key 写回 `cover_url`（供应商不回视频首帧）。 |
 | `modules/task/dependencies.py` | 依赖装配。 |
-| `modules/task/worker.py` | 启动恢复：进程重启后把在飞任务接回去。 |
+| `modules/task/maintenance.py` | 周期巡检：把久未写入的在飞视频任务交给 `generation/recovery.py`。 |
 | `modules/task/feed_schema.py` | 任务中心聚合契约：`TaskFeedItem` 用「来源前缀 + id」当 key，`video` / `image` 两路投影互斥，另带 `stats` / `warnings`。 |
 | `modules/task/feed_service.py` | 两路聚合（视频 / 生图）：逐路鉴权、逐路取统计与候选，合并排序后再切一次页；产物 key 在这里批量现签。 |
 
@@ -705,8 +705,9 @@ CreateTaskModal → POST /tasks
                    └─ infra/ai/<provider>.py  真正调上游
 
 进程重启：
-   modules/task/worker.py 按「供应商侧有没有 external_id」分流 ——
-   有：只续轮询（不重复提交，否则重复扣费）；无：重置现场重新排队
+   generation/recovery.py 按「供应商侧有没有 external_id」分流 ——
+   有：只续轮询（不重复提交，否则重复扣费）；无：重置现场重新排队；
+   提交意图已落库但没有凭证：判失败并写 outbox 等人核对
 ```
 
 ### 5.4 模板（规格 → 填表 → 任务）

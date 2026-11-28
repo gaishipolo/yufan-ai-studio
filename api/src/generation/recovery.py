@@ -18,13 +18,14 @@
 |---|---|---|
 | 有 `external_id`，供应商支持轮询 | `runner.resume()` | 只续轮询，绝不重新提交、绝不二次计费 |
 | 有 `external_id`，同步供应商 | 置失败等人重试 | `poll()` 不支持轮询会判死，结果已无法找回 |
-| 无 `external_id`，`submit_attempts>0` | 交给 runner 判死 | 防重复计费：宁可等人核对，不自动重提 |
+| 无 `external_id`，`submit_attempts>0` | 置失败 + outbox | 防重复计费：宁可等人核对，不自动重提 |
 | 无 `external_id`，`attempts=0` | `runner.dispatch()` | 建了记录却没进队列（进程内队列重启即丢） |
 
 ## 模块要提供什么
 
-一个可选的 `pipeline.list_unfinished(session, limit)`，返回未终态的
-`GenerationRecord` 列表。框架不认识任何 ORM 实体，差异仍由各模块吸收。
+一个可选的 `pipeline.list_unfinished(session, limit, stale_after_sec=None)`，
+返回未终态的 `GenerationRecord` 列表。启动恢复不传阈值（扫全部），周期巡检
+传阈值（只扫久未写入的）。框架不认识任何 ORM 实体，差异仍由各模块吸收。
 
 ## 谁来决定「这次启动要不要恢复」
 
@@ -42,13 +43,14 @@ from typing import Protocol, runtime_checkable
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from core.events import get_event_bus
 from core.logging import get_logger
 from core.ports.submission_ledger import lookup_recovery_external_id
+from db.outbox import dispatch_pending
+from db.outbox import record as record_event
 from db.session import get_session_factory
 from generation.events import EVT_GENERATION_FAILED
 from generation.pipeline import get_pipeline
-from generation.runner import GenerationRunner, get_runner
+from generation.runner import SUBMIT_UNKNOWN_MESSAGE, GenerationRunner, get_runner
 from generation.spec import GenerationRecord
 from generation.store import ExternalIdRecoverable
 from infra import get_model_router
@@ -67,7 +69,11 @@ SYNC_PROVIDER_ORPHAN_MESSAGE = (
 @runtime_checkable
 class RecoverablePipeline(Protocol):
     async def list_unfinished(
-        self, session: AsyncSession, limit: int
+        self,
+        session: AsyncSession,
+        limit: int,
+        *,
+        stale_after_sec: int | None = None,
     ) -> Sequence[GenerationRecord]: ...
 
 
@@ -104,37 +110,39 @@ def _supports_poll(record: GenerationRecord) -> bool:
     return isinstance(provider, PollCapable) and bool(provider.supports_poll)
 
 
-async def _fail_unrecoverable(kind: str, record: GenerationRecord) -> bool:
-    """同步供应商留下的 running 孤儿：无法续查，显式置失败并补发事件。
+async def _fail_record(kind: str, record: GenerationRecord, message: str) -> bool:
+    """把一条恢复期记录置失败，并把失败事件写进同一个 outbox 事务。
 
     返回**是否真的写了终态**（`mark_failed` 的条件更新没命中就是 False）。
-
-    `GenerationStore` 的协议写着「所有写方法必须返回 bool…终态保护只有在调用方
-    看返回值时才真正成立」。不看返回值的后果：用户刚点了取消（记录已 cancelled），
-    启动恢复照样 `commit` + 发 `EVT_GENERATION_FAILED` —— 用户先收到「已取消」，
-    再收到「生成失败」，两个矛盾通知。
+    事件必须和业务行同事务：commit 之后再 publish 的窗口里崩掉，会出现
+    「记录失败、事件永久消失」（R4-10）。
     """
-    message = SYNC_PROVIDER_ORPHAN_MESSAGE
     async with get_session_factory()() as session:
         store = get_pipeline(kind).store(session)
-        current = await store.load(record.id)
-        if current is None or current.terminal:
-            return False
+        # `mark_failed` 自己带终态谓词；不先 `load()` 是为了绕开业务加载器里的
+        # 参考素材校验：素材坏了也不能阻止把这条记录判死/发事件。
         if not await store.mark_failed(record.id, message):
-            # `load` 与 `mark_failed` 之间被别人落了终态（取消 / 另一个实例的恢复）：
-            # 这不是错误，是这一条已经有人处理了。跳过，别补发矛盾事件。
-            logger.info(
-                "记录已终态，跳过失败收尾 kind=%s id=%s", kind, record.id
-            )
+            logger.info("记录已终态，跳过失败收尾 kind=%s id=%s", kind, record.id)
+            return False
+        await record_event(
+            session,
+            EVT_GENERATION_FAILED,
+            kind=kind,
+            record_id=record.id,
+            owner_id=record.owner_id,
+            error=message,
+        )
+        await session.commit()
+    return True
+
+
+async def _mark_running(kind: str, record: GenerationRecord) -> bool:
+    """续轮询前把状态置为 running；记录已终态/不存在时返回 False。"""
+    async with get_session_factory()() as session:
+        store = get_pipeline(kind).store(session)
+        if not await store.mark_progress(record.id, record.progress):
             return False
         await session.commit()
-    await get_event_bus().publish(
-        EVT_GENERATION_FAILED,
-        kind=kind,
-        record_id=record.id,
-        owner_id=record.owner_id,
-        error=message,
-    )
     return True
 
 
@@ -195,20 +203,30 @@ async def recover_kind(
     *,
     runner: GenerationRunner | None = None,
     limit: int = RECOVERY_BATCH,
+    stale_after_sec: int | None = None,
 ) -> dict[str, int]:
-    """恢复某一类生成能力的未终态记录，返回各类处置的条数。"""
+    """恢复某一类生成能力的未终态记录，返回各类处置的条数。
+
+    `stale_after_sec` 只给周期巡检用：启动恢复传 None，扫全部未终态记录；
+    传阈值时只扫「超过 N 秒没有任何写入」的记录。
+    """
     pipeline = get_pipeline(kind)
     if not isinstance(pipeline, RecoverablePipeline):
         raise RuntimeError(
-            f"kind={kind!r} 声明了框架恢复但流水线没有 list_unfinished(session, limit)；"
-            "要么实现它，要么改用模块自己的 startup"
+            f"kind={kind!r} 声明了框架恢复但流水线没有 list_unfinished("
+            "session, limit, stale_after_sec)；要么实现它，要么改用模块自己的 startup"
         )
 
     active = runner or get_runner()
     async with get_session_factory()() as session:
-        records = list(await pipeline.list_unfinished(session, limit))
+        records = list(
+            await pipeline.list_unfinished(
+                session, limit, stale_after_sec=stale_after_sec
+            )
+        )
 
     counts = {"resubmit": 0, "resume_poll": 0, "needs_review": 0, "sync_orphan": 0}
+    failed_events = 0
     for record in records:
         if record.terminal:
             continue
@@ -223,23 +241,38 @@ async def recover_kind(
                     record = refreshed
             if record.submitted:
                 if _supports_poll(record):
-                    await active.resume(kind, record.id)
-                    counts["resume_poll"] += 1
+                    if await _mark_running(kind, record):
+                        await active.resume(kind, record.id)
+                        counts["resume_poll"] += 1
                 else:
                     # 只有真的写了终态才计数：`mark_failed` 落败说明这一条
                     # 已经被别人处理（取消 / 另一实例），不该算进 sync_orphan
-                    if await _fail_unrecoverable(kind, record):
+                    if await _fail_record(
+                        kind, record, SYNC_PROVIDER_ORPHAN_MESSAGE
+                    ):
                         counts["sync_orphan"] += 1
+                        failed_events += 1
+            elif record.submit_unknown:
+                # 提交结果未知：恢复阶段直接判死，不再入队等 runner 再判一次。
+                # 事件与业务行同事务写 outbox，避免「记录失败、事件丢失」。
+                if await _fail_record(kind, record, SUBMIT_UNKNOWN_MESSAGE):
+                    counts["needs_review"] += 1
+                    failed_events += 1
             else:
-                # submit_attempts>0 的记录也会被 dispatch，但 runner 的
-                # 「提交结果未知」分支会把它置为 failed 等人核对，不会二次提交。
                 await active.dispatch(kind, record.id)
-                key = "needs_review" if record.submit_unknown else "resubmit"
-                counts[key] += 1
+                counts["resubmit"] += 1
         except Exception:  # noqa: BLE001 - 单条失败不阻塞其余记录
             logger.exception("恢复失败 kind=%s id=%s", kind, record.id)
 
-    logger.info("启动恢复 kind=%s：%s", kind, counts)
+    if failed_events:
+        # 恢复期已经写好 outbox；这里只做一次「尽快投递」的尝试，
+        # 失败由周期投递器接着补，不影响恢复流程。
+        try:
+            await dispatch_pending()
+        except Exception:  # noqa: BLE001
+            logger.exception("恢复失败事件投递失败，等待 outbox 周期补投")
+
+    logger.info("恢复 kind=%s：%s", kind, counts)
     return counts
 
 
@@ -255,8 +288,8 @@ async def recover_declared(specs: Sequence[object]) -> dict[str, dict[str, int]]
         kinds = getattr(spec, "recovery_kinds", ())
         startup = getattr(spec, "startup", None)
         if startup is not None and kinds:
-            # 「自带恢复器 + 声明负责的 kind」是**预期组合**（task 就是），留痕是为了
-            # 矩阵守卫与日志都能对上（R12-07），不该按告警报——它每次启动都会响一次，
+            # 「自带恢复器 + 声明负责的 kind」是**预期组合**，留痕是为了矩阵守卫
+            # 与日志都能对上（R12-07），不该按告警报——它每次启动都会响一次，
             # 只会教人忽略告警。真要说「框架接管」的那句在下面 `continue` 之后。
             logger.info(
                 "模块 %s 自带恢复器，框架跳过 kind=%s（由该模块的 startup 负责）",

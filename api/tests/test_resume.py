@@ -9,10 +9,11 @@ from __future__ import annotations
 import asyncio
 
 from db.session import get_session_factory
+from generation.recovery import recover_kind
+from generation.runner import get_runner
 from infra.queue.memory import MemoryJobQueue
 from modules.task.enums import TaskStatus
 from modules.task.models import VideoTask
-from modules.task.worker import resume_unfinished_tasks
 
 
 def test_resume_resubmits_only_tasks_without_external_id() -> None:
@@ -42,7 +43,7 @@ def test_resume_resubmits_only_tasks_without_external_id() -> None:
             submitted_id, pending_id = submitted.id, pending.id
 
         queue = MemoryJobQueue()
-        await resume_unfinished_tasks(queue)
+        await recover_kind("video", runner=get_runner(queue))
 
         async with factory() as session:
             after_submitted = await session.get(VideoTask, submitted_id)
@@ -91,7 +92,7 @@ def test_resume_does_not_resubmit_when_submit_result_unknown() -> None:
             unknown_id = unknown.id
 
         queue = MemoryJobQueue()
-        await resume_unfinished_tasks(queue)
+        await recover_kind("video", runner=get_runner(queue))
 
         async with factory() as session:
             after = await session.get(VideoTask, unknown_id)
@@ -105,6 +106,69 @@ def test_resume_does_not_resubmit_when_submit_result_unknown() -> None:
     assert f"poll:video:{task.id}" not in keys
     assert task.status == TaskStatus.FAILED.value
     assert "提交结果未知" in (task.error_message or "")
+
+
+def test_task_submit_mode_snapshot_overrides_current_catalog() -> None:
+    """视频恢复与 image 同口径：提交时的形态快照优先，不再看今天的模型目录。"""
+
+    async def scenario() -> tuple[str, str]:
+        factory = get_session_factory()
+        async with factory() as session:
+            sync_orphan = VideoTask(
+                title="同步孤儿",
+                prompt="雪山",
+                status=TaskStatus.RUNNING.value,
+                model="Seedance 2.5",
+                external_id="sync-task",
+                submit_mode="sync",
+                author_id="u_001",
+                author_name="老大",
+            )
+            async_running = VideoTask(
+                title="异步运行中",
+                prompt="海浪",
+                status=TaskStatus.QUEUED.value,
+                model="Seedance 2.5",
+                external_id="async-task",
+                submit_mode="async",
+                progress=30,
+                author_id="u_001",
+                author_name="老大",
+            )
+            session.add_all([sync_orphan, async_running])
+            await session.commit()
+            return sync_orphan.id, async_running.id
+
+    queue = MemoryJobQueue()
+    sync_id, async_id = asyncio.run(scenario())
+    try:
+        asyncio.run(recover_kind("video", runner=get_runner(queue)))
+
+        async def after() -> tuple[VideoTask | None, VideoTask | None]:
+            factory = get_session_factory()
+            async with factory() as session:
+                return (
+                    await session.get(VideoTask, sync_id),
+                    await session.get(VideoTask, async_id),
+                )
+
+        sync_task, async_task = asyncio.run(after())
+        assert sync_task is not None and sync_task.status == TaskStatus.FAILED.value
+        assert async_task is not None and async_task.status == TaskStatus.RUNNING.value
+        keys = {job["key"] for job in queue.snapshot()}
+        assert f"poll:video:{async_id}" in keys
+        assert f"submit:video:{async_id}" not in keys
+    finally:
+        async def cleanup() -> None:
+            factory = get_session_factory()
+            async with factory() as session:
+                for task_id in (sync_id, async_id):
+                    task = await session.get(VideoTask, task_id)
+                    if task is not None:
+                        await session.delete(task)
+                await session.commit()
+
+        asyncio.run(cleanup())
 
 
 def test_reconcile_only_picks_tasks_that_stopped_moving() -> None:
@@ -145,7 +209,7 @@ def test_reconcile_only_picks_tasks_that_stopped_moving() -> None:
             stalled_id, moving_id = stalled.id, moving.id
 
         queue = MemoryJobQueue()
-        await resume_unfinished_tasks(queue, stale_after_sec=900)
+        await recover_kind("video", runner=get_runner(queue), stale_after_sec=900)
         return queue.snapshot(), stalled_id, moving_id
 
     jobs, stalled_id, moving_id = asyncio.run(scenario())
