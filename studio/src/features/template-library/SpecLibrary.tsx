@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Play, Plus } from 'lucide-react';
 import { KIND_LABEL } from '@/entities/library/model/types';
@@ -23,7 +23,7 @@ import {
   useSpecCompile,
   useTemplateTags,
 } from '@/entities/template-spec/api/spec.queries';
-import type { SpecSlotOut, TemplateSpecOut, SpecSlotIn,
+import type { SpecCompileOut, SpecSlotOut, TemplateSpecOut, SpecSlotIn,
 } from '@/shared/api/schema';
 import { AssetPicker, type PickedAsset } from '@/features/template-specs/AssetPicker';
 import {
@@ -46,10 +46,12 @@ import {
   Skeleton,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
-import { idempotencyKeyFor, newIdempotencyIntent } from '@/shared/lib/idempotency';
 import { toast } from '@/shared/lib/toast';
 import { useStickyFitHeight } from '@/shared/hooks/useStickyFitHeight';
-import { toSubmitPayload } from './taskPayload';
+import { toSubmitPayload } from '@/features/generation-form/taskPayload';
+import { useGenerationSubmit } from '@/features/generation-form/useGenerationSubmit';
+import type { GenerateImagePayload, ImageJob } from '@/entities/image/model/types';
+import type { CreateTaskPayload, VideoTask } from '@/entities/task/model/types';
 import { modelChoiceOptions, resolveModelChoice } from './modelChoice';
 import { buildGenerateConfirm } from './generateConfirm';
 import {
@@ -256,9 +258,6 @@ export function SpecLibrary() {
   const generateImage = useGenerateImage();
   const videoModels = useModels('video');
   const imageModels = useModels('image');
-  /* 一次提交意图的幂等串：双击/超时重试复用，成功后换新；不同模板/槽位内容
-     由 payload 指纹自动分开。 */
-  const idempotencyIntent = useRef(newIdempotencyIntent());
 
   const [keyword, setKeyword] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
@@ -289,6 +288,22 @@ export function SpecLibrary() {
   /* 二次确认：生成是要花钱的动作（积分加速更甚），按下之前先把这次会发生
      什么摊开写清楚 —— 「确定吗？」等于让人盲按。 */
   const [confirming, setConfirming] = useState(false);
+
+  const submission = useGenerationSubmit<
+    CreateTaskPayload | GenerateImagePayload,
+    VideoTask | ImageJob
+  >({
+    submit: payload =>
+      'title' in payload
+        ? createTask.mutateAsync(payload)
+        : generateImage.mutateAsync(payload),
+    onError: message => {
+      setError(message);
+      setConfirming(false);
+      // 错误条在右栏底部，正填着表的人未必看得到；提交失败也要弹一下。
+      toast(message, 'error');
+    },
+  });
 
   /* 右栏的高度上限：不写死「视口减几」，量它自己站在哪儿。
      页面刚打开时它还没吸住（上面顶着「模板库」标题），自然位置比吸顶位置低，
@@ -655,7 +670,7 @@ export function SpecLibrary() {
   const filledCount = fillSlots.length - missing.length;
   const progress = fillSlots.length > 0 ? Math.round((filledCount / fillSlots.length) * 100) : 0;
 
-  const busy = compile.isPending || createTask.isPending || generateImage.isPending;
+  const busy = compile.isPending || submission.pending;
 
   /* 二次确认框的内容。**在按下之前**把这次提交会带出去的东西摊开：
      模板、模型、素材、生效参数、计费方式。
@@ -749,16 +764,19 @@ export function SpecLibrary() {
     if (!spec) return;
     setError('');
     setNote('');
+
+    /* 改成文案的格子：把那段话交给后端去替换「未选时文案」。
+       只送非空的 —— 空的那格已经算进「还缺」里，按钮点不到这儿；
+       真送上去后端也会 400 说「不能为空」。 */
+    const slotTextOverrides: Record<string, string> = {};
+    for (const key of textModeKeys) {
+      const text = textOfKey(key).trim();
+      if (text) slotTextOverrides[key] = text;
+    }
+
+    let compiled: SpecCompileOut;
     try {
-      /* 改成文案的格子：把那段话交给后端去替换「未选时文案」。
-         只送非空的 —— 空的那格已经算进「还缺」里，按钮点不到这儿；
-         真送上去后端也会 400 说「不能为空」。 */
-      const slotTextOverrides: Record<string, string> = {};
-      for (const key of textModeKeys) {
-        const text = textOfKey(key).trim();
-        if (text) slotTextOverrides[key] = text;
-      }
-      const compiled = await compile.mutateAsync({
+      compiled = await compile.mutateAsync({
         key: spec.key,
         payload: {
           /* 真正会提交的那份：随机/均衡档的可选槽位已剔除，不传素材。 */
@@ -774,34 +792,6 @@ export function SpecLibrary() {
           ...(Object.keys(userChoices).length ? {paramOverrides: userChoices} : {}),
         },
       });
-      const plan = toSubmitPayload(compiled, spec.name, kind, defaults, model);
-      if (!plan.ok) {
-        setError(plan.message);
-        setConfirming(false);
-        return;
-      }
-      if (plan.kind === 'image') {
-        const job = await generateImage.mutateAsync({
-          ...plan.payload,
-          idempotencyKey: idempotencyKeyFor(idempotencyIntent.current, plan.payload),
-        });
-        /* 任务名已在 `toImagePayload` 里随 payload 传模板名（与视频那条对齐）。
-           不读 `job.name` 是因为这里只是「这一刻提交成功了吗」的提示，
-           用本地的 spec.name 即可，不必等响应字段。 */
-        setNote(`已提交生图：${spec.name}（${job.id}）`);
-        // 右栏那条提示是「这一刻的状态」，滚下去就看不见了；提交这种一次性动作
-        // 还要一条会自己消失的反馈，用户才知道「点到了、东西进去了」。
-        toast('已提交生图，稍后到资产库查看', 'success');
-      } else {
-        const task = await createTask.mutateAsync({
-          ...plan.payload,
-          idempotencyKey: idempotencyKeyFor(idempotencyIntent.current, plan.payload),
-        });
-        setNote(`已提交：${task.title || task.id}`);
-        toast('任务已提交，可在任务中心查看进度', 'success');
-      }
-      idempotencyIntent.current = newIdempotencyIntent();
-      setConfirming(false);
     } catch (reason) {
       /* 失败时也关掉确认框：错误显示在右栏底部，弹窗盖着就看不见 ——
          留着框等于把错误藏起来。 */
@@ -810,7 +800,34 @@ export function SpecLibrary() {
       setConfirming(false);
       // 失败同样要弹：错误条在右栏底部，正填着表的人未必看得到。
       toast(message, 'error');
+      return;
     }
+
+    const plan = toSubmitPayload(compiled, spec.name, kind, defaults, model);
+    if (!plan.ok) {
+      setError(plan.message);
+      setConfirming(false);
+      return;
+    }
+
+    const result = await submission.submit(plan.payload);
+    if (!result) return; // 失败已由 submission.onError 收尾
+
+    if (plan.kind === 'image') {
+      const job = result as ImageJob;
+      /* 任务名已在 `toImagePayload` 里随 payload 传模板名（与视频那条对齐）。
+         不读 `job.name` 是因为这里只是「这一刻提交成功了吗」的提示，
+         用本地的 spec.name 即可，不必等响应字段。 */
+      setNote(`已提交生图：${spec.name}（${job.id}）`);
+      // 右栏那条提示是「这一刻的状态」，滚下去就看不见了；提交这种一次性动作
+      // 还要一条会自己消失的反馈，用户才知道「点到了、东西进去了」。
+      toast('已提交生图，稍后到资产库查看', 'success');
+    } else {
+      const task = result as VideoTask;
+      setNote(`已提交：${task.title || task.id}`);
+      toast('任务已提交，可在任务中心查看进度', 'success');
+    }
+    setConfirming(false);
   };
 
   if (published.isLoading) {

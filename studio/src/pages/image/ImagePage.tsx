@@ -1,10 +1,9 @@
-import { useRef, useState } from 'react';
+import { useState } from 'react';
 import { Wand2 } from 'lucide-react';
 import {
   Button,
   CardSkeletonGrid,
   Chip,
-  ConfirmDialog,
   CoverImage,
   ErrorState,
   PageHeader,
@@ -14,136 +13,81 @@ import {
   Select,
   ReferenceImages,
 } from '@/shared/ui';
-import type { ReferenceItem } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
 import { FORM_LIMITS } from '@/shared/lib/formLimits';
-import { idempotencyKeyFor, newIdempotencyIntent } from '@/shared/lib/idempotency';
 import { toast } from '@/shared/lib/toast';
 import { formatDateTime } from '@/shared/lib/format';
-import {
-  referenceKindsFor,
-  referenceLimitsFor,
-  useImageModels,
-} from '@/entities/model/api/model.queries';
+import { useImageModels } from '@/entities/model/api/model.queries';
 import { useCan } from '@/shared/access/use-access';
-import {
-  isEmptyParamValue,
-  paramControlsFor,
-  resolveParamValues,
-  type ParamValue,
-} from '@/entities/model/lib/paramForm';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
 import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
-import { useUploadAsset } from '@/entities/library/api/library.queries';
 import { TextRefPicker } from '@/features/library/TextRefPicker';
-import type { LibraryAssetOut } from '@/shared/api/schema';
-import type { LibraryAssetDrag } from '@/shared/lib/libraryDrag';
 import { useGenerateImage, useImages } from '@/entities/image/api/image.api';
-import type { GenerateImagePayload } from '@/entities/image/model/types';
+import type { GenerateImagePayload, ImageJob } from '@/entities/image/model/types';
 import { imageSrcOf, imageStatusChipOf } from '@/entities/image/model/status';
+import { GenerationModelSwitchDialog } from '@/features/generation-form/GenerationModelSwitchDialog';
+import { useGenerationForm } from '@/features/generation-form/useGenerationForm';
 
 export default function ImagePage() {
-  const [prompt, setPrompt] = useState('');
-  const [modelId, setModelId] = useState('');
-  // 只存「用户改过的那几个」，没改的交给 schema 默认值。
-  // 存最终值的话，换模型后旧值会留在 state 里，而新模型未必认这些值。
-  const [overrides, setOverrides] = useState<Record<string, ParamValue>>({});
-  // 参考图：先传到素材库拿 id，再随请求下发 id（后端读字节转 Data URI 交给供应商）。
-  // 不放图片本身进请求：几 MB 的 base64 走 HTTP 只是白费带宽，后端还得再解一遍。
-  const [references, setReferences] = useState<ReferenceItem[]>([]);
-  // 文本引用：与参考图完全分开的一条通道，提交时只发 textLibraryIds
-  const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
-  // 素材库悬浮栏：默认收起，从参考图区的「素材库」按钮打开
-  const [libraryOpen, setLibraryOpen] = useState(false);
   const [page, setPage] = useState(1);
-  // 换模型会清参考图：先问一句，不能静默丢掉用户已经上传/挑好的图。
-  const [pendingModelId, setPendingModelId] = useState<string | null>(null);
-  /* 请求级幂等意图：双击/超时重试复用同一个键，成功后换新的（下一张可并发）。 */
-  const idempotencyIntent = useRef(newIdempotencyIntent());
-
   const { models, isLoading: modelsLoading, isError: modelsError } = useImageModels();
   const { data, isLoading, isFetching, isError, error, refetch } = useImages(page);
   const generate = useGenerateImage();
-  const upload = useUploadAsset();
-
-  // 用户没选过时用 isDefault 模型 —— 后端「model 留空」取的也是它，前端不编默认值
-  const model =
-    models.find((m) => m.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0];
-  // 控件完全由 paramSchema 决定：后端声明什么，这里就渲染什么
-  const controls = paramControlsFor(model);
-  const values = resolveParamValues(controls, overrides);
-  const modelOptions = models.map((m) => ({ value: m.id, label: m.label }));
-  const applyModel = (id: string) => {
-    setModelId(id);
-    // 换模型的参数面可能完全不同（张数上限、尺寸白名单、甚至多出
-    // 一组新控件），旧改动一律清掉，避免带着上一个模型的值提交。
-    // 参考图同理：新模型可能根本不支持参考图。
-    setOverrides({});
-    setReferences([]);
-    setLibraryOpen(false);
-  };
-  const changeModel = (id: string) => {
-    if (id === (model?.id ?? '')) return;
-    if (references.length) {
-      setPendingModelId(id);
-      return;
-    }
-    applyModel(id);
-  };
-  // 只读账号不该点到「开始生成」：路由守卫只要求 image:read，写动作要 image:create
-  // （2026-11-15 审查 3.1）。
   const canGenerate = useCan('image:create');
-  const canSubmit = Boolean(model) && canGenerate;
-  // 模型声明的上限决定这个入口出不出：0 或缺失 = 纯文生图
-  const maxReferences = model?.maxReferences ?? 0;
-  // 生图链目前只有图片；仍按声明走，免得哪天某个模型多收一类时这里写死
-  const referenceKinds = referenceKindsFor(model);
-  const referenceLimits = referenceLimitsFor(model);
 
-  const addReferences = async (files: FileList | null) => {
-    const picked = Array.from(files ?? []);
-    if (!picked.length) return;
-    const room = maxReferences - references.length;
-    if (room <= 0) {
-      toast(`这个模型最多接受 ${maxReferences} 张参考图`, 'error');
-      return;
-    }
-    // 多选超量时只取前面的：先传多余的那几张再丢掉，等于白花一次上传
-    for (const file of picked.slice(0, room)) {
-      try {
-        const asset = await upload.mutateAsync({ file, kind: 'image' });
-        // 缩略图优先用它自己给的预览地址；拿不到就退回取件地址（契约里两个都可选）
-        setReferences((prev) => [
-          ...prev,
-          {
-            id: asset.id,
-            name: asset.name,
-            url: asset.previewUrl ?? asset.url ?? '',
-          },
-        ]);
-      } catch (e) {
-        toast(e instanceof Error ? e.message : '参考图上传失败', 'error');
-      }
-    }
-  };
-
-  /**
-   * 加入一张素材库里的图（拖进来或点「＋」）。
-   *
-   * 不重新上传：参考图提交的是素材 id，后端自己去库里读字节，同一份素材可以被
-   * 多个任务反复引用。所以这里只把 id / 名称 / 缩略图接进列表，与本地上传的
-   * 结果完全同构。
-   */
-  const addLibraryAsset = (asset: LibraryAssetDrag) => {
-    if (!maxReferences) return;
-    // 同一张重复加入没有意义：多图合成里同一张出现两次只会白占一个名额
-    if (references.some((item) => item.id === asset.id)) return;
-    if (references.length >= maxReferences) {
-      toast(`最多 ${maxReferences} 张参考图，先移除一张再添加`, 'error');
-      return;
-    }
-    setReferences((prev) => [...prev, { id: asset.id, name: asset.name, url: asset.url }]);
-  };
+  const {
+    prompt,
+    setPrompt,
+    promptLimit,
+    currentModel: model,
+    modelOptions,
+    changeModel,
+    pendingModelId,
+    pendingModel,
+    confirmModelChange,
+    cancelModelChange,
+    paramControls: controls,
+    paramValues: values,
+    setParam,
+    references,
+    referenceKinds,
+    referenceLimits,
+    maxReferences,
+    addReferences,
+    addLibraryAsset,
+    removeReference,
+    textRefs,
+    setTextRefs,
+    libraryOpen,
+    setLibraryOpen,
+    uploading,
+    error: formError,
+    submit,
+    pending,
+    canSubmit,
+  } = useGenerationForm<ImageJob>({
+    kind: 'image',
+    models,
+    promptLimit: FORM_LIMITS.imagePrompt,
+    canSubmit: canGenerate,
+    omitDefaultModel: true,
+    clearPromptOnSuccess: true,
+    submit: payload =>
+      new Promise<ImageJob>((resolve, reject) => {
+        generate.mutate(payload as GenerateImagePayload, {
+          onSuccess: resolve,
+          onError: reject,
+        });
+      }),
+    onSuccess: () => {
+      toast('已提交，正在排队生成', 'success');
+      // 新任务在最前面：停在旧页会看不到自己刚提交的那张。
+      // 回到第 1 页后 useImages(1) 会因为 queued 自动开始轮询。
+      setPage(1);
+    },
+    onError: message => toast(message, 'error'),
+    onValidationError: message => toast(message, 'error'),
+  });
 
   const total = data?.total ?? 0;
   const pageSize = data?.pageSize ?? 24;
@@ -151,52 +95,6 @@ export default function ImagePage() {
   // 否则一次网络抖动就会把用户从第 3 页踢回第 1 页。越界回收统一在 Pager 里做。
   const totalPages = data ? Math.max(1, Math.ceil(total / pageSize)) : 0;
 
-  const submit = () => {
-    if (!prompt.trim()) {
-      toast('请先填写提示词', 'error');
-      return;
-    }
-    if (!model) {
-      toast('暂无可用生图模型，请稍后重试', 'error');
-      return;
-    }
-
-    // `size` / `count` 是接口上的顶层字段（历史列表、统计都按列读），
-    // 其余参数走 `params`。键名是契约的一部分，不能随 schema 改名。
-    const payload: GenerateImagePayload = { prompt: prompt.trim() };
-    const extra: Record<string, ParamValue> = {};
-    for (const control of controls) {
-      const value = values[control.key];
-      if (isEmptyParamValue(value)) continue;
-      if (control.key === 'size') payload.size = String(value);
-      else if (control.key === 'count') payload.count = Number(value);
-      else extra[control.key] = value;
-    }
-    // 空对象不发：接口里 `params` 是可选字段，发 `{}` 只是噪音
-    if (Object.keys(extra).length) payload.params = extra;
-    // 参考图只发 id：顺序就是提交顺序，后端按这个顺序拼进供应商请求
-    if (references.length) payload.referenceLibraryIds = references.map((item) => item.id);
-    // 默认模型留空，交给后端取默认；只有用户显式改选才传 model
-    if (!model.isDefault) payload.model = model.id;
-    // 文本引用按顺序冻结正文；与 referenceLibraryIds 互不混用
-    if (textRefs.length) payload.textLibraryIds = textRefs.map((item) => item.id);
-    payload.idempotencyKey = idempotencyKeyFor(idempotencyIntent.current, payload);
-
-    generate.mutate(payload, {
-      onSuccess: () => {
-        idempotencyIntent.current = newIdempotencyIntent();
-        toast('已提交，正在排队生成', 'success');
-        setPrompt('');
-        setTextRefs([]);
-        // 参考图跟着这次请求走了，留着会让下一次生成莫名其妙还用旧图
-        setReferences([]);
-        // 新任务在最前面：停在旧页会看不到自己刚提交的那张。
-        // 回到第 1 页后 useImages(1) 会因为 queued 自动开始轮询
-        setPage(1);
-      },
-      onError: (e) => toast(e.message, 'error'),
-    });
-  };
 
   return (
     <>
@@ -212,12 +110,16 @@ export default function ImagePage() {
               value={prompt}
               onChange={(e) => setPrompt(e.target.value)}
               rows={4}
-              maxLength={FORM_LIMITS.imagePrompt}
+              maxLength={promptLimit}
               placeholder="例：赛博朋克街头，霓虹灯牌，雨夜地面反光，电影级打光，超高细节"
-              className="w-full resize-y rounded-lg border border-line bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-ink-mute focus:border-primary-line focus:bg-panel focus:shadow-ring"
+              className={cn(
+                'w-full resize-y rounded-lg border bg-panel-soft px-2.5 py-2 text-body leading-relaxed outline-none transition placeholder:text-ink-mute focus:border-primary-line focus:bg-panel focus:shadow-ring',
+                formError ? 'border-danger' : 'border-line',
+              )}
             />
+            {formError && <p className="mt-1 text-meta text-danger">{formError}</p>}
             <div className="mt-1 text-right font-mono text-micro tabular-nums text-ink-mute">
-              {prompt.length} / {FORM_LIMITS.imagePrompt}
+              {prompt.length} / {promptLimit}
             </div>
           </div>
 
@@ -257,11 +159,9 @@ export default function ImagePage() {
               max={maxReferences}
               kinds={referenceKinds}
               limits={referenceLimits}
-              busy={upload.isPending}
-              onPick={(files) => void addReferences(files)}
-              onRemove={(id) =>
-                setReferences((prev) => prev.filter((item) => item.id !== id))
-              }
+              busy={uploading}
+              onPick={addReferences}
+              onRemove={removeReference}
               onAddAsset={addLibraryAsset}
               onOpenLibrary={() => setLibraryOpen((open) => !open)}
               libraryOpen={libraryOpen}
@@ -271,7 +171,7 @@ export default function ImagePage() {
           <ParamFields
             controls={controls}
             values={values}
-            onChange={(key, value) => setOverrides((prev) => ({ ...prev, [key]: value }))}
+            onChange={setParam}
           />
 
           <Button
@@ -280,10 +180,10 @@ export default function ImagePage() {
             block
             className="mt-3"
             icon={<Wand2 size={15} />}
-            loading={generate.isPending}
+            loading={pending}
             disabled={!canSubmit}
             title={canGenerate ? undefined : '当前账号没有生图权限（image:create）'}
-            onClick={submit}
+            onClick={() => void submit()}
           >
             开始生成
           </Button>
@@ -383,25 +283,12 @@ export default function ImagePage() {
         />
       )}
 
-      <ConfirmDialog
+      <GenerationModelSwitchDialog
         open={pendingModelId !== null}
-        title="切换模型？"
-        description="新模型的参数与参考图支持可能不同。切换会清空已选的参考图。"
-        details={[
-          { label: '从', value: model?.label ?? '—' },
-          {
-            label: '到',
-            value: models.find((item) => item.id === pendingModelId)?.label ?? '—',
-          },
-          { label: '将清空参考图', value: `${references.length} 张` },
-        ]}
-        confirmTone="danger"
-        confirmLabel="切换并清空"
-        onCancel={() => setPendingModelId(null)}
-        onConfirm={() => {
-          if (pendingModelId) applyModel(pendingModelId);
-          setPendingModelId(null);
-        }}
+        referenceCount={references.length}
+        nextModelLabel={pendingModel?.label}
+        onCancel={cancelModelChange}
+        onConfirm={confirmModelChange}
       />
     </>
   );

@@ -247,18 +247,15 @@ describe('ImagePage · 表单参数来自模型目录', () => {
     });
   });
 
-  it('同一份表单连续提交（双击）复用同一个幂等键', async () => {
+  it('提交中按钮置灰，不再发第二次请求', async () => {
     const user = userEvent.setup();
     render(<ImagePage />);
     await user.type(screen.getByPlaceholderText(/赛博朋克街头/), '一只白猫');
     const button = screen.getByRole('button', { name: '开始生成' });
-    await user.click(button);
-    await user.click(button);
+    fireEvent.click(button);
 
-    expect(mutateMock).toHaveBeenCalledTimes(2);
-    expect(mutateMock.mock.calls[0][0].idempotencyKey).toBe(
-      mutateMock.mock.calls[1][0].idempotencyKey,
-    );
+    expect(mutateMock).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
   });
 
   it('显式改选非默认模型时才下发 model，张数带上用户所选', async () => {
@@ -417,7 +414,7 @@ describe('ImagePage · 参考图（图生图 / 多图合成）', () => {
     const dialog = screen.getByRole('dialog');
     expect(dialog.textContent).toContain('1 张');
 
-    await user.click(screen.getByRole('button', { name: '切换并清空' }));
+    await user.click(screen.getByRole('button', { name: '清空并更换' }));
     expect(screen.queryByRole('button', { name: '移除参考图 1' })).toBeNull();
   });
 

@@ -1,45 +1,28 @@
-import { useMemo, useRef, useState, type ReactNode } from 'react';
+import { useMemo, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Wand2 } from 'lucide-react';
 import {
   Button,
   Chip,
-  ConfirmDialog,
   CoverImage,
   PageHeader,
   Panel,
   PanelHeader,
   ReferenceImages,
-  REFERENCE_KIND_META,
   Select,
-  type ReferenceItem,
 } from '@/shared/ui';
 import { cn } from '@/shared/lib/cn';
-import { idempotencyKeyFor, newIdempotencyIntent } from '@/shared/lib/idempotency';
 import { toast } from '@/shared/lib/toast';
 import { useCreateTask, useTaskList } from '@/entities/task/api/task.queries';
-import {
-  useModels,
-  referenceKindsFor,
-  referenceLimitsFor,
-} from '@/entities/model/api/model.queries';
+import { useModels } from '@/entities/model/api/model.queries';
 import { useShots } from '@/entities/shot/api/shot.api';
 import { LibraryFlyout } from '@/entities/library/ui/LibraryFlyout';
-import { useUploadAsset } from '@/entities/library/api/library.queries';
 import { TextRefPicker } from '@/features/library/TextRefPicker';
-import type { LibraryAssetKind, LibraryAssetOut } from '@/shared/api/schema';
+import type { LibraryAssetKind } from '@/shared/api/schema';
 import { useCan } from '@/shared/access/use-access';
-import type { LibraryAssetDrag } from '@/shared/lib/libraryDrag';
-import {
-  paramControlsFor,
-  resolveParamValues,
-  type ParamValue,
-} from '@/entities/model/lib/paramForm';
 import { ParamFields } from '@/entities/model/ui/ParamFields';
-import {
-  toTaskPayload,
-  type TaskPayloadResult,
-} from '@/features/template-library/taskPayload';
+import { GenerationModelSwitchDialog } from '@/features/generation-form/GenerationModelSwitchDialog';
+import { useGenerationForm } from '@/features/generation-form/useGenerationForm';
 import { useLibtvQueue } from '@/entities/libtv/api/libtv.queries';
 import {
   inFlightLibtvIds,
@@ -47,40 +30,67 @@ import {
   queueLabel,
   upstreamTaskId,
 } from '@/entities/libtv/model/types';
-import { isTaskInFlight, type VideoTask } from '@/entities/task/model/types';
+import {
+  isTaskInFlight,
+  type CreateTaskPayload,
+  type VideoTask,
+} from '@/entities/task/model/types';
 
 export default function StudioPage() {
   const navigate = useNavigate();
   const create = useCreateTask();
   const { data: shots } = useShots();
   const { data: recent } = useTaskList({ page: 1, pageSize: 3, scope: 'mine' });
-
-  // 模型与它声明的全部参数都来自后端 /models：新增模型不需要改这里
   const models = useModels('video');
-  const [prompt, setPrompt] = useState('');
-  const [modelId, setModelId] = useState('');
-  const [error, setError] = useState('');
-  /* 参数只存「用户改过的那几个」，没改的交给 schema 默认值。
-     存最终值的话，换模型后旧值会留在 state 里，而新模型未必认这些值。 */
-  const [overrides, setOverrides] = useState<Record<string, ParamValue>>({});
-  /* 参考图：先落素材库拿 id，再随请求下发 id —— 与生图页同一条通道，
-     提交的是 id 而不是图片字节，同一张素材可以被多个任务反复引用 */
-  const [references, setReferences] = useState<ReferenceItem[]>([]);
-  // 文本引用：独立通道，提交时只发 textLibraryIds，不进 referenceLibraryIds
-  const [textRefs, setTextRefs] = useState<LibraryAssetOut[]>([]);
-  const [libraryOpen, setLibraryOpen] = useState(false);
   const canReadLibrary = useCan('library:read');
   const canReadQueue = useCan('task:read');
-  const upload = useUploadAsset();
 
-  /* 换模型会作废已选参考图（参考图上限与支持类型都由模型声明）。
-     以前是**静默清空**：用户挑了半天图，换个模型，图无声无息没了 ——
-     下拉框换了值，图没了，界面不说发生了什么。丢东西该问一声。
-     参考图为空时不问，直接换。 */
-  const [pendingModelId, setPendingModelId] = useState<string | null>(null);
-  /* 一次提交意图的随机串；payload 指纹由 `idempotencyKeyFor` 拼上。
-     请求失败/超时重试复用同一个键；成功后才换新的（下一条任务允许并发）。 */
-  const idempotencyIntent = useRef(newIdempotencyIntent());
+  const {
+    prompt,
+    setPrompt,
+    currentModel,
+    modelOptions,
+    changeModel,
+    pendingModelId,
+    pendingModel,
+    confirmModelChange,
+    cancelModelChange,
+    paramControls,
+    paramValues,
+    setParam,
+    references,
+    referenceKinds,
+    referenceLimits,
+    maxReferences,
+    addReferences,
+    addLibraryAsset,
+    removeReference,
+    textRefs,
+    setTextRefs,
+    libraryOpen,
+    setLibraryOpen,
+    uploading,
+    error,
+    submit,
+    pending,
+  } = useGenerationForm<VideoTask>({
+    kind: 'video',
+    models,
+    canReadLibrary,
+    titleFromPrompt: text => text.slice(0, 40),
+    submit: payload =>
+      new Promise<VideoTask>((resolve, reject) => {
+        create.mutate(payload as CreateTaskPayload, {
+          onSuccess: resolve,
+          onError: reject,
+        });
+      }),
+    onSuccess: () => {
+      toast('已提交生成，正在跳转任务中心', 'success');
+      navigate('/tasks');
+    },
+    onError: message => toast(message, 'error'),
+  });
 
   const recentLibtvIds = useMemo(
     () => inFlightLibtvIds(recent?.items ?? []),
@@ -91,207 +101,6 @@ export default function StudioPage() {
     () => new Map((queueData?.items ?? []).map((item) => [item.taskId, item])),
     [queueData?.items],
   );
-
-  const currentModel = useMemo(
-    () => models.find((item) => item.id === modelId) ?? models.find((m) => m.isDefault) ?? models[0],
-    [models, modelId],
-  );
-  const modelOptions = useMemo(
-    () => models.map((item) => ({ value: item.id, label: item.label })),
-    [models],
-  );
-
-  /* 参数控件完全由模型声明驱动：后端声明什么，这里就渲染什么。
-     这一条是硬纪律 —— 之前工作台写死「时长/画幅/风格预设」三件套，
-     于是：
-     - 风格预设无条件提交，而模型没声明 `stylePreset` 时后端直接 400
-       （实测：选 LibTV 提交必失败）；
-     - 模型声明了新参数（计费模式等）界面里根本没有入口。
-     现在按 schema 渲染，声明了就有，不声明就不出现。 */
-  const paramControls = paramControlsFor(currentModel);
-  const paramValues = resolveParamValues(paramControls, overrides);
-
-  /* 参考素材的数量上限与类型都由模型声明（`maxReferences` / `referenceKinds` /
-     `referenceLimits`），不在界面里写死「只选图片、最多 4 张」——那会把视频
-     替换模型的用户挡在门外。
-
-     `maxReferences = 0` 就**整块不画**：模型没声明收参考素材，后端受理期会
-     直接拒（`模型 X 不支持参考素材，请换用支持参考素材的模型`）。
-     画一个上传框让用户填完再吃一个 400，比不画更糟。 */
-  const referenceKinds = useMemo(() => referenceKindsFor(currentModel), [currentModel]);
-  const referenceLimits = useMemo(() => referenceLimitsFor(currentModel), [currentModel]);
-  const maxReferences = currentModel?.maxReferences ?? 0;
-
-  const countOfKind = (kind: string) =>
-    references.filter((one) => (one.kind ?? 'image') === kind).length;
-
-  /* 上传的素材类型跟着模型声明走：模型收音频时，音轨要按 `audio` 入库 ——
-     按 `image` 入库会被后端按图片校验拒掉（探测出来的宽高也对不上）。 */
-  const uploadKindFor = (file: File): 'image' | 'audio' | null => {
-    if (file.type.startsWith('audio/')) {
-      return referenceKinds.includes('audio') ? 'audio' : null;
-    }
-    return 'image';
-  };
-
-  const rejectMessage = (kind: string, limit: number): string => {
-    const meta = REFERENCE_KIND_META[kind];
-    return meta
-      ? `最多 ${limit} ${meta.unit}${meta.label}参考素材，先移除一个再添加`
-      : `最多 ${limit} 个 ${kind} 参考素材，先移除一个再添加`;
-  };
-
-  const addReferences = async (files: FileList | null) => {
-    const picked = Array.from(files ?? []);
-    if (!picked.length) return;
-    /* 本批内部自己记账：`setReferences` 是异步的，一批里连着处理几张时
-       读 `references` 还是旧值，会一次塞进超额的量、到提交才被拒。 */
-    const used: Record<string, number> = {};
-    for (const item of references) {
-      const kind = item.kind ?? 'image';
-      used[kind] = (used[kind] ?? 0) + 1;
-    }
-    let total = references.length;
-
-    for (const file of picked) {
-      const kind = uploadKindFor(file);
-      if (!kind) {
-        toast('这个模型不收音频参考素材', 'error');
-        continue;
-      }
-      if (total >= maxReferences) {
-        toast(`最多 ${maxReferences} 个参考素材，先移除一个再添加`, 'error');
-        break;
-      }
-      const limit = referenceLimits[kind];
-      if (limit !== undefined && (used[kind] ?? 0) >= limit) {
-        toast(rejectMessage(kind, limit), 'error');
-        continue;
-      }
-      try {
-        const asset = await upload.mutateAsync({ file, kind });
-        setReferences((prev) => [
-          ...prev,
-          {
-            id: asset.id,
-            name: asset.name,
-            url: asset.previewUrl ?? asset.url ?? '',
-            kind,
-          },
-        ]);
-        used[kind] = (used[kind] ?? 0) + 1;
-        total += 1;
-      } catch (e) {
-        toast(e instanceof Error ? e.message : '参考素材上传失败', 'error');
-      }
-    }
-  };
-
-  /** 从素材库加入：不重复上传，只把 id / 名称 / 缩略图接进列表 */
-  const addLibraryAsset = (asset: LibraryAssetDrag) => {
-    const kind = asset.kind ?? 'image';
-    // 同一张重复加入没有意义：多图合成里同一张出现两次只会白占一个名额
-    if (references.some((item) => item.id === asset.id)) return;
-    if (!referenceKinds.includes(kind)) {
-      const meta = REFERENCE_KIND_META[kind];
-      toast(`这个模型不收${meta ? meta.label : kind}参考素材`, 'error');
-      return;
-    }
-    const limit = referenceLimits[kind];
-    if (limit !== undefined && countOfKind(kind) >= limit) {
-      toast(rejectMessage(kind, limit), 'error');
-      return;
-    }
-    if (references.length >= maxReferences) {
-      toast(`最多 ${maxReferences} 个参考素材，先移除一个再添加`, 'error');
-      return;
-    }
-    setReferences((prev) => [
-      ...prev,
-      { id: asset.id, name: asset.name, url: asset.url, kind },
-    ]);
-  };
-
-  /**
-   * 真正切换模型：清掉与旧模型绑定的状态。
-   *
-   * 参考图上限与支持类型都由模型声明，所以旧图在新模型下不一定还能用；
-   * 参数同理（新模型未必认这些键，留在 state 里会被后端拒）。
-   */
-  const applyModel = (nextId: string) => {
-    setModelId(nextId);
-    setReferences([]);
-    setLibraryOpen(false);
-    setOverrides({});
-  };
-
-  /**
-   * 提交：按 `/tasks` 的契约摊平参数。
-   *
-   * 摊平规则**只有一份**：`toTaskPayload`（模板库那条链也在用）。
-   * 它对「`/tasks` 表达不了的键」是**报错而不是丢掉** —— 丢掉的话用户会拿到
-   * 一个「参数其实没用上」的任务，界面上还显示成功。
-   */
-  const submit = () => {
-    if (!prompt.trim()) {
-      setError('请先填写画面描述');
-      return;
-    }
-    if (!currentModel) {
-      setError('暂无可用模型，请稍后重试');
-      return;
-    }
-    setError('');
-
-    /* 编译结果形状与 `compile` 一致：这里没有槽位与模板，直接把参数与素材摊平。
-       顶层字段由模型 schema 决定（时长/画幅…），其余声明的参数进 `params`。 */
-    const compiled = {
-      version: 0,
-      model: currentModel.id,
-      prompt: prompt.trim(),
-      params: Object.fromEntries(
-        Object.entries(paramValues).filter(([, value]) => value !== '' && value !== undefined),
-      ),
-      referenceLibraryIds: references.map((item) => item.id),
-      textLibraryIds: textRefs.map((item) => item.id),
-      slots: [],
-    };
-
-    const plan: TaskPayloadResult = toTaskPayload(
-      compiled,
-      prompt.trim().slice(0, 40),
-      {
-        durationSec: Number(currentModel.paramSchema?.durationSec?.default ?? 0) || undefined,
-        aspectRatio: (currentModel.paramSchema?.aspectRatio?.default as string | undefined) ?? undefined,
-      },
-      // 带上模型的参数声明：提交前就能判定「这个键模型没声明」，早一步报出来
-      currentModel,
-    );
-    if (!plan.ok) {
-      setError(plan.message);
-      return;
-    }
-
-    create.mutate(
-      {
-        ...plan.payload,
-        prompt: plan.payload.prompt,
-        idempotencyKey: idempotencyKeyFor(idempotencyIntent.current, plan.payload),
-      },
-      {
-        onSuccess: () => {
-          idempotencyIntent.current = newIdempotencyIntent();
-          // 参考图跟着这次请求走了，留着会让下一个任务莫名其妙沿用旧图
-          setReferences([]);
-          setTextRefs([]);
-          setLibraryOpen(false);
-          toast('已提交生成，正在跳转任务中心', 'success');
-          navigate('/tasks');
-        },
-        onError: (e) => toast(e.message, 'error'),
-      },
-    );
-  };
 
   const storyboard = useMemo(() => (shots?.items ?? []).slice(0, 4), [shots]);
 
@@ -314,9 +123,9 @@ export default function StudioPage() {
               max={maxReferences}
               kinds={referenceKinds}
               limits={referenceLimits}
-              busy={upload.isPending}
-              onPick={(files) => void addReferences(files)}
-              onRemove={(id) => setReferences((prev) => prev.filter((item) => item.id !== id))}
+              busy={uploading}
+              onPick={addReferences}
+              onRemove={removeReference}
               onAddAsset={addLibraryAsset}
               // 没有素材库查看权限时不画那个按钮：画出来点了只会弹一句「没有权限」
               onOpenLibrary={canReadLibrary ? () => setLibraryOpen((open) => !open) : undefined}
@@ -355,19 +164,7 @@ export default function StudioPage() {
                 block
                 options={modelOptions}
                 value={currentModel?.id ?? ''}
-                onChange={(e) => {
-                  const nextId = e.target.value;
-                  if (nextId === currentModel?.id) return;
-                  /* 有参考图就问一声再丢：静默清空等于替用户做决定。
-                     参数（overrides）也一起重置 —— 新模型未必认这些键，
-                     留在 state 里会被后端拒。那个不需要问：参数本来就是
-                     「按模型 schema 走」，换模型重置是预期行为，不是丢失。 */
-                  if (references.length > 0) {
-                    setPendingModelId(nextId);
-                    return;
-                  }
-                  applyModel(nextId);
-                }}
+                onChange={(e) => changeModel(e.target.value)}
               />
             </Field>
           </div>
@@ -380,7 +177,7 @@ export default function StudioPage() {
               idPrefix="studio-param"
               controls={paramControls}
               values={paramValues}
-              onChange={(key, value) => setOverrides((prev) => ({ ...prev, [key]: value }))}
+              onChange={setParam}
             />
           )}
 
@@ -390,8 +187,8 @@ export default function StudioPage() {
             block
             className="mt-1"
             icon={<Wand2 size={15} />}
-            loading={create.isPending}
-            onClick={submit}
+            loading={pending}
+            onClick={() => void submit()}
           >
             生成视频任务
           </Button>
@@ -501,27 +298,13 @@ export default function StudioPage() {
         />
       )}
 
-      {/* 换模型要丢参考图，先问一声。
-          静默清空是替用户做决定 —— 挑了半天图，换个模型，图没了，
-          而界面只换了下拉框的值，没说发生了什么。 */}
-      <ConfirmDialog
+      {/* 换模型要丢参考素材，先问一声；文案与事实清单由共享弹窗统一。 */}
+      <GenerationModelSwitchDialog
         open={pendingModelId !== null}
-        title="更换模型"
-        description="参考图与已调参数属于当前模型，换模型后会一并清空。"
-        details={[
-          { label: '参考图', value: `${references.length} 张` },
-          {
-            label: '新模型',
-            value: models.find((item) => item.id === pendingModelId)?.label ?? pendingModelId ?? '',
-          },
-        ]}
-        notice="素材本身还在素材库里，重新添加即可。"
-        confirmLabel="清空并更换"
-        onCancel={() => setPendingModelId(null)}
-        onConfirm={() => {
-          if (pendingModelId) applyModel(pendingModelId);
-          setPendingModelId(null);
-        }}
+        referenceCount={references.length}
+        nextModelLabel={pendingModel?.label}
+        onCancel={cancelModelChange}
+        onConfirm={confirmModelChange}
       />
     </>
   );

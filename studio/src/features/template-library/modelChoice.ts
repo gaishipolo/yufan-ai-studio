@@ -1,6 +1,6 @@
 import { findModelSpec, type ModelSpec } from '@/entities/model/model/types';
 import { effectiveModelIds } from '@/features/template-specs/specDraft';
-import type { PayloadDefaults, SubmitKind } from './taskPayload';
+import type { PayloadDefaults, SubmitKind } from '@/features/generation-form/taskPayload';
 
 /**
  * 模板库这一侧「用哪款模型」的判断。
