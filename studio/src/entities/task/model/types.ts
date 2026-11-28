@@ -93,6 +93,10 @@ export interface CreateTaskPayload {
   /** 一次提交意图的幂等键：双击/超时重试只创建一条，不重复计费。 */
   idempotencyKey?: string;
   model: string;
+  /** 模板库提交时的来源身份（仅统计）。 */
+  templateKey?: string;
+  templateVersion?: number;
+  templateName?: string;
   /**
    * 视频时长（秒）。
    *

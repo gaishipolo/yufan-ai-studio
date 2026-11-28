@@ -30,6 +30,12 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
     title: Mapped[str] = mapped_column(String(200), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
 
+    #: 模板来源。直接建任务是 NULL；模板库提交时冻结 key/version/name。
+    #: 计数按 key 归并（改名不丢历史），name 是提交时的展示快照。
+    template_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    template_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
+
     status: Mapped[str] = mapped_column(
         String(20), default=TaskStatus.QUEUED.value, nullable=False, index=True
     )
@@ -129,6 +135,9 @@ class VideoTask(Base, UUIDMixin, TimestampMixin):
         # 列表默认按「作者 + 创建时间倒序」翻页，走联合索引
         Index("ix_video_tasks_author_created", "author_id", "created_at"),
         Index("ix_video_tasks_status_created", "status", "created_at"),
+        # 模板卡片计数：WHERE template_key IN (...)；用户×模板关系：GROUP BY
+        # template_key, author_id。联合索引的前缀同时服务这两条。
+        Index("ix_video_tasks_template_author", "template_key", "author_id"),
         # 同一次提交意图只能落一条；NULL 键不参与约束（老客户端照旧）。
         Index(
             "ux_video_tasks_author_idempotency",

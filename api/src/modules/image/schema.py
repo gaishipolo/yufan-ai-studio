@@ -125,6 +125,20 @@ class GenerateImageIn(CamelModel):
             "模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。"
         ),
     )
+    template_key: str | None = Field(
+        default=None,
+        max_length=80,
+        description=(
+            "模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。"
+            "直接生图不传。只做计数，不改变生成内容。"
+        ),
+    )
+    template_version: int | None = Field(
+        default=None, ge=1, description="本次使用的模板发布版本号（仅统计）"
+    )
+    template_name: str | None = Field(
+        default=None, max_length=160, description="提交时的模板名快照（仅展示）"
+    )
     size: str = Field(
         default="",
         max_length=32,

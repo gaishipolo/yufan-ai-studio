@@ -9,10 +9,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sqlalchemy import func, select
 
+from core.ports.org_directory import user_names
 from core.ports.usage_metrics import (
     UsageAggregate,
     UsageQuery,
@@ -65,9 +67,14 @@ async def aggregate_usage(query: UsageQuery) -> UsageAggregate:
                     ImageJob.count,
                     ImageJob.owner_id,
                     ImageJob.reference_json,
+                    ImageJob.template_key,
+                    ImageJob.template_name,
+                    ImageJob.template_version,
                 ).where(*_conditions(query))
             )
         ).all()
+        # 生图表只存 owner_id；关系图需要可读名，走组织目录注入口补齐。
+        names = await user_names(session, [row.owner_id for row in rows])
 
     normalized = [
         UsageRow(
@@ -78,11 +85,11 @@ async def aggregate_usage(query: UsageQuery) -> UsageAggregate:
             # 生图按「张」计：一次作业可能出多张
             quantity=count or 0,
             owner_id=owner_id,
-            # 生图记录没存使用人可读名（`image_jobs` 只有 owner_id）。
-            # 看板的「按人」维度会退化成显示 ID —— 这是已知缺口，
-            # 补法见 `docs/USAGE_BOARD.md` 的「预留模块」。
-            owner_name="",
+            owner_name=names.get(owner_id, ""),
             kind=_kind_of(reference_json),
+            template_key=template_key or "",
+            template_name=template_name or "",
+            template_version=template_version,
         )
         for (
             created_at,
@@ -92,6 +99,9 @@ async def aggregate_usage(query: UsageQuery) -> UsageAggregate:
             count,
             owner_id,
             reference_json,
+            template_key,
+            template_name,
+            template_version,
         ) in rows
     ]
     return aggregate_rows(SOURCE, normalized, query.granularity)
@@ -162,12 +172,35 @@ async def read_usage_records(query: UsageQuery) -> UsageRecordPage:
     return UsageRecordPage(items=items, total=total)
 
 
+async def read_template_counts(template_keys: Sequence[str]) -> Mapping[str, int]:
+    """模板累计使用次数：按 key 计尝试数（含失败/进行中）。"""
+    wanted = list(dict.fromkeys(template_keys))
+    if not wanted:
+        return {}
+    async with get_session_factory()() as session:
+        rows = await session.execute(
+            select(ImageJob.template_key, func.count())
+            .where(ImageJob.template_key.in_(wanted))
+            .group_by(ImageJob.template_key)
+        )
+        return {
+            template_key: int(count)
+            for template_key, count in rows.all()
+            if template_key
+        }
+
+
 class ImageUsageProvider:
     """生图 → 用量看板的读取器（注册到 `core.ports.usage_metrics`）。
 
     契约是 Protocol 的两个方法，实现写成模块级函数是为了让 SQL 那部分好单独测；
     这里只做一层薄适配。
     """
+
+    async def template_counts(
+        self, template_keys: Sequence[str]
+    ) -> Mapping[str, int]:
+        return await read_template_counts(template_keys)
 
     async def aggregate(self, query: UsageQuery) -> UsageAggregate:
         return await aggregate_usage(query)
@@ -176,4 +209,10 @@ class ImageUsageProvider:
         return await read_usage_records(query)
 
 
-__all__ = ["ImageUsageProvider", "SOURCE", "aggregate_usage", "read_usage_records"]
+__all__ = [
+    "ImageUsageProvider",
+    "SOURCE",
+    "aggregate_usage",
+    "read_template_counts",
+    "read_usage_records",
+]

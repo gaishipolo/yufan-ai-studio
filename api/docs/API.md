@@ -1196,6 +1196,9 @@ Authorization: Bearer <accessToken>
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 |
 | `billingMode` | `string \| null` | 否 | 计费模式：`free` 免费队列 / `credits` 积分加速。**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），取值须在它的 options 内；未声明的模型传非空值直接 400 |
 | `params` | `Record<string, unknown>` | 否 | 模型声明的**其余**参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝 —— 打错字被静默忽略的话，用户改的那个值从来没生效过，页面看起来却一切正常。顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`）走各自的字段，不进这里 |
+| `templateKey` | `string \| null` | 否 | 模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。直接建任务不传。只做计数，不改变生成内容。 |
+| `templateVersion` | `number \| null` | 否 | 本次使用的模板发布版本号（仅统计） |
+| `templateName` | `string \| null` | 否 | 提交时的模板名快照（仅展示） |
 
 **响应** `ApiResponse<core__response__ApiResponse_TaskOut___2>`（前端取 `res.data`）
 
@@ -1405,6 +1408,9 @@ Authorization: Bearer <accessToken>
 | `prompt` | `string` | 是 | 画面描述 |
 | `idempotencyKey` | `string \| null` | 否 | 客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原记录、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制 |
 | `name` | `string` | 否 | 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 |
+| `templateKey` | `string \| null` | 否 | 模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。直接生图不传。只做计数，不改变生成内容。 |
+| `templateVersion` | `number \| null` | 否 | 本次使用的模板发布版本号（仅统计） |
+| `templateName` | `string \| null` | 否 | 提交时的模板名快照（仅展示） |
 | `size` | `string` | 否 | 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` |
 | `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
 | `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
@@ -3794,6 +3800,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
+| `usageCount` | `number` | 是 | 累计使用次数（含失败/进行中） |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `GET /api/v1/template-specs`
@@ -4028,6 +4035,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
+| `usageCount` | `number` | 是 | 累计使用次数（含失败/进行中） |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `DELETE /api/v1/template-specs/{key}`
@@ -4059,6 +4067,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
+| `usageCount` | `number` | 是 | 累计使用次数（含失败/进行中） |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `POST /api/v1/template-specs/{key}/compile`
@@ -4126,6 +4135,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
+| `usageCount` | `number` | 是 | 累计使用次数（含失败/进行中） |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `POST /api/v1/template-specs/{key}/publish`
@@ -4183,6 +4193,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
+| `usageCount` | `number` | 是 | 累计使用次数（含失败/进行中） |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 #### `PATCH /api/v1/template-specs/{key}/tags`
@@ -4220,6 +4231,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
+| `usageCount` | `number` | 是 | 累计使用次数（含失败/进行中） |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 ### 4.13 用量看板（2 个）
@@ -4247,6 +4259,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `summary` | `UsageSummaryOut` | 是 | 区间汇总 |
 | `trend` | `UsageTrendPointOut[]` | 是 | 时间趋势 |
 | `breakdown` | `UsageBreakdownItemOut[]` | 是 | 构成行 |
+| `templateUsers` | `UsageTemplateUserOut[]` | 是 | 模板 × 使用人（只含有模板来源的记录） |
 | `sources` | `string[]` | 是 | 实际接上的数据来源标识 |
 
 #### `GET /api/v1/usage/records`
@@ -4408,6 +4421,9 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `stylePreset` | `string \| null` | 否 | 风格预设标识，留空为不套风格。**只在模型声明了 `stylePreset` 参数时可用**，取值须在它的 options 内；未声明的模型传非空值直接 400 |
 | `billingMode` | `string \| null` | 否 | 计费模式：`free` 免费队列 / `credits` 积分加速。**只在模型声明了 `billingMode` 参数时可用**（当前只有 LibTV 两条队列），取值须在它的 options 内；未声明的模型传非空值直接 400 |
 | `params` | `Record<string, unknown>` | 否 | 模型声明的**其余**参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝 —— 打错字被静默忽略的话，用户改的那个值从来没生效过，页面看起来却一切正常。顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`）走各自的字段，不进这里 |
+| `templateKey` | `string \| null` | 否 | 模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。直接建任务不传。只做计数，不改变生成内容。 |
+| `templateVersion` | `number \| null` | 否 | 本次使用的模板发布版本号（仅统计） |
+| `templateName` | `string \| null` | 否 | 提交时的模板名快照（仅展示） |
 
 ### `DeleteImagesIn`
 
@@ -4641,6 +4657,9 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `prompt` | `string` | 是 | 画面描述 |
 | `idempotencyKey` | `string \| null` | 否 | 客户端为**一次提交意图**生成的幂等键（8~64 位字母/数字/下划线/连字符）。同键同内容重试返回原记录、不重复提交供应商；同键不同内容 409。不同键可以并发提交，不受“等上一条完成”限制 |
 | `name` | `string` | 否 | 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 |
+| `templateKey` | `string \| null` | 否 | 模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。直接生图不传。只做计数，不改变生成内容。 |
+| `templateVersion` | `number \| null` | 否 | 本次使用的模板发布版本号（仅统计） |
+| `templateName` | `string \| null` | 否 | 提交时的模板名快照（仅展示） |
 | `size` | `string` | 否 | 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` |
 | `count` | `number` | 否 | 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 |
 | `params` | `Record<string, unknown>` | 否 | 模型声明的其他参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝，避免打错字被静默忽略；与顶层 `size` / `count` 重复时以顶层为准 |
@@ -6119,6 +6138,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `draft` | `TemplateSpecIn \| null` | 否 |  |
 | `demoAssetId` | `string \| null` | 否 |  |
 | `tagIds` | `string[]` | 否 |  |
+| `usageCount` | `number` | 是 | 累计使用次数（含失败/进行中） |
 | `latest` | `SpecVersionOut \| null` | 否 |  |
 
 ### `TextAssetIn`
@@ -6231,7 +6251,7 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `UsageDimension`（枚举）
 
-取值：`model`、`kind`、`owner`、`status`
+取值：`model`、`kind`、`owner`、`status`、`template`
 
 ### `UsageGranularity`（枚举）
 
@@ -6239,13 +6259,14 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 
 ### `UsageOverviewOut`
 
-看板总览：一次请求拿齐汇总 / 趋势 / 构成。
+看板总览：一次请求拿齐汇总 / 趋势 / 构成 / 模板×使用人。
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `summary` | `UsageSummaryOut` | 是 | 区间汇总 |
 | `trend` | `UsageTrendPointOut[]` | 是 | 时间趋势 |
 | `breakdown` | `UsageBreakdownItemOut[]` | 是 | 构成行 |
+| `templateUsers` | `UsageTemplateUserOut[]` | 是 | 模板 × 使用人（只含有模板来源的记录） |
 | `sources` | `string[]` | 是 | 实际接上的数据来源标识 |
 
 ### `UsageRecordOut`
@@ -6304,6 +6325,20 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `durationSec` | `number` | 是 | 已产出视频总时长（秒） |
 | `avgDurationSec` | `number` | 是 | 平均单条视频时长（秒） |
 | `sources` | `UsageSourceOut[]` | 是 | 各来源分项 |
+
+### `UsageTemplateUserOut`
+
+模板 × 使用人的一格。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `templateKey` | `string` | 是 | 模板 key |
+| `templateName` | `string` | 是 | 模板名（提交时快照） |
+| `ownerId` | `string` | 是 | 使用人 ID |
+| `ownerName` | `string` | 是 | 使用人可读名；目录不可用时为空 |
+| `total` | `number` | 是 | 尝试次数 |
+| `succeeded` | `number` | 是 | 已产出次数 |
+| `quantity` | `number` | 是 | 已产出数量 |
 
 ### `UsageTrendPointOut`
 

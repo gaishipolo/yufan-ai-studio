@@ -1,6 +1,7 @@
 import { useMemo, useState } from 'react';
 import { TrendChart } from '@/entities/usage/ui/TrendChart';
 import { BreakdownBars } from '@/entities/usage/ui/BreakdownBars';
+import { TemplateUserMatrix } from '@/entities/usage/ui/TemplateUserMatrix';
 import type {
   UsageDimension,
   UsageGranularity,
@@ -13,6 +14,7 @@ const DIMENSION_OPTIONS: { value: UsageDimension; label: string }[] = [
   { value: 'model', label: '按模型' },
   { value: 'kind', label: '按方式' },
   { value: 'owner', label: '按使用人' },
+  { value: 'template', label: '按模板' },
   { value: 'status', label: '按状态' },
 ];
 
@@ -69,6 +71,14 @@ export function OverviewSection({ data, granularity }: OverviewSectionProps) {
           }
         />
         <BreakdownBars items={breakdown} />
+      </Panel>
+
+      <Panel>
+        <PanelHeader
+          title="模板 × 使用人"
+          meta={`${data.templateUsers.length} 组`}
+        />
+        <TemplateUserMatrix items={data.templateUsers} />
       </Panel>
     </div>
   );

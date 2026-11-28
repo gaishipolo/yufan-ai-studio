@@ -103,6 +103,7 @@ const SPEC: TemplateSpecOut = {
   revision: 1,
   fingerprint: 'fp',
   currentVersion: 3,
+  usageCount: 0,
   createdAt: '2026-11-10T02:00:00Z',
   updatedAt: '2026-11-10T02:00:00Z',
   latest: {

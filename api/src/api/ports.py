@@ -79,6 +79,7 @@ from core.ports.model_generation import has_model_generation
 from core.ports.org_directory import has_org_directory
 from core.ports.submission_ledger import has_submission_ledger
 from core.ports.task_external_ids import has_task_external_id_lookup
+from core.ports.template_usage import has_template_usage
 from core.ports.usage_metrics import has_usage_metrics
 
 __all__ = ["PORT_CATALOG", "PortSpec", "port_status"]
@@ -234,7 +235,16 @@ PORT_CATALOG: tuple[PortSpec, ...] = (
         "「用量为零」—— 看板会在页面上如实说明「暂无数据来源」",
         is_registered=has_usage_metrics,
     ),
-        )
+    PortSpec(
+        name="template-usage",
+        module="core.ports.template_usage",
+        protocol="TemplateUsageProvider",
+        implementer="拥有生成记录的模块各注册一份（当前 modules/task、modules/image）。"
+        "模板卡片按 template_key 累计尝试次数",
+        when_unregistered="返回空字典：模板卡片显示 0 次，不影响模板列表与生成",
+        is_registered=has_template_usage,
+    ),
+)
 
 
 def port_status() -> list[tuple[PortSpec, bool]]:

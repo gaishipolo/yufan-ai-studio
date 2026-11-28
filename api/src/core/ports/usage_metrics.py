@@ -59,7 +59,7 @@ UsageGranularity = Literal["day", "week"]
 #: - `kind`：按生成方式（文生 / 图生，由参考素材推导）
 #: - `owner`：按使用人
 #: - `status`：按产出状态
-UsageDimension = Literal["model", "kind", "owner", "status"]
+UsageDimension = Literal["model", "kind", "owner", "status", "template"]
 
 #: 数据范围。`mine` 只看本人，`all` 看全部（看板侧已按权限收敛过）。
 UsageScope = Literal["mine", "all"]
@@ -73,6 +73,12 @@ _BUCKET_LABELS: dict[str, str] = {
     "succeeded": "已产出",
     "failed": "失败",
     "pending": "进行中",
+}
+
+#: 没有模板来源的记录按入口命名：视频 = 生成工作台，生图 = 生图。
+_DIRECT_TEMPLATE_LABELS: dict[str, str] = {
+    "video": "生成工作台",
+    "image": "生图",
 }
 
 
@@ -168,15 +174,33 @@ class UsageRow(CamelModel):
     owner_id: str = Field(default="", description="使用人 ID")
     owner_name: str = Field(default="", description="使用人可读名")
     kind: str = Field(default="", description="生成方式（文生 / 图生…）")
+    template_key: str = Field(default="", description="模板 key；空 = 未使用模板")
+    template_name: str = Field(default="", description="模板名快照")
+    template_version: int | None = Field(default=None, description="模板版本")
+
+
+class TemplateUserUsage(CamelModel):
+    """一张模板 × 一个使用人的聚合（只统计使用过模板的记录）。"""
+
+    template_key: str
+    template_name: str = ""
+    owner_id: str = ""
+    owner_name: str = ""
+    total: int = 0
+    succeeded: int = 0
+    quantity: int = 0
 
 
 class UsageAggregate(CamelModel):
-    """一份来源的聚合结果：汇总 + 趋势 + 四个维度的构成。"""
+    """一份来源的聚合结果：汇总 + 趋势 + 构成 + 模板×使用人。"""
 
     source: str = Field(description="来源标识")
     summary: UsageSourceSummary = Field(default_factory=UsageSourceSummary, description="汇总")
     trend: list[UsageTrendPoint] = Field(default_factory=list, description="时间趋势")
     breakdown: list[UsageBreakdownItem] = Field(default_factory=list, description="构成行")
+    template_users: list[TemplateUserUsage] = Field(
+        default_factory=list, description="模板 × 使用人"
+    )
 
 
 class UsageMetricsProvider(Protocol):
@@ -273,6 +297,7 @@ def aggregate_rows(
     summary = UsageSourceSummary(source=source)
     trend: dict[str, UsageTrendPoint] = {}
     buckets: dict[tuple[str, str], UsageBreakdownItem] = {}
+    template_users: dict[tuple[str, str], TemplateUserUsage] = {}
 
     def _slot(dimension: UsageDimension, key: str, label: str) -> UsageBreakdownItem:
         item = buckets.get((dimension, key))
@@ -314,11 +339,18 @@ def aggregate_rows(
         model_label = row.model_name or row.model_id or "未知模型"
         # 显式标注类型：不给的话元组会被推断成 tuple[str, str, str]，
         # 维度就不再是 Literal，mypy 会判定维度名不合法。
+        template_key = row.template_key or f"untemplated:{source}"
+        template_label = (
+            row.template_name or row.template_key
+            if row.template_key
+            else _DIRECT_TEMPLATE_LABELS.get(source, "未使用模板")
+        )
         dimensions: tuple[tuple[UsageDimension, str, str], ...] = (
             ("model", model_key, model_label),
             ("kind", row.kind or "unknown", row.kind or "未知"),
             ("owner", row.owner_id or "unknown", row.owner_name or row.owner_id or "未知"),
             ("status", bucket, _BUCKET_LABELS.get(bucket, bucket)),
+            ("template", template_key, template_label),
         )
         for dimension, item_key, label in dimensions:
             item = _slot(dimension, item_key, label)
@@ -327,11 +359,34 @@ def aggregate_rows(
                 item.quantity += row.quantity
                 item.duration_sec += row.duration_sec
 
+        if row.template_key:
+            pair = (row.template_key, row.owner_id or "unknown")
+            cell = template_users.get(pair)
+            if cell is None:
+                cell = TemplateUserUsage(
+                    template_key=row.template_key,
+                    template_name=row.template_name,
+                    owner_id=row.owner_id or "unknown",
+                    owner_name=row.owner_name,
+                )
+                template_users[pair] = cell
+            elif not cell.template_name and row.template_name:
+                cell.template_name = row.template_name
+            elif not cell.owner_name and row.owner_name:
+                cell.owner_name = row.owner_name
+            cell.total += 1
+            if bucket == "succeeded":
+                cell.succeeded += 1
+                cell.quantity += row.quantity
+
     return UsageAggregate(
         source=source,
         summary=summary,
         trend=[trend[key] for key in sorted(trend)],
         breakdown=list(buckets.values()),
+        template_users=sorted(
+            template_users.values(), key=lambda item: (-item.total, item.template_key)
+        ),
     )
 
 

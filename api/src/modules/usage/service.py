@@ -34,6 +34,7 @@ from modules.usage.schema import (
     UsageScope,
     UsageSourceOut,
     UsageSummaryOut,
+    UsageTemplateUserOut,
     UsageTrendPointOut,
 )
 
@@ -138,6 +139,7 @@ class UsageService:
             summary=summary,
             trend=trend,
             breakdown=breakdown,
+            template_users=self._merge_template_users(aggregates),
             sources=[agg.source for agg in aggregates],
         )
 
@@ -254,6 +256,42 @@ class UsageService:
         ]
         result.sort(key=lambda row: (row.dimension, -row.total, row.label))
         return result
+
+    def _merge_template_users(self, aggregates: list) -> list[UsageTemplateUserOut]:
+        """跨来源合并「模板 × 使用人」；同一格只保留一份数字。"""
+        merged: dict[tuple[str, str], UsageTemplateUserOut] = {}
+        for agg in aggregates:
+            for item in agg.template_users:
+                key = (item.template_key, item.owner_id)
+                current = merged.get(key)
+                if current is None:
+                    merged[key] = UsageTemplateUserOut(
+                        template_key=item.template_key,
+                        template_name=item.template_name,
+                        owner_id=item.owner_id,
+                        owner_name=item.owner_name,
+                        total=item.total,
+                        succeeded=item.succeeded,
+                        quantity=item.quantity,
+                    )
+                    continue
+                current.total += item.total
+                current.succeeded += item.succeeded
+                current.quantity += item.quantity
+                current.template_name = _pick_label(
+                    current.template_name,
+                    current.template_key,
+                    item.template_name,
+                )
+                current.owner_name = _pick_label(
+                    current.owner_name,
+                    current.owner_id,
+                    item.owner_name,
+                )
+        return sorted(
+            merged.values(),
+            key=lambda item: (-item.total, item.template_key, item.owner_id),
+        )
 
     # ------------------------------------------------------------------ #
     # 明细

@@ -459,9 +459,18 @@ class TaskService:
         )
 
         title = (payload.title or payload.prompt).strip()[:200]
+        # 模板身份只做统计：没有 key 时 version/name 一律不落，避免半截数据。
+        template_key = (payload.template_key or "").strip() or None
+        template_version = payload.template_version if template_key else None
+        template_name = (
+            (payload.template_name or "").strip() or None if template_key else None
+        )
         task = VideoTask(
             title=title or DEFAULT_TITLE,
             prompt=payload.prompt.strip(),
+            template_key=template_key,
+            template_version=template_version,
+            template_name=template_name,
             status=TaskStatus.QUEUED.value,
             # `model` 存可读名（列表/详情直接展示、关键词搜索也按它），
             # `model_id` 存目录 id（聚合、与 /models 对齐、路由供应商都用它）

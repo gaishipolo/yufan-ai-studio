@@ -52,6 +52,7 @@ class UsageDimension(StrEnum):
     KIND = "kind"
     OWNER = "owner"
     STATUS = "status"
+    TEMPLATE = "template"
 
 
 class UsageSourceOut(CamelModel):
@@ -108,12 +109,27 @@ class UsageBreakdownItemOut(CamelModel):
     share: float = Field(description="占全部尝试次数的比例，0-1")
 
 
+class UsageTemplateUserOut(CamelModel):
+    """模板 × 使用人的一格。"""
+
+    template_key: str = Field(description="模板 key")
+    template_name: str = Field(description="模板名（提交时快照）")
+    owner_id: str = Field(description="使用人 ID")
+    owner_name: str = Field(description="使用人可读名；目录不可用时为空")
+    total: int = Field(description="尝试次数")
+    succeeded: int = Field(description="已产出次数")
+    quantity: int = Field(description="已产出数量")
+
+
 class UsageOverviewOut(CamelModel):
-    """看板总览：一次请求拿齐汇总 / 趋势 / 构成。"""
+    """看板总览：一次请求拿齐汇总 / 趋势 / 构成 / 模板×使用人。"""
 
     summary: UsageSummaryOut = Field(description="区间汇总")
     trend: list[UsageTrendPointOut] = Field(description="时间趋势")
     breakdown: list[UsageBreakdownItemOut] = Field(description="构成行")
+    template_users: list[UsageTemplateUserOut] = Field(
+        description="模板 × 使用人（只含有模板来源的记录）"
+    )
     sources: list[str] = Field(description="实际接上的数据来源标识")
 
 
@@ -143,5 +159,6 @@ __all__ = [
     "UsageScope",
     "UsageSourceOut",
     "UsageSummaryOut",
+    "UsageTemplateUserOut",
     "UsageTrendPointOut",
 ]

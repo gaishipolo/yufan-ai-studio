@@ -55,6 +55,13 @@ export interface PayloadSchema {
 
 export type SubmitKind = 'video' | 'image';
 
+/** 模板库提交时附在生成记录上的来源身份（仅统计，不参与生成）。 */
+export interface TemplateOrigin {
+  key: string;
+  version: number;
+  name: string;
+}
+
 export type TaskPayloadResult =
   | { ok: true; payload: CreateTaskPayload }
   | { ok: false; message: string };
@@ -133,6 +140,7 @@ export function toTaskPayload(
   title: string,
   defaults: PayloadDefaults = {},
   schema?: PayloadSchema,
+  template?: TemplateOrigin,
 ): TaskPayloadResult {
   const params = (compiled.params ?? {}) as Record<string, unknown>;
   const declared = schemaOf(schema);
@@ -165,6 +173,13 @@ export function toTaskPayload(
       title,
       prompt: compiled.prompt,
       model: compiled.model,
+      ...(template
+        ? {
+            templateKey: template.key,
+            templateVersion: template.version,
+            templateName: template.name,
+          }
+        : {}),
       aspectRatio,
       ...(duration > 0 ? { durationSec: duration } : {}),
       referenceLibraryIds: compiled.referenceLibraryIds ?? [],
@@ -181,6 +196,7 @@ export function toImagePayload(
   title: string,
   defaults: PayloadDefaults = {},
   schema?: PayloadSchema,
+  template?: TemplateOrigin,
 ): ImagePayloadResult {
   const params = (compiled.params ?? {}) as Record<string, unknown>;
   const declared = schemaOf(schema);
@@ -201,6 +217,13 @@ export function toImagePayload(
       ...(title.trim() ? { name: title } : {}),
       prompt: compiled.prompt,
       model: compiled.model,
+      ...(template
+        ? {
+            templateKey: template.key,
+            templateVersion: template.version,
+            templateName: template.name,
+          }
+        : {}),
       ...(size ? { size } : {}),
       count: Math.round(rawCount),
       referenceLibraryIds: compiled.referenceLibraryIds ?? [],
@@ -217,11 +240,12 @@ export function toSubmitPayload(
   kind: SubmitKind,
   defaults: PayloadDefaults = {},
   schema?: PayloadSchema,
+  template?: TemplateOrigin,
 ): SubmitResult {
   if (kind === 'image') {
-    const image = toImagePayload(compiled, title, defaults, schema);
+    const image = toImagePayload(compiled, title, defaults, schema, template);
     return image.ok ? { ok: true, kind: 'image', payload: image.payload } : image;
   }
-  const video = toTaskPayload(compiled, title, defaults, schema);
+  const video = toTaskPayload(compiled, title, defaults, schema, template);
   return video.ok ? { ok: true, kind: 'video', payload: video.payload } : video;
 }

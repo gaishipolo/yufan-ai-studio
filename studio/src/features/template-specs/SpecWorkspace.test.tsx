@@ -135,6 +135,7 @@ function specOf(overrides: Partial<TemplateSpecOut> = {}): TemplateSpecOut {
     revision: 1,
     fingerprint: 'fp',
     currentVersion: 0,
+    usageCount: 0,
     publishedAt: null,
     disabledAt: null,
     deletedAt: null,

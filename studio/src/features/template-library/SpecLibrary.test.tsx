@@ -113,6 +113,7 @@ const SPEC: TemplateSpecOut = {
   revision: 1,
   fingerprint: 'fp',
   currentVersion: 3,
+  usageCount: 0,
   createdAt: '2026-11-10T02:00:00Z',
   updatedAt: '2026-11-10T02:00:00Z',
   latest: {
@@ -670,10 +671,23 @@ describe('模板库：标签筛选与卡片标签', () => {
     /* 类型徽章也随插槽 chip 一起撤掉（右栏的槽位标签不在这张卡里）。 */
     expect(within(card).queryByText('图片')).toBeNull();
     expect(within(card).queryByText('成片')).toBeNull();
-    /* 版本号角标 / 填写入口仍在。 */
+    /* 版本号挪到底栏右侧；「填写」入口已移除。 */
     expect(within(card).getByText('v3')).toBeInTheDocument();
-    expect(within(card).getByText(/填写/)).toBeInTheDocument();
+    expect(within(card).queryByText(/填写/)).toBeNull();
+    /* 选中的卡片用更重的描边/投影，不能只靠一层浅色 ring。 */
+    expect(card.className).toContain('ring-2');
+    expect(card.className).toContain('ring-primary/45');
     expect(within(card).getByTitle('产品 / 6036')).toBeInTheDocument();
+  });
+
+  it('卡片标签下方显示累计使用次数', async () => {
+    specState.current = {...SPEC, tagIds: ['tt-6036'], usageCount: 12};
+    renderLibrary();
+
+    const card = await screen.findByRole('button', {name: /商品替换/});
+    const usage = within(card).getByText('模板使用次数——12');
+    expect(usage).toHaveClass('text-ink');
+    expect(usage).toHaveAttribute('title', expect.stringContaining('含失败'));
   });
 
   it('筛选条两行都在，行标题说明单选替换、不再写多选组合语义', async () => {

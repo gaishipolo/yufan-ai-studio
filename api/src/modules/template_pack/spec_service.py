@@ -30,6 +30,7 @@ from core.exceptions import BadRequest, Conflict, NotFound, StateChanged
 from core.param_schema import resolve_params
 from core.ports.library_lookup import get_library_lookup
 from core.ports.model_generation import get_model_generation
+from core.ports.template_usage import template_usage_counts
 from core.template_spec import (
     CompiledRequest,
     FilledAsset,
@@ -155,6 +156,7 @@ def _spec_out(
         draft=draft,
         demo_asset_id=(draft.demo_asset_id if draft is not None else None),
         tag_ids=list(head.tag_ids or ()),
+        usage_count=0,
         latest=(
             SpecVersionOut(
                 version=latest.version,
@@ -672,6 +674,9 @@ async def list_out(
             ).all()
         )
     items = await _spec_outs_of(session, rows)
+    counts = await template_usage_counts([item.key for item in items])
+    for item in items:
+        item.usage_count = counts.get(item.key, 0)
     return TemplateSpecListOut(items=items, total=total)
 
 

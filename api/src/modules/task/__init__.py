@@ -14,6 +14,7 @@ from core.ports.library_references import (
     bind_library_reference_sources,
 )
 from core.ports.task_external_ids import register_task_external_id_lookup
+from core.ports.template_usage import register_template_usage
 from core.ports.usage_metrics import register_usage_metrics
 from modules.task.export_source import TASK_EXPORT_SOURCE
 from modules.task.external_ids import SqlTaskExternalIdLookup
@@ -40,6 +41,8 @@ register_task_external_id_lookup(SqlTaskExternalIdLookup())
 # import 期把只读读取器交给 core 注入口，看板只认 `UsageMetricsProvider` 这份契约。
 # 注入口是多实现的 —— 视频、生图、将来的音频各注册一份，看板自动合并。
 register_usage_metrics("video", VideoUsageProvider())
+# 模板卡片的累计次数与看板分开：卡片要全量、看板看区间。
+register_template_usage("video", VideoUsageProvider())
 
 # 参考图存的是**资产库 v2 的 id**，所以归 v2 的删除保护管：彻底删除一张被任务
 # 引用的图，任务详情页的参考图会裂，而那一步不可逆。

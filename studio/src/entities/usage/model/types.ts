@@ -15,6 +15,7 @@ export type {
   UsageScope,
   UsageSourceOut,
   UsageSummaryOut,
+  UsageTemplateUserOut,
   UsageTrendPointOut,
 } from '@/shared/api/schema';
 

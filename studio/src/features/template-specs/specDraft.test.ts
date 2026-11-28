@@ -267,6 +267,7 @@ describe('模板规格草稿', () => {
       revision: 3,
       fingerprint: 'fp',
       currentVersion: 2,
+      usageCount: 0,
       createdAt: '2026-11-14T00:00:00Z',
       updatedAt: '2026-11-14T00:00:00Z',
       latest: {
@@ -348,6 +349,7 @@ describe('允许选用的模型', () => {
       revision: 4,
       fingerprint: 'fp',
       currentVersion: 3,
+      usageCount: 0,
       createdAt: '2026-11-17T00:00:00Z',
       updatedAt: '2026-11-17T00:00:00Z',
       latest: {
@@ -850,6 +852,7 @@ describe('引用写法', () => {
       revision: 1,
       fingerprint: 'fp',
       currentVersion: 0,
+      usageCount: 0,
       createdAt: '2026-11-01T00:00:00Z',
       updatedAt: '2026-11-01T00:00:00Z',
       draft: {

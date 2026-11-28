@@ -113,6 +113,37 @@ def test_create_and_detail(client: TestClient, api: str) -> None:
     assert detail["id"] == task["id"]
 
 
+def test_create_persists_template_identity(client: TestClient, api: str) -> None:
+    """模板库提交时把模板 key/version/name 冻结进任务行。"""
+    from db.session import get_session_factory
+    from modules.task.models import VideoTask
+
+    task = _create(
+        client,
+        api,
+        templateKey="tpl-usage",
+        templateVersion=2,
+        templateName="用法模板",
+    )
+
+    async def read() -> tuple[str | None, int | None, str | None]:
+        async with get_session_factory()() as session:
+            row = await session.get(VideoTask, task["id"])
+            assert row is not None
+            return row.template_key, row.template_version, row.template_name
+
+    assert asyncio.run(read()) == ("tpl-usage", 2, "用法模板")
+
+    async def cleanup() -> None:
+        from sqlalchemy import delete
+
+        async with get_session_factory()() as session:
+            await session.execute(delete(VideoTask).where(VideoTask.id == task["id"]))
+            await session.commit()
+
+    asyncio.run(cleanup())
+
+
 def test_create_without_title_uses_prompt(client: TestClient, api: str) -> None:
     task = _create(client, api, prompt="没有标题的任务")
     assert task["title"].startswith("没有标题的任务")

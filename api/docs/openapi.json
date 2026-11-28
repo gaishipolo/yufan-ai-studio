@@ -11205,6 +11205,45 @@
             "type": "object",
             "title": "Params",
             "description": "模型声明的**其余**参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝 —— 打错字被静默忽略的话，用户改的那个值从来没生效过，页面看起来却一切正常。顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`）走各自的字段，不进这里"
+          },
+          "templateKey": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Templatekey",
+            "description": "模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。直接建任务不传。只做计数，不改变生成内容。"
+          },
+          "templateVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Templateversion",
+            "description": "本次使用的模板发布版本号（仅统计）"
+          },
+          "templateName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Templatename",
+            "description": "提交时的模板名快照（仅展示）"
           }
         },
         "type": "object",
@@ -12081,6 +12120,45 @@
             "title": "Name",
             "description": "任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。",
             "default": ""
+          },
+          "templateKey": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 80
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Templatekey",
+            "description": "模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。直接生图不传。只做计数，不改变生成内容。"
+          },
+          "templateVersion": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Templateversion",
+            "description": "本次使用的模板发布版本号（仅统计）"
+          },
+          "templateName": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 160
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Templatename",
+            "description": "提交时的模板名快照（仅展示）"
           },
           "size": {
             "type": "string",
@@ -17706,6 +17784,11 @@
             "type": "array",
             "title": "Tagids"
           },
+          "usageCount": {
+            "type": "integer",
+            "title": "Usagecount",
+            "description": "累计使用次数（含失败/进行中）"
+          },
           "latest": {
             "anyOf": [
               {
@@ -17729,7 +17812,8 @@
           "fingerprint",
           "currentVersion",
           "createdAt",
-          "updatedAt"
+          "updatedAt",
+          "usageCount"
         ],
         "title": "TemplateSpecOut"
       },
@@ -18099,7 +18183,8 @@
           "model",
           "kind",
           "owner",
-          "status"
+          "status",
+          "template"
         ],
         "title": "UsageDimension",
         "description": "构成维度。"
@@ -18135,6 +18220,14 @@
             "title": "Breakdown",
             "description": "构成行"
           },
+          "templateUsers": {
+            "items": {
+              "$ref": "#/components/schemas/UsageTemplateUserOut"
+            },
+            "type": "array",
+            "title": "Templateusers",
+            "description": "模板 × 使用人（只含有模板来源的记录）"
+          },
           "sources": {
             "items": {
               "type": "string"
@@ -18149,10 +18242,11 @@
           "summary",
           "trend",
           "breakdown",
+          "templateUsers",
           "sources"
         ],
         "title": "UsageOverviewOut",
-        "description": "看板总览：一次请求拿齐汇总 / 趋势 / 构成。"
+        "description": "看板总览：一次请求拿齐汇总 / 趋势 / 构成 / 模板×使用人。"
       },
       "UsageRecordOut": {
         "properties": {
@@ -18385,6 +18479,57 @@
         ],
         "title": "UsageSummaryOut",
         "description": "区间汇总。"
+      },
+      "UsageTemplateUserOut": {
+        "properties": {
+          "templateKey": {
+            "type": "string",
+            "title": "Templatekey",
+            "description": "模板 key"
+          },
+          "templateName": {
+            "type": "string",
+            "title": "Templatename",
+            "description": "模板名（提交时快照）"
+          },
+          "ownerId": {
+            "type": "string",
+            "title": "Ownerid",
+            "description": "使用人 ID"
+          },
+          "ownerName": {
+            "type": "string",
+            "title": "Ownername",
+            "description": "使用人可读名；目录不可用时为空"
+          },
+          "total": {
+            "type": "integer",
+            "title": "Total",
+            "description": "尝试次数"
+          },
+          "succeeded": {
+            "type": "integer",
+            "title": "Succeeded",
+            "description": "已产出次数"
+          },
+          "quantity": {
+            "type": "integer",
+            "title": "Quantity",
+            "description": "已产出数量"
+          }
+        },
+        "type": "object",
+        "required": [
+          "templateKey",
+          "templateName",
+          "ownerId",
+          "ownerName",
+          "total",
+          "succeeded",
+          "quantity"
+        ],
+        "title": "UsageTemplateUserOut",
+        "description": "模板 × 使用人的一格。"
       },
       "UsageTrendPointOut": {
         "properties": {

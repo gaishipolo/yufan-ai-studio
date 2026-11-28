@@ -32,6 +32,9 @@ def _insert_video(
     created_at: datetime,
     duration_sec: int = 12,
     title: str = "用量测试视频",
+    template_key: str = "",
+    template_name: str = "",
+    template_version: int | None = None,
 ) -> str:
     """插一行视频任务。绕开接口是因为接口造不出 `completed` / `failed` 的行。"""
     from db.session import get_session_factory
@@ -50,6 +53,9 @@ def _insert_video(
                 author_id=author_id,
                 author_name=author_name,
                 reference_library_ids=[],
+                template_key=template_key or None,
+                template_name=template_name or None,
+                template_version=template_version,
             )
             row.created_at = created_at
             row.updated_at = created_at
@@ -67,6 +73,9 @@ def _insert_image(
     created_at: datetime,
     count: int = 1,
     name: str = "用量测试生图",
+    template_key: str = "",
+    template_name: str = "",
+    template_version: int | None = None,
 ) -> str:
     from db.session import get_session_factory
     from modules.image.models import ImageJob
@@ -87,6 +96,9 @@ def _insert_image(
                 progress=100 if status == "succeeded" else 0,
                 cover_url="",
                 owner_id=owner_id,
+                template_key=template_key or None,
+                template_name=template_name or None,
+                template_version=template_version,
             )
             row.created_at = created_at
             row.updated_at = created_at
@@ -176,6 +188,89 @@ def test_overview_aggregates_video_and_image(client: TestClient, api: str) -> No
     # 两路来源都在
     assert {item["source"] for item in summary["sources"]} == {"video", "image"}
     assert set(data["sources"]) == {"video", "image"}
+
+
+def test_template_dimension_and_user_matrix(client: TestClient, api: str) -> None:
+    """模板维度与「模板 × 使用人」只统计带模板身份的记录。"""
+    user, headers = _make_user(client, ["usage:read", "usage:read:all"])
+    other, _ = _make_user(client, ["usage:read"])
+    moment = datetime.now(UTC) - timedelta(days=1)
+
+    created = [
+        ("video", _insert_video(
+            author_id=user["id"],
+            author_name="我",
+            status="completed",
+            created_at=moment,
+            template_key="tpl-a",
+            template_name="模板 A",
+            template_version=1,
+        )),
+        ("video", _insert_video(
+            author_id=user["id"],
+            author_name="我",
+            status="failed",
+            created_at=moment,
+            template_key="tpl-b",
+            template_name="模板 B",
+        )),
+        ("image", _insert_image(
+            owner_id=other["id"],
+            status="succeeded",
+            created_at=moment,
+            template_key="tpl-a",
+            template_name="模板 A",
+            template_version=1,
+        )),
+        # 直接生成（没有模板）不计入模板维度，但仍在总数里。
+        ("video", _insert_video(
+            author_id=user["id"],
+            author_name="我",
+            status="completed",
+            created_at=moment,
+        )),
+    ]
+
+    data = (
+        client.get(
+            f"{api}/usage/overview", headers=headers, params={**_range(), "scope": "all"}
+        ).json()["data"]
+    )
+
+    template_rows = {
+        item["key"]: item["total"]
+        for item in data["breakdown"]
+        if item["dimension"] == "template"
+    }
+    assert template_rows["tpl-a"] == 2
+    assert template_rows["tpl-b"] == 1
+    # 直接生成按来源命名；测试库可能已有其它历史行，只断言存在。
+    assert template_rows["untemplated:video"] >= 1
+
+    cells = {
+        (item["templateKey"], item["ownerId"]): item
+        for item in data["templateUsers"]
+    }
+    assert cells[("tpl-a", user["id"])]["total"] == 1
+    assert cells[("tpl-a", other["id"])]["succeeded"] == 1
+    assert cells[("tpl-b", user["id"])]["total"] == 1
+    # 直接生成不进「模板 × 使用人」。
+    assert all(not key.startswith("untemplated") for key, _owner in cells)
+
+    async def cleanup() -> None:
+        from sqlalchemy import delete
+
+        from db.session import get_session_factory
+        from modules.image.models import ImageJob
+        from modules.task.models import VideoTask
+
+        async with get_session_factory()() as session:
+            for kind, record_id in created:
+                model = VideoTask if kind == "video" else ImageJob
+                await session.execute(delete(model).where(model.id == record_id))
+            await session.commit()
+
+    asyncio.run(cleanup())
 
 
 def test_failed_records_do_not_count_toward_output(client: TestClient, api: str) -> None:
@@ -297,7 +392,7 @@ def test_trend_fills_empty_days(client: TestClient, api: str) -> None:
     assert (TODAY - timedelta(days=1)).isoformat() in buckets
 
 
-def test_breakdown_covers_four_dimensions(client: TestClient, api: str) -> None:
+def test_breakdown_covers_all_dimensions(client: TestClient, api: str) -> None:
     user, headers = _make_user(client, ["usage:read"])
     moment = datetime.now(UTC) - timedelta(days=1)
     _insert_video(
@@ -311,7 +406,7 @@ def test_breakdown_covers_four_dimensions(client: TestClient, api: str) -> None:
 
     data = client.get(f"{api}/usage/overview", headers=headers, params=_range()).json()["data"]
     dimensions = {row["dimension"] for row in data["breakdown"]}
-    assert dimensions == {"model", "kind", "owner", "status"}
+    assert dimensions == {"model", "kind", "owner", "status", "template"}
     for row in data["breakdown"]:
         assert 0 <= row["share"] <= 1
 

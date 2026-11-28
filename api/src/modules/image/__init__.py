@@ -8,6 +8,7 @@ from api.module import ModuleSpec
 from core.pages import PageSpec
 from core.ports.generation_feed import register_generation_feed
 from core.ports.library_references import LibraryReferenceSource, bind_library_reference_sources
+from core.ports.template_usage import register_template_usage
 from core.ports.usage_metrics import register_usage_metrics
 from modules.image import (
     maintenance,  # noqa: F401  副作用导入：注册周期任务 image.reconcile
@@ -41,6 +42,8 @@ register_generation_feed(read_generation_feed)
 # 用量看板同理：它要统计生图用了多少张，但同样不能 import 本模块。
 # 注入口是多实现的 —— 视频、生图、将来的音频各注册一份，看板自动合并。
 register_usage_metrics("image", ImageUsageProvider())
+# 模板卡片的累计次数与看板分开：卡片要全量、看板看区间。
+register_template_usage("image", ImageUsageProvider())
 
 module = ModuleSpec(
     name="image",

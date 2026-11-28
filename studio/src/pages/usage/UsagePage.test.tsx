@@ -58,6 +58,35 @@ function overviewResult(overrides: Partial<UsageOverviewOut> = {}): UsageOvervie
       {dimension: 'owner', key: 'u_1', label: '我', total: 10, quantity: 12, durationSec: 95, share: 1},
       {dimension: 'status', key: 'succeeded', label: '已产出', total: 7, quantity: 12, durationSec: 95, share: 0.7},
     ],
+    templateUsers: [
+      {
+        templateKey: 'tpl-a',
+        templateName: '模板 A',
+        ownerId: 'u_1',
+        ownerName: '我',
+        total: 6,
+        succeeded: 4,
+        quantity: 4,
+      },
+      {
+        templateKey: 'tpl-a',
+        templateName: '模板 A',
+        ownerId: 'u_2',
+        ownerName: '同事',
+        total: 3,
+        succeeded: 2,
+        quantity: 2,
+      },
+      {
+        templateKey: 'tpl-b',
+        templateName: '模板 B',
+        ownerId: 'u_1',
+        ownerName: '我',
+        total: 1,
+        succeeded: 1,
+        quantity: 1,
+      },
+    ],
     sources: ['video'],
     ...overrides,
   };
@@ -123,6 +152,9 @@ describe('用量看板页面', () => {
     expect(screen.getByText('成功率')).toBeInTheDocument();
     expect(screen.getByText('70.0%')).toBeInTheDocument();
     expect(screen.getByText('Seedance 2.5')).toBeInTheDocument();
+    expect(screen.getByText('模板 × 使用人')).toBeInTheDocument();
+    expect(screen.getByText('模板 A')).toBeInTheDocument();
+    expect(screen.getByText('同事')).toBeInTheDocument();
   });
 
   it('没接数据来源时给出提示，而不是假装用量为零', () => {

@@ -9,6 +9,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 from sqlalchemy import func, select
@@ -66,6 +67,9 @@ async def aggregate_usage(query: UsageQuery) -> UsageAggregate:
                     VideoTask.author_id,
                     VideoTask.author_name,
                     VideoTask.reference_library_ids,
+                    VideoTask.template_key,
+                    VideoTask.template_name,
+                    VideoTask.template_version,
                 ).where(*_conditions(query))
             )
         ).all()
@@ -81,6 +85,9 @@ async def aggregate_usage(query: UsageQuery) -> UsageAggregate:
             owner_id=author_id,
             owner_name=author_name or "",
             kind=_kind_of(reference_library_ids),
+            template_key=template_key or "",
+            template_name=template_name or "",
+            template_version=template_version,
         )
         for (
             created_at,
@@ -91,6 +98,9 @@ async def aggregate_usage(query: UsageQuery) -> UsageAggregate:
             author_id,
             author_name,
             reference_library_ids,
+            template_key,
+            template_name,
+            template_version,
         ) in rows
     ]
     return aggregate_rows(SOURCE, normalized, query.granularity)
@@ -164,12 +174,35 @@ async def read_usage_records(query: UsageQuery) -> UsageRecordPage:
     return UsageRecordPage(items=items, total=total)
 
 
+async def read_template_counts(template_keys: Sequence[str]) -> Mapping[str, int]:
+    """模板累计使用次数：按 key 计尝试数（含失败/进行中）。"""
+    wanted = list(dict.fromkeys(template_keys))
+    if not wanted:
+        return {}
+    async with get_session_factory()() as session:
+        rows = await session.execute(
+            select(VideoTask.template_key, func.count())
+            .where(VideoTask.template_key.in_(wanted))
+            .group_by(VideoTask.template_key)
+        )
+        return {
+            template_key: int(count)
+            for template_key, count in rows.all()
+            if template_key
+        }
+
+
 class VideoUsageProvider:
     """视频 → 用量看板的读取器（注册到 `core.ports.usage_metrics`）。
 
     契约是 Protocol 的两个方法，实现写成模块级函数是为了让 SQL 那部分好单独测；
     这里只做一层薄适配。
     """
+
+    async def template_counts(
+        self, template_keys: Sequence[str]
+    ) -> Mapping[str, int]:
+        return await read_template_counts(template_keys)
 
     async def aggregate(self, query: UsageQuery) -> UsageAggregate:
         return await aggregate_usage(query)
@@ -178,4 +211,10 @@ class VideoUsageProvider:
         return await read_usage_records(query)
 
 
-__all__ = ["VideoUsageProvider", "SOURCE", "aggregate_usage", "read_usage_records"]
+__all__ = [
+    "VideoUsageProvider",
+    "SOURCE",
+    "aggregate_usage",
+    "read_template_counts",
+    "read_usage_records",
+]

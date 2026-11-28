@@ -7,6 +7,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any
 
 from fastapi.testclient import TestClient
@@ -112,6 +113,76 @@ def test_标签计数按入口收窄(client: TestClient) -> None:
     assert published.status_code == 200, published.text
     assert count(owner, "published") == 1
     assert count(other, "published") == 1
+
+
+def test_模板列表返回累计使用次数(client: TestClient) -> None:
+    """卡片次数 = 视频 + 生图两路、按 template_key 合并的尝试数。"""
+    headers = _headers(client)
+    key = _spec(client, headers, "使用次数模板")
+
+    async def seed() -> list[tuple[str, str]]:
+        from db.session import get_session_factory
+        from modules.image.models import ImageJob
+        from modules.task.models import VideoTask
+
+        async with get_session_factory()() as session:
+            task = VideoTask(
+                title="模板使用-视频",
+                prompt="测试",
+                status="completed",
+                model="Seedance 2.5",
+                model_id="seedance-2.5",
+                duration_sec=5,
+                aspect_ratio="9:16",
+                author_id="u_usage",
+                author_name="计数用户",
+                reference_library_ids=[],
+                template_key=key,
+                template_name="使用次数模板",
+                template_version=1,
+            )
+            job = ImageJob(
+                name="模板使用-生图",
+                prompt="测试",
+                status="succeeded",
+                model="Agnes Image 2.5 Flash",
+                model_id="agnes-image-2.5-flash",
+                count=1,
+                size="1024x1024",
+                params_json="",
+                reference_json="",
+                text_json="",
+                cover_url="",
+                owner_id="u_usage",
+                template_key=key,
+                template_name="使用次数模板",
+                template_version=1,
+            )
+            session.add_all([task, job])
+            await session.commit()
+            return [("video", task.id), ("image", job.id)]
+
+    ids = asyncio.run(seed())
+
+    try:
+        items = client.get(API, headers=headers).json()["data"]["items"]
+        item = next(row for row in items if row["key"] == key)
+        assert item["usageCount"] == 2
+    finally:
+        async def cleanup() -> None:
+            from sqlalchemy import delete
+
+            from db.session import get_session_factory
+            from modules.image.models import ImageJob
+            from modules.task.models import VideoTask
+
+            async with get_session_factory()() as session:
+                for kind, record_id in ids:
+                    model = VideoTask if kind == "video" else ImageJob
+                    await session.execute(delete(model).where(model.id == record_id))
+                await session.commit()
+
+        asyncio.run(cleanup())
 
 
 def test_分组维度不能直接打在模板上(client: TestClient) -> None:

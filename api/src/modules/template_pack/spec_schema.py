@@ -291,6 +291,8 @@ class TemplateSpecOut(CamelModel):
     demo_asset_id: str | None = None
     #: 模板自身的标签 id（template_tags）。独立于 draft，改了立即生效、不发版。
     tag_ids: list[str] = Field(default_factory=list)
+    #: 累计使用次数（从模板提交的生成尝试，含失败/进行中）。只由列表填充。
+    usage_count: int = Field(description="累计使用次数（含失败/进行中）")
     #: 最近一次发布；为空表示从未发布。
     latest: SpecVersionOut | None = None
 

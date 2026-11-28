@@ -289,9 +289,18 @@ class ImageService:
         # 派生时把 `{{Text N}}` 换成正文；真正的 prompt 列保持原样（重试读它）。
         given = payload.name.strip()
         display = inject_text_refs(payload.prompt, text_refs).strip()
+        # 模板身份只做统计：没有 key 时 version/name 一律不落，避免半截数据。
+        template_key = (payload.template_key or "").strip() or None
+        template_version = payload.template_version if template_key else None
+        template_name = (
+            (payload.template_name or "").strip() or None if template_key else None
+        )
         job = ImageJob(
             name=(given or display)[:_MAX_JOB_NAME] or "未命名",
             prompt=payload.prompt,
+            template_key=template_key,
+            template_version=template_version,
+            template_name=template_name,
             size=size,
             count=count,
             params_json=dumps_params(extra),

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Play, Plus } from 'lucide-react';
+import { Play, Plus } from 'lucide-react';
 import { KIND_LABEL } from '@/entities/library/model/types';
 import { useLibraryPack } from '@/entities/library/api/library.queries';
 import { AssetChip } from '@/entities/library/ui/AssetChip';
@@ -144,7 +144,7 @@ function TemplateCard({
         // 一排白卡里几乎看不出来（尤其是缩略图把边压满的时候）。
         'group flex flex-col items-stretch rounded-2xl border bg-panel p-1.5 text-left transition-all duration-200',
         selected
-          ? 'border-primary-line shadow-[0_10px_24px_-12px_rgba(43,124,255,.55)] ring-1 ring-primary/20'
+          ? 'border-primary bg-primary-soft/20 shadow-[0_14px_30px_-10px_rgba(43,124,255,.75)] ring-2 ring-primary/45'
           : 'border-line-soft hover:border-line-strong',
       )}
     >
@@ -160,9 +160,6 @@ function TemplateCard({
           hoverPlay
           active={hovering}
         />
-        <span className="pointer-events-none absolute right-1.5 top-1.5 rounded-full bg-black/40 px-1.5 py-0.5 text-micro font-medium leading-[14px] text-white/95 backdrop-blur-sm">
-          v{item.currentVersion}
-        </span>
         <div className="pointer-events-none absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/70 via-black/25 to-transparent px-2.5 pb-1.5 pt-9">
           <div className="truncate text-xs font-medium text-white">{item.name}</div>
         </div>
@@ -195,6 +192,12 @@ function TemplateCard({
             <span className="text-micro text-ink-mute/70">未打标签</span>
           )}
         </div>
+        <span
+          className="text-micro text-ink"
+          title="从模板库提交的生成尝试，含失败与进行中"
+        >
+          模板使用次数——{item.usageCount}
+        </span>
         {/* `mt-auto`：一行里卡片的 chip 数量不同时会换行成一两行，不推到底的话
             底栏会各自停在不同高度，一排看过去参差。 */}
         <div className="mt-auto flex items-center justify-between gap-2 border-t border-line-soft pt-1.5">
@@ -205,13 +208,13 @@ function TemplateCard({
           </span>
           <span
             className={cn(
-              'flex shrink-0 items-center gap-0.5 rounded-xs px-1.5 py-[1px] text-micro transition-colors',
+              'flex shrink-0 items-center rounded-xs px-1.5 py-[1px] text-micro font-medium transition-colors',
               selected
                 ? 'bg-primary text-white'
                 : 'bg-panel-soft text-ink-soft ring-1 ring-inset ring-line-soft group-hover:bg-primary-soft group-hover:text-primary group-hover:ring-primary-line',
             )}
           >
-            填写 <ArrowRight size={10} />
+            v{item.currentVersion}
           </span>
         </div>
       </div>
@@ -808,7 +811,11 @@ export function SpecLibrary() {
       return;
     }
 
-    const plan = toSubmitPayload(compiled, spec.name, kind, defaults, model);
+    const plan = toSubmitPayload(compiled, spec.name, kind, defaults, model, {
+      key: spec.key,
+      version: compiled.version,
+      name: spec.name,
+    });
     if (!plan.ok) {
       setError(plan.message);
       setConfirming(false);

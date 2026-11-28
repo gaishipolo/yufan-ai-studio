@@ -29,6 +29,10 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
     #: （上限 160）原样当任务名传，两边显示要一样长。
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    #: 模板来源。直接生图是 NULL；模板库提交时冻结 key/version/name。
+    template_key: Mapped[str | None] = mapped_column(String(80), nullable=True)
+    template_version: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    template_name: Mapped[str | None] = mapped_column(String(160), nullable=True)
     size: Mapped[str] = mapped_column(String(32), default="1024x1024", nullable=False)
     count: Mapped[int] = mapped_column(Integer, default=1, nullable=False)
     # 除 size / count 之外的模型参数（JSON 文本），键来自模型的 `param_schema`。
@@ -91,6 +95,8 @@ class ImageJob(Base, TimestampMixin, UUIDMixin):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
     __table_args__ = (
+        # 模板卡片计数 + 用户×模板关系，与 video_tasks 同口径。
+        Index("ix_image_jobs_template_owner", "template_key", "owner_id"),
         # 同一次提交意图只能落一条；NULL 键不参与约束（老客户端照旧）。
         Index(
             "ux_image_jobs_owner_idempotency",

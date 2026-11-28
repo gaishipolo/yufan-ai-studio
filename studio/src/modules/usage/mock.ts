@@ -292,6 +292,7 @@ export const routes: MockRoute[] = [
         },
         trend: trendPoints,
         breakdown: breakdownRows,
+        templateUsers: [],
         sources: [...bySource.keys()],
       };
     },

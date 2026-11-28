@@ -39,6 +39,16 @@ def _stored_name(job_id: str) -> str:
     return asyncio.run(run())
 
 
+def _stored_template(job_id: str) -> tuple[str | None, int | None, str | None]:
+    async def run() -> tuple[str | None, int | None, str | None]:
+        async with get_session_factory()() as session:
+            row = await session.get(ImageJob, job_id)
+            assert row is not None, f"生图记录不存在：{job_id}"
+            return row.template_key, row.template_version, row.template_name
+
+    return asyncio.run(run())
+
+
 def _cleanup(job_id: str) -> None:
     async def run() -> None:
         from sqlalchemy import delete
@@ -88,6 +98,25 @@ def test_传了name就用它当任务名(client: TestClient) -> None:
     )
     try:
         assert _stored_name(job_id) == "都在模仿我的版型"
+    finally:
+        _cleanup(job_id)
+
+
+def test_模板身份随生图记录落库(client: TestClient) -> None:
+    """从模板库提交时冻结 key/version/name；直接生图三列都为空。"""
+    headers = _login(client)
+    job_id = _submit(
+        client,
+        headers,
+        {
+            "prompt": "模板生成",
+            "templateKey": "tpl-usage",
+            "templateVersion": 3,
+            "templateName": "用法模板",
+        },
+    )
+    try:
+        assert _stored_template(job_id) == ("tpl-usage", 3, "用法模板")
     finally:
         _cleanup(job_id)
 

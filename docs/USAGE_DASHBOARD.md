@@ -37,7 +37,8 @@
 | 结论 | **主卡**（占 2/3 宽） | 已产出数量（大字）· 视频时长 · 发起次数 · 成功/失败/进行中 三段比例条 | 页面上真正的结论只有一个：**产出了多少**。给它最大的字号和最多的宽度 |
 | 结论 | **比率卡**（占 1/3 宽） | 成功率（大字 + 进度条）· 成功 / 失败计数 | 比率和总量是两种结论，并排放，一眼对照 |
 | 过程 | 趋势 Panel | 堆叠柱：已产出 / 失败 / 进行中 | 回答「什么时候产的」。柱子是三段而不是一根 —— 只看总量看不出「量上去了但全是失败」 |
-| 拆解 | 构成 Panel | 按 模型 / 方式 / 使用人 / 状态 切换 | 回答「谁产的、用什么产的」。四个维度是**切换**不是**堆叠**：它们是同一批数字的四种切法，同时铺开会互相盖住 |
+| 拆解 | 构成 Panel | 按 模型 / 方式 / 使用人 / 模板 / 状态 切换 | 回答「谁产的、用什么产的」。这些维度是**切换**不是**堆叠**：它们是同一批数字的不同切法，同时铺开会互相盖住 |
+| 关系 | 模板 × 使用人 Panel | Top 10 模板 × Top 10 使用人的热力表 | 回答「谁在用哪张模板」。单元格是尝试次数，颜色越深越多；只有带模板来源的记录才进这张表 |
 
 **为什么不是四张一样大的卡**：四张等大的卡读起来是「四个并列的事实」，用户得
 自己决定哪个重要 —— 那等于没做信息层级。所以「已产出」被放大，「发起次数」和
@@ -106,6 +107,17 @@
 
 **失败的任务不计时长、不计数量** —— 用户没拿到东西，不该为它付账。
 
+**模板来源**是提交时冻结的 `templateKey` / `templateVersion` / `templateName`：
+`templateKey` 是身份（改名不变），卡片累计次数按它归并；看板的模板维度与
+「模板 × 使用人」只统计带 key 的记录，直接创建的任务/生图不进入模板关系图。
+模板卡片显示的是**累计尝试次数**（含失败/进行中），与看板按时间区间的数字
+口径不同，文案上要写「累计」。
+
+「按模板」维度里，没有模板 key 的记录按入口命名：视频 = **生成工作台**，
+生图 = **生图**。历史记录由 `scripts/backfill_template_identity.py` 一次性
+回填：同名模板唯一（或同归属唯一）、且模板创建时间早于任务时才写入；歧义
+跳过并报告，不回填的保持直接来源。
+
 ### 2.1 时区一律 UTC
 
 区间、桶边界、界面显示全部 UTC。原因很实在：一条 UTC 23:00 的记录按本地时区显示
@@ -144,7 +156,8 @@ modules/usage/service.py         ← 只认契约，把各来源结果合并成�
    - `aggregate(query) -> UsageAggregate`
    - `records(query) -> UsageRecordPage`
 2. 读自己的表，归一成 `UsageRow`（`created_at` / `status` / `model_id` /
-   `model_name` / `quantity` / `duration_sec` / `owner_id` / `owner_name` / `kind`）。
+   `model_name` / `quantity` / `duration_sec` / `owner_id` / `owner_name` /
+   `kind`；有模板来源时再填 `template_key` / `template_name` / `template_version`）。
 3. 交给共享的 `aggregate_rows(source, rows, granularity)` —— **口径不要自己再写一遍**。
 4. 在自己模块的 `__init__.py` 里 `register_usage_metrics("audio", AudioUsageProvider())`。
 5. 前端补一个 `sourceLabel()`（`entities/usage/model/source-labels.ts`），并在
@@ -183,6 +196,7 @@ modules/usage/service.py         ← 只认契约，把各来源结果合并成�
 |---|---|---|
 | 新数据来源（音频 / 数字人 / 外部供应商） | `core/ports/usage_metrics.py` 的注入口 | 一个 provider 文件 + 一行注册 |
 | 新构成维度（供应商 / 渠道 / 成本） | `UsageDimension` + `aggregate_rows` 的维度表 | 一个维度名 + 一行归一 |
+| 模板 × 使用人关系 | `UsageRow.template_*` + `UsageAggregate.template_users` | 来源方填三个字段，看板自动合并 |
 | 新时间粒度（小时 / 月） | `UsageGranularity` + `bucket_key` | 一个字面量 + 一个分支 |
 | 成本 / 余额口径 | `UsageRow` 加字段（如 `cost`），汇总与构成各加一列 | 加字段，来源方自己填 |
 | 导出 CSV | 新增 `GET /usage/export`（同权限、同区间口径） | 一个端点 |

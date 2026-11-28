@@ -100,9 +100,9 @@ export const TaskStatusFilter_VALUES = ["all", "queued", "running", "completed",
 export type UploadKind = "image" | "audio" | "video" | "text";
 export const UploadKind_VALUES = ["image", "audio", "video", "text"] as const;
 
-/** 取值：model, kind, owner, status */
-export type UsageDimension = "model" | "kind" | "owner" | "status";
-export const UsageDimension_VALUES = ["model", "kind", "owner", "status"] as const;
+/** 取值：model, kind, owner, status, template */
+export type UsageDimension = "model" | "kind" | "owner" | "status" | "template";
+export const UsageDimension_VALUES = ["model", "kind", "owner", "status", "template"] as const;
 
 /** 取值：day, week */
 export type UsageGranularity = "day" | "week";
@@ -223,6 +223,12 @@ export interface CreateTaskIn {
   billingMode?: string | null;
   /** 模型声明的**其余**参数，键与 `GET /models` 返回的 `paramSchema` 一致（如 `quality` / `seed`）。未声明的键会被 400 拒绝 —— 打错字被静默忽略的话，用户改的那个值从来没生效过，页面看起来却一切正常。顶层那几个键（`durationSec` / `aspectRatio` / `stylePreset` / `billingMode`）走各自的字段，不进这里 */
   params?: Record<string, unknown>;
+  /** 模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。直接建任务不传。只做计数，不改变生成内容。 */
+  templateKey?: string | null;
+  /** 本次使用的模板发布版本号（仅统计） */
+  templateVersion?: number | null;
+  /** 提交时的模板名快照（仅展示） */
+  templateName?: string | null;
 }
 
 /** DeleteImagesIn */
@@ -445,6 +451,12 @@ export interface GenerateImageIn {
   idempotencyKey?: string | null;
   /** 任务名（生图历史 / 任务中心卡片上显示的名字）。留空时仍从提示词派生。模板库提交时传模板名 —— 否则一长段提示词会把卡片挤满，同名模板的多条任务也看不出是同一个模板出的。上限 200 与视频任务标题（`CreateTaskIn.title`）一致：模板名允许 160 字，模板库把模板名原样当任务名传，上限比它小就会在提交阶段被 422 打回。 */
   name?: string;
+  /** 模板库提交时带上的模板身份（`TemplateSpec.spec_key`），用于使用次数统计。直接生图不传。只做计数，不改变生成内容。 */
+  templateKey?: string | null;
+  /** 本次使用的模板发布版本号（仅统计） */
+  templateVersion?: number | null;
+  /** 提交时的模板名快照（仅展示） */
+  templateName?: string | null;
   /** 宽x高，如 `1024x1536`；留空取模型 `paramSchema.size.default` */
   size?: string;
   /** 张数；`0` 表示取模型 `paramSchema.count.default`，上限以模型声明为准 */
@@ -1868,6 +1880,8 @@ export interface TemplateSpecOut {
   draft?: TemplateSpecIn | null;
   demoAssetId?: string | null;
   tagIds?: string[];
+  /** 累计使用次数（含失败/进行中） */
+  usageCount: number;
   latest?: SpecVersionOut | null;
 }
 
@@ -1967,7 +1981,7 @@ export interface UsageBreakdownItemOut {
   share: number;
 }
 
-/** 看板总览：一次请求拿齐汇总 / 趋势 / 构成。 */
+/** 看板总览：一次请求拿齐汇总 / 趋势 / 构成 / 模板×使用人。 */
 export interface UsageOverviewOut {
   /** 区间汇总 */
   summary: UsageSummaryOut;
@@ -1975,6 +1989,8 @@ export interface UsageOverviewOut {
   trend: UsageTrendPointOut[];
   /** 构成行 */
   breakdown: UsageBreakdownItemOut[];
+  /** 模板 × 使用人（只含有模板来源的记录） */
+  templateUsers: UsageTemplateUserOut[];
   /** 实际接上的数据来源标识 */
   sources: string[];
 }
@@ -2053,6 +2069,24 @@ export interface UsageSummaryOut {
   avgDurationSec: number;
   /** 各来源分项 */
   sources: UsageSourceOut[];
+}
+
+/** 模板 × 使用人的一格。 */
+export interface UsageTemplateUserOut {
+  /** 模板 key */
+  templateKey: string;
+  /** 模板名（提交时快照） */
+  templateName: string;
+  /** 使用人 ID */
+  ownerId: string;
+  /** 使用人可读名；目录不可用时为空 */
+  ownerName: string;
+  /** 尝试次数 */
+  total: number;
+  /** 已产出次数 */
+  succeeded: number;
+  /** 已产出数量 */
+  quantity: number;
 }
 
 /** 趋势上的一个点（区间内没有数据的那天也会补一个 0）。 */

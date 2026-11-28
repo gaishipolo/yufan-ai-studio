@@ -220,6 +220,36 @@ describe('toSubmitPayload', () => {
     expect(video.ok && video.kind).toBe('video');
   });
 
+  it('模板身份随提交体带出去（视频 / 生图同一组字段）', () => {
+    const template = {key: 'tpl-usage', version: 3, name: '用法模板'};
+    const image = toSubmitPayload(
+      compiled({model: 'agnes-image-2.5-flash', params: {count: 1}}),
+      '图片模板',
+      'image',
+      {},
+      undefined,
+      template,
+    );
+    const video = toSubmitPayload(
+      compiled(),
+      '视频模板',
+      'video',
+      {},
+      undefined,
+      template,
+    );
+
+    for (const result of [image, video]) {
+      expect(result.ok).toBe(true);
+      if (!result.ok) continue;
+      expect(result.payload).toMatchObject({
+        templateKey: 'tpl-usage',
+        templateVersion: 3,
+        templateName: '用法模板',
+      });
+    }
+  });
+
   it('同一个模板内容，按 video 提交就会因为 count 报错 —— 能力判错必须看得见', () => {
     // 生图模型声明了 `count`，视频模型没声明 → 提交前就能发现「这个模板
     // 走错接口了」。等后端 400 的话，用户看到的是一句跟模型无关的报错。

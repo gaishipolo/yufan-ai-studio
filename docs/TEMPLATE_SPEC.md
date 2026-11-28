@@ -605,6 +605,10 @@ override 必得同一结果。
 视频那边多出来的键没有落点 → 报错；图片那边除 `size`/`count` 外的键进 `params`，
 由服务端按模型 `paramSchema` 校验（未声明即 400，也是看得见的失败）。
 
+同一处还会把模板身份（`templateKey` / `templateVersion` / `templateName`）带进
+两个生成接口；任务与生图记录各存三列，仅用于统计。列表出参的 `usageCount`
+是按 key 合并视频 + 生图的**累计尝试次数**（含失败/进行中），卡片在标签下方显示。
+
 `compile` **不再有 `promptOverride`**（2026-11-14）：模板库不改文字，可变内容走 `text` 槽位。
 旧字段会被 `extra="forbid"` 拒成 422，不是静默忽略。
 
