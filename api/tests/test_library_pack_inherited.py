@@ -110,6 +110,27 @@ def test_team_pack_members_are_selectable_and_readable(
     assert set(member_ids) <= asyncio.run(check_port())
 
 
+def test_inherited_pack_members_are_counted_in_tag_list(
+    client: TestClient, api: str, _pack_cleanup: list[str]
+) -> None:
+    """模板库标签词表要看见「包可见 ⇒ 成员可读」的成员。
+
+    选择器已经认继承可见；标签计数若只按 tab_clause 算，普通用户会看到
+    素材列表 47 张、标签却只剩少数几个（成员身上的标签计数为 0 被前端隐藏）。
+    """
+    _, _, _, other_h, _, member_ids = _setup(client, api, _pack_cleanup)
+
+    tags = client.get(
+        f"{api}/library/tags",
+        params={"kind": "image", "includePackMembers": "true"},
+        headers=other_h,
+    )
+    assert tags.status_code == 200, tags.text
+    shared = [row for row in tags.json()["data"] if row["name"] == "共同产品"]
+    assert shared, "共享包上的标签没有出现在普通用户的词表里"
+    assert any(row["assetCount"] >= len(member_ids) for row in shared), shared
+
+
 def test_inherited_members_stay_out_of_library_list_and_write_paths(
     client: TestClient, api: str, _pack_cleanup: list[str]
 ) -> None:
