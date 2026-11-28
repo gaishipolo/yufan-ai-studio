@@ -17,13 +17,26 @@ from typing import Annotated, Literal
 
 from fastapi import APIRouter, Depends, Query, status
 
-from api.deps import SessionDep, rate_limit
+from api.deps import SessionDep, rate_limit, require
 from core.config import settings
+from core.context import CurrentUser
 from core.response import ApiResponse
 from modules.template_pack.dependencies import (
     TemplatePackCreateDep,
     TemplatePackPublishDep,
     TemplatePackReadDep,
+)
+from modules.template_pack.rewrite_debug import (
+    debug_options,
+    run_debug_rewrite,
+    save_debug_settings,
+)
+from modules.template_pack.rewrite_debug_schema import (
+    RandomRewriteSettingsIn,
+    RandomRewriteSettingsOut,
+    RewriteDebugIn,
+    RewriteDebugOptionsOut,
+    RewriteDebugOut,
 )
 from modules.template_pack.spec_schema import (
     SpecCompileIn,
@@ -58,6 +71,13 @@ router = APIRouter(prefix="/template-specs", tags=["模板规格"])
 _WRITE_LIMIT = Depends(
     rate_limit("template_pack.create", limit=settings.rate_limit_default_per_min)
 )
+_DEBUG_LIMIT = Depends(
+    rate_limit("llm_config.debug", limit=settings.rate_limit_default_per_min)
+)
+
+#: LLM 调试台挂在模板模块（要读模板、跑改写、做编译预览），但权限沿用
+#: `llm_config:write`：它是 LLM 配置页里的运维工具，不该要求模板编辑权限。
+DebugDep = Annotated[CurrentUser, Depends(require("llm_config:write"))]
 
 
 @router.post("/validate", summary="预检模板规格（不落库）", dependencies=[_WRITE_LIMIT])
@@ -67,6 +87,41 @@ async def validate_spec_draft(
     actor: TemplatePackCreateDep,
 ) -> ApiResponse[SpecValidateOut]:
     return ApiResponse.ok(await validate(session, actor, payload))
+
+
+@router.get(
+    "/debug/templates",
+    summary="LLM 调试台：可调试的模板与默认改写参数",
+)
+async def debug_templates(
+    session: SessionDep, actor: DebugDep
+) -> ApiResponse[RewriteDebugOptionsOut]:
+    """只读：列出有发布版本的模板，并给出默认 system prompt / 温度。"""
+    return ApiResponse.ok(await debug_options(session))
+
+
+@router.put(
+    "/debug/settings",
+    summary="LLM 调试台：把当前 system prompt / 温度 / 模型保存为生产配置",
+    dependencies=[_DEBUG_LIMIT],
+)
+async def debug_save_settings(
+    payload: RandomRewriteSettingsIn, session: SessionDep, actor: DebugDep
+) -> ApiResponse[RandomRewriteSettingsOut]:
+    """写入 `app_meta.llm.random_rewrite`；下一次随机档编译即生效。"""
+    return ApiResponse.ok(await save_debug_settings(session, payload, actor=actor.id))
+
+
+@router.post(
+    "/debug/rewrite",
+    summary="LLM 调试台：改写并预览生成提示词（不创建任务）",
+    dependencies=[_DEBUG_LIMIT],
+)
+async def debug_rewrite(
+    payload: RewriteDebugIn, session: SessionDep, actor: DebugDep
+) -> ApiResponse[RewriteDebugOut]:
+    """调一次模型 + 纯函数编译；不落库、不调 task、不物化素材。"""
+    return ApiResponse.ok(await run_debug_rewrite(session, payload))
 
 
 # ---- 模板独立标签词表（必须在 /{key} 之前声明，否则 tags 会被当成 key）----

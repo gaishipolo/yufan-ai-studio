@@ -12,9 +12,11 @@
 ## 形状
 
 ```
-default:  LLM_BASE_URL / LLM_API_KEY / LLM_MODELS / LLM_MODEL / LLM_TIMEOUT_SEC
-具名:     LLM_<NAME>_BASE_URL / _API_KEY / _MODELS / _MODEL / _TIMEOUT_SEC
+LLM_<NAME>_BASE_URL / _API_KEY / _MODELS / _MODEL / _TIMEOUT_SEC
 ```
+
+旧 `default` 供应商（`LLM_BASE_URL` 等无名字键）已停用；历史配置通过
+`app llm-migrate-default --name primary` 一次性迁移。
 
 `LLM_MODEL_CHAIN` 是**全局**键，不属于任何供应商；它由 `openai_compatible`
 按「平台模型 id 的有序列表」解析，第一项即默认模型。
@@ -43,14 +45,16 @@ MAX_MODELS = 100
 
 def normalize_provider_name(raw: str) -> str:
     name = raw.strip().lower()
+    if name in ("default", "llm"):
+        raise ValueError(f"{name} 是保留名：请使用其它供应商名")
     if not _NAME_RE.match(name):
         raise ValueError("供应商名只能用小写字母、数字、下划线，且以字母开头（最长 30 字）")
     return name
 
 
 def keys_of(name: str) -> tuple[str, str, str]:
-    """(base_url, api_key, models) 三个 env 键。"""
-    prefix = "LLM" if name == "default" else f"LLM_{name.upper()}"
+    """(base_url, api_key, models) 三个 env 键。所有供应商都带名字。"""
+    prefix = f"LLM_{normalize_provider_name(name).upper()}"
     return f"{prefix}_BASE_URL", f"{prefix}_API_KEY", f"{prefix}_MODELS"
 
 
@@ -86,21 +90,8 @@ def parse_model_entries(raw: str) -> tuple[tuple[str, str], ...]:
 
 
 def provider_keys(name: str, file_values: dict[str, str]) -> tuple[str, str, str]:
-    """解析供应商实际使用的三个键，兼容早期 default 形状。
-
-    - `LLM_DEFAULT_BASE_URL/API_KEY/MODELS`（第一版多供应商页写的）；
-    - `LLM_MODEL`（V1 单值模型名）。
-    """
-    keys = keys_of(name)
-    if name != "default":
-        return keys
-    if keys[0] in file_values:
-        if keys[2] not in file_values and "LLM_MODEL" in file_values:
-            return keys[0], keys[1], "LLM_MODEL"
-        return keys
-    if "LLM_DEFAULT_BASE_URL" in file_values:
-        return "LLM_DEFAULT_BASE_URL", "LLM_DEFAULT_API_KEY", "LLM_DEFAULT_MODELS"
-    return keys
+    """供应商的三个 env 键。已不再兼容 default / LLM_MODEL 旧形状。"""
+    return keys_of(name)
 
 
 def read_lines() -> list[str]:
@@ -130,7 +121,7 @@ def effective(key: str, file_values: dict[str, str] | None = None) -> tuple[str,
     values = read_file_values() if file_values is None else file_values
     if key in values:
         return values[key], "env_file"
-    return "", "default"
+    return "", "none"
 
 
 def _env_keys() -> set[str]:
@@ -140,12 +131,11 @@ def _env_keys() -> set[str]:
 def discover_provider_names(file_values: dict[str, str] | None = None) -> tuple[str, ...]:
     """反推供应商名：凡是有 `LLM_*_BASE_URL` 的就认为存在。
 
-    必须同时看进程环境变量：容器部署常把 `LLM_BASE_URL/LLM_API_KEY` 注入环境，
-    只扫 `.env` 会让页面显示"还没有供应商"，而运行时其实是好的（2026-11-27 审查）。
+    必须同时看进程环境变量：容器部署常把 `LLM_<NAME>_*` 注入环境，只扫 `.env`
+    会让页面显示"还没有供应商"，而运行时其实是好的。
 
-    `LLM_DEFAULT_*` 的早期形状只认文件：运行时 `LLMSettings` 前缀是 `LLM_`，
-    不会读环境变量里的 `LLM_DEFAULT_*`；把它列出来只会显示一个"配了但不生效"
-    的供应商。
+    只有具名供应商（`LLM_<NAME>_BASE_URL`）会被发现；default 旧形状不再列出，
+    历史配置由迁移命令处理。
     """
     values = read_file_values() if file_values is None else file_values
     file_keys = {key.upper() for key in values}
@@ -157,40 +147,37 @@ def discover_provider_names(file_values: dict[str, str] | None = None) -> tuple[
         if match is None:
             continue
         candidate = match.group(1).lower()
-        if _NAME_RE.match(candidate) and candidate != "default":
+        if candidate != "default" and _NAME_RE.match(candidate):
             names.add(candidate)
-    if "LLM_BASE_URL" in keys or "LLM_DEFAULT_BASE_URL" in file_keys:
-        names.add("default")
     return tuple(sorted(names))
 
 
 def provider_of(platform_id: str) -> str:
-    """平台模型 id → 供应商名。
-
-    - `llm/*` 与无斜杠的旧 id 归 default；
-    - `<name>/*` 归具名供应商。
-    """
+    """平台模型 id → 供应商名。旧 `llm/*` 与无前缀 id 一律失效。"""
+    if platform_id == "llm/default":
+        raise ValueError("llm/default 是默认模型别名，不是供应商模型")
     if "/" not in platform_id:
-        return "default"
+        raise ValueError(f"模型 id 必须带供应商前缀：{platform_id}")
     prefix = platform_id.split("/", 1)[0].strip().lower()
-    return "default" if prefix == "llm" else prefix
+    if prefix == "llm":
+        raise ValueError(f"旧 llm/* 模型 id 已停用：{platform_id}")
+    if not _NAME_RE.match(prefix):
+        raise ValueError(f"模型 id 的供应商前缀不合法：{platform_id}")
+    return normalize_provider_name(prefix)
 
 
 def model_prefix(provider_name: str) -> str:
-    return "llm" if provider_name == "default" else provider_name
+    return normalize_provider_name(provider_name)
 
 
 def normalize_model_id(provider_name: str, model_id: str) -> str:
-    """把模型 id 收敛到 ``<供应商前缀>/<名字>``。
-
-    早期页面把具名供应商的模型也写成 ``llm/*``；这里迁移到 ``<name>/*``，
-    否则运行时会把它路由到 default 供应商。页面保存/读取与运行时加载模型表
-    都走这一处，避免同一份配置在三处各有一种解释。
-    """
+    """模型 id 必须是 ``<供应商名>/<名字>``。旧 `llm/*` 不再兼容。"""
     mid = model_id.strip()
     prefix = model_prefix(provider_name)
-    if provider_name != "default" and mid.startswith("llm/"):
-        mid = f"{provider_name}/{mid[4:]}"
+    if mid.startswith("llm/"):
+        raise ValueError(
+            f"旧 llm/* 模型 id 已停用：{mid}；请迁移成 {prefix}/... 的形式"
+        )
     if not mid.startswith(prefix + "/"):
         raise ValueError(f"供应商 {provider_name} 的模型 id 必须以 {prefix}/ 开头：{mid}")
     if not mid[len(prefix) + 1 :].strip():
@@ -232,7 +219,7 @@ def provider_config(name: str) -> ProviderConfig:
     base_url, _ = effective(url_key, values)
     api_key, _ = effective(key_key, values)
     models, _ = effective(models_key, values)
-    prefix = "LLM" if name == "default" else f"LLM_{name.upper()}"
+    prefix = f"LLM_{name.upper()}"
     model, _ = effective(f"{prefix}_MODEL", values)
     timeout_raw, _ = effective(f"{prefix}_TIMEOUT_SEC", values)
     return ProviderConfig(

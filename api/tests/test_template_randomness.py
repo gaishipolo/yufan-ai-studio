@@ -20,7 +20,13 @@ from core.exceptions import BadRequest, Forbidden, RateLimited, Unauthorized, Up
 from core.template_spec import InputSlot, TemplateSpec
 from infra.llm import LlmRequest, LlmResponse, LlmUsage
 from modules.template_pack import randomness
-from modules.template_pack.randomness import rewritable_slot_keys, rewrite_slot_texts
+from modules.template_pack.randomness import (
+    DEFAULT_MAX_TOKENS,
+    RandomRewriteSettings,
+    rewritable_slot_keys,
+    rewrite_slot_texts,
+    rewrite_slot_texts_trace,
+)
 
 
 def _slot(
@@ -108,7 +114,7 @@ class FakeCompleter:
             model="qwen-plus",
             finish_reason=self.finish_reason,
             usage=LlmUsage(prompt_tokens=11, completion_tokens=7, total_tokens=18),
-            platform_model="llm/qwen-plus",
+            platform_model="primary/qwen-plus",
         )
 
 
@@ -150,7 +156,7 @@ async def test_请求带标签_引用清单_长度上限_时限与动态预算()
     request, timeout_sec, deadline = fake.requests[0]
     assert request.model == "llm/default"
     assert request.params["temperature"] == 1.0
-    assert request.params["max_tokens"] == randomness.MIN_REWRITE_TOKENS
+    assert request.params["max_tokens"] == DEFAULT_MAX_TOKENS
 
     system, user = request.messages
     assert system.role == "system" and "只输出 JSON" in system.content
@@ -325,6 +331,49 @@ async def test_代码围栏JSON可以解析() -> None:
 async def test_动态预算随原文字数增长() -> None:
     long_text = "场景" * 300
     fake = FakeCompleter(payload=_ok(scene=long_text, outfit=long_text))
-    await rewrite_slot_texts(_spec(scene_text=long_text), complete=fake)
+    await rewrite_slot_texts_trace(
+        _spec(scene_text=long_text),
+        settings=RandomRewriteSettings(max_tokens=None),
+        complete=fake,
+    )
     request, _, _ = fake.requests[0]
     assert request.params["max_tokens"] > randomness.MIN_REWRITE_TOKENS
+
+
+@pytest.mark.asyncio
+async def test_trace_支持自定义system_prompt与参数() -> None:
+    fake = FakeCompleter(payload=_ok())
+    trace = await rewrite_slot_texts_trace(
+        _spec(),
+        settings=RandomRewriteSettings(
+            model="primary/qwen-plus",
+            system_prompt="自定义 system",
+            temperature=0.2,
+            max_tokens=321,
+            extra_params={"top_p": 0.8},
+        ),
+        complete=fake,
+    )
+
+    assert trace.error is None
+    assert trace.request is not None
+    assert trace.request.model == "primary/qwen-plus"
+    assert trace.request.messages[0].content == "自定义 system"
+    assert trace.request.params == {
+        "top_p": 0.8,
+        "temperature": 0.2,
+        "max_tokens": 321,
+    }
+    assert trace.response is not None
+    assert trace.overrides["scene"].startswith("雨后")
+
+
+@pytest.mark.asyncio
+async def test_trace_保留原始输出与校验错误() -> None:
+    fake = FakeCompleter(text="不是 JSON")
+    trace = await rewrite_slot_texts_trace(_spec(), complete=fake)
+
+    assert trace.error is not None
+    assert "不是 JSON" in str(trace.error)
+    assert trace.response is not None
+    assert trace.response.text == "不是 JSON"

@@ -7,6 +7,7 @@
 """
 
 from api.module import ModuleSpec, PageSpec
+from modules.llm_config.cli import register as register_cli
 from modules.llm_config.permissions import SPECS
 from modules.llm_config.router import router
 
@@ -17,4 +18,5 @@ module = ModuleSpec(
     description="LLM 供应商、模型映射与连通验收",
     permissions=SPECS,
     pages=(PageSpec(code="page:llm", name="LLM 配置", route="/llm"),),
+    cli=register_cli,
 )

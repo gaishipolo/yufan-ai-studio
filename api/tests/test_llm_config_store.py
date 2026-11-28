@@ -14,6 +14,7 @@ import pytest
 
 from core.config import ENV_FILE
 from core.exceptions import BadRequest
+from modules.llm_config.migration import migrate_legacy_default, rename_provider
 from modules.llm_config.store import (
     ModelMapping,
     credentials_of,
@@ -68,13 +69,13 @@ def test_保存后能列出两供应商且模型映射正确(clean_env: None) ->
         "minimax",
         base_url="https://api.minimaxi.com/v1",
         api_key="sk-minimax-secret",
-        models=(ModelMapping("llm/flash", "MiniMax-M3.1-Flash"),),
+        models=(ModelMapping("minimax/flash", "MiniMax-M3.1-Flash"),),
     )
     save_provider(
         "bailian",
         base_url="https://ws.cn-beijing.maas.aliyuncs.com/compatible-mode/v1",
         api_key="sk-bailian-secret",
-        models=(ModelMapping("llm/qwen", "qwen-plus"),),
+        models=(ModelMapping("bailian/qwen", "qwen-plus"),),
     )
 
     result = list_providers()
@@ -137,21 +138,14 @@ def test_模型id必须带供应商前缀且不重复(clean_env: None) -> None:
         )
 
 
-def test_具名供应商的旧llm_id迁移到供应商前缀(clean_env: None) -> None:
-    """早期页面把具名供应商的模型也写成 llm/*；保存/读取都要迁到 <name>/*。
-
-    否则运行时会按 llm/ 前缀把它路由到 default 供应商，凭据却用的是具名供应商的。
-    """
-    save_provider(
-        "minimax",
-        base_url="https://api.minimaxi.com/v1",
-        api_key="k",
-        models=(ModelMapping("llm/flash", "MiniMax-M3.1-Flash"),),
-    )
-    listed = list_providers().providers[0]
-    assert listed.models == (ModelMapping("minimax/flash", "MiniMax-M3.1-Flash"),)
-    assert '"minimax/flash"' in ENV_PATH.read_text(encoding="utf-8")
-    # 另一个供应商的前缀同样不许借用
+def test_旧llm模型id不再兼容(clean_env: None) -> None:
+    with pytest.raises(ValueError, match="已停用"):
+        save_provider(
+            "minimax",
+            base_url="https://api.minimaxi.com/v1",
+            api_key="k",
+            models=(ModelMapping("llm/flash", "MiniMax-M3.1-Flash"),),
+        )
     with pytest.raises(ValueError, match="minimax/"):
         save_provider(
             "minimax",
@@ -161,97 +155,127 @@ def test_具名供应商的旧llm_id迁移到供应商前缀(clean_env: None) ->
         )
 
 
+def test_供应商改名会迁移env键模型前缀和链(clean_env: None) -> None:
+    save_provider(
+        "minimax",
+        base_url="https://api.minimaxi.com/v1",
+        api_key="k-minimax",
+        models=(ModelMapping("minimax/flash", "F"), ModelMapping("minimax/pro", "P")),
+    )
+    save_provider(
+        "bailian",
+        base_url="https://bailian.example/v1",
+        api_key="k-bailian",
+        models=(ModelMapping("bailian/qwen", "Q"),),
+    )
+    save_model_chain(["minimax/pro", "bailian/qwen"])
+
+    result = rename_provider("minimax", "minimax2")
+
+    assert result.provider.name == "minimax2"
+    assert result.model_ids["minimax/flash"] == "minimax2/flash"
+    assert read_model_chain() == ("minimax2/pro", "bailian/qwen")
+    text = ENV_PATH.read_text(encoding="utf-8")
+    assert "LLM_MINIMAX_" not in text
+    assert "LLM_MINIMAX2_BASE_URL=https://api.minimaxi.com/v1" in text
+    assert "minimax2/flash" in text
+    by_name = {provider.name: provider for provider in list_providers().providers}
+    assert "minimax" not in by_name
+    assert by_name["minimax2"].models[0].id == "minimax2/flash"
+    assert credentials_of("minimax2")[1] == "k-minimax"
+
+
 def test_网关地址拒绝内网与参数(clean_env: None) -> None:
     for bad in ("notaurl", "http://127.0.0.1:8080", "https://x.example/v1?key=1"):
         with pytest.raises(ValueError):
             save_provider("x", base_url=bad, api_key="k", models=())
 
 
-def test_旧形状LLM_BASE_URL显示为default且保存后统一到LLM下标(clean_env: None) -> None:
-    """上一轮 V1 写的 LLM_BASE_URL/API_KEY/MODEL 不能在升级后凭空消失。
-
-    default 保存后仍是 LLM_*（不是 LLM_DEFAULT_*）—— 必须与运行时
-    LLMSettings 前缀一致，否则页面配好了 complete() 读空。
-    """
+def test_迁移旧default到具名供应商(clean_env: None) -> None:
     ENV_PATH.write_text(
         "LLM_BASE_URL=https://old.example/v1\n"
         "LLM_API_KEY=sk-old-key\n"
-        "LLM_MODEL=MiniMax-M3.1-Flash\n",
+        'LLM_MODELS=[{"id":"llm/flash","upstream":"F"},{"id":"llm/pro","upstream":"P"}]\n'
+        'LLM_MODEL_CHAIN=["llm/pro"]\n',
         encoding="utf-8",
     )
-    listed = list_providers().providers
-    assert len(listed) == 1
-    assert listed[0].name == "default"
-    assert listed[0].models == (ModelMapping("llm/default", "MiniMax-M3.1-Flash"),)
-    assert listed[0].api_key_configured is True
+    assert list_providers().providers == ()
 
-    # 保存统一到 LLM_* 下标：模型单值 LLM_MODEL → 数组 LLM_MODELS，密钥不丢
-    save_provider(
-        "default",
-        base_url="https://new.example/v1",
-        api_key="",
-        models=(ModelMapping("llm/default", "qwen-plus"),),
-    )
+    result = migrate_legacy_default("primary")
+
+    assert result.provider.name == "primary"
+    assert result.model_ids["llm/flash"] == "primary/flash"
+    assert read_model_chain() == ("primary/pro",)
     text = ENV_PATH.read_text(encoding="utf-8")
-    assert "LLM_MODEL=" not in text
-    assert "LLM_BASE_URL=https://new.example/v1" in text
-    assert "LLM_MODELS=" in text
-    assert credentials_of("default")[1] == "sk-old-key"
-    assert list_providers().providers[0].models[0].upstream == "qwen-plus"
+    assert "LLM_BASE_URL=" not in text
+    assert "LLM_MODELS=" not in text
+    assert "LLM_PRIMARY_BASE_URL=https://old.example/v1" in text
+    assert "primary/flash" in text
+    assert credentials_of("primary")[1] == "sk-old-key"
+    assert [p.name for p in list_providers().providers] == ["primary"]
 
 
-def test_页面保存的default运行时complete读得到(clean_env: None) -> None:
-    """跨层守卫：页面写 default 供应商的键，必须与 infra.llm 读的键是同一组。
-
-    2026-11-27 审查抓到的断链：页面保存写 LLM_DEFAULT_*，运行时 LLMSettings
-    前缀是 LLM_ 读 LLM_*，结果页面配好了调用却读空。两层各自测试都绿，
-    只有把「保存 → 运行时读取」放进同一个用例才抓得到。
-    """
-    from infra.llm.providers.openai_compatible import get_llm_settings, resolve_model
-
-    save_provider(
-        "default",
-        base_url="https://api.minimaxi.com/v1",
-        api_key="sk-real-key",
-        models=(ModelMapping("llm/flash", "MiniMax-M3.1-Flash"),),
-    )
-    settings = get_llm_settings()
-    assert settings.base_url == "https://api.minimaxi.com/v1"
-    assert settings.bearer_token() == "sk-real-key"
-    assert resolve_model("llm/flash", settings) == "MiniMax-M3.1-Flash"
-
-
-def test_早期LLM_DEFAULT形状可读且保存后清理(clean_env: None) -> None:
+def test_迁移早期LLM_DEFAULT形状(clean_env: None) -> None:
     ENV_PATH.write_text(
         "LLM_DEFAULT_BASE_URL=https://old.example/v1\n"
         "LLM_DEFAULT_API_KEY=sk-old\n"
         'LLM_DEFAULT_MODELS=[{"id":"llm/x","upstream":"X"}]\n',
         encoding="utf-8",
     )
-    listed = list_providers().providers
-    assert len(listed) == 1
-    assert listed[0].base_url == "https://old.example/v1"
-    assert listed[0].models[0].upstream == "X"
+    result = migrate_legacy_default("primary")
 
-    save_provider("default", base_url="https://new.example/v1", api_key="", models=())
+    assert result.provider.models[0].id == "primary/x"
+    assert read_model_chain() == ("primary/x",)
     text = ENV_PATH.read_text(encoding="utf-8")
-    assert "LLM_DEFAULT_BASE_URL=" not in text
-    assert "LLM_BASE_URL=https://new.example/v1" in text
-    assert credentials_of("default")[1] == "sk-old"
+    assert "LLM_DEFAULT_" not in text
+    assert "LLM_PRIMARY_BASE_URL=https://old.example/v1" in text
+    assert credentials_of("primary")[1] == "sk-old"
 
 
-def test_未迁移的default也能删掉(clean_env: None) -> None:
-    """审查 P1：旧形状 default 点删除不能报「供应商不存在」。"""
+def test_迁移只配LLM_MODEL的旧V1配置(clean_env: None) -> None:
     ENV_PATH.write_text(
-        "LLM_BASE_URL=https://old.example/v1\nLLM_API_KEY=sk-old\nLLM_MODEL=M\n",
+        "LLM_BASE_URL=https://old.example/v1\nLLM_API_KEY=sk-old\nLLM_MODEL=qwen-plus\n",
         encoding="utf-8",
     )
-    delete_provider("default")
-    remaining = [
-        line for line in ENV_PATH.read_text(encoding="utf-8").splitlines() if line.startswith("LLM")
+    result = migrate_legacy_default("primary")
+
+    assert result.provider.models[0].id == "primary/qwen-plus"
+    assert result.provider.models[0].upstream == "qwen-plus"
+    assert read_model_chain() == ("primary/qwen-plus",)
+
+
+def test_迁移把旧default模型id按上游名派生(clean_env: None) -> None:
+    """真实生产形状：旧 LLM_MODELS 把 llm/default 当普通模型写进去。
+
+    迁移不能拒绝，也不能留一个叫 primary/default 的模型；按上游名派生，
+    并且不要把 llm/default 收窄成具体模型（它表示「走整条链」）。
+    """
+    ENV_PATH.write_text(
+        "LLM_BASE_URL=https://old.example/v1\n"
+        "LLM_API_KEY=sk-old\n"
+        'LLM_MODELS=[{"id":"llm/default","upstream":"MiniMax-M3.1-Flash"},'
+        '{"id":"llm/minimax-m3","upstream":"MiniMax-M3"}]\n'
+        "LLM_MODEL_CHAIN=[]\n",
+        encoding="utf-8",
+    )
+
+    result = migrate_legacy_default("primary")
+
+    assert [m.id for m in result.provider.models] == [
+        "primary/minimax-m3.1-flash",
+        "primary/minimax-m3",
     ]
-    assert remaining == []
-    assert list_providers().providers == ()
+    assert "llm/default" not in result.model_ids
+    assert result.model_ids["llm/minimax-m3"] == "primary/minimax-m3"
+    # 旧的空链 = 没设过默认档：取第一项，不留下空链。
+    assert read_model_chain() == ("primary/minimax-m3.1-flash",)
+
+
+def test_default名称被保留(clean_env: None) -> None:
+    with pytest.raises(ValueError, match="保留名"):
+        normalize_name("default")
+    with pytest.raises(ValueError, match="保留名"):
+        save_provider("default", base_url="https://x.example/v1", api_key="k", models=())
 
 
 def test_进程环境变量提供的项不能在页面改(clean_env: None, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -268,32 +292,25 @@ def test_环境变量提供的供应商也能列出(clean_env: None, monkeypatch
     monkeypatch.setenv(
         "LLM_ENVONLY_MODELS", '[{"id":"envonly/flash","upstream":"EnvOnly"}]'
     )
-    monkeypatch.setenv("LLM_BASE_URL", "https://env-default.example/v1")
-    monkeypatch.setenv("LLM_API_KEY", "sk-env-default")
-
     by_name = {provider.name: provider for provider in list_providers().providers}
-    assert set(by_name) == {"default", "envonly"}
+    assert set(by_name) == {"envonly"}
     assert by_name["envonly"].source == "environment"
     assert by_name["envonly"].models == (ModelMapping("envonly/flash", "EnvOnly"),)
-    assert by_name["default"].source == "environment"
 
 
-def test_页面保存default后llm_default可用(clean_env: None) -> None:
-    """页面只写 LLM_MODELS、不写 LLM_MODEL 时，llm/default 必须仍有默认模型。"""
-    from infra.llm.providers.openai_compatible import get_llm_settings, resolve_model
+def test_默认模型完全由模型链决定(clean_env: None) -> None:
+    from infra.llm.providers.openai_compatible import get_llm_settings
 
     save_provider(
-        "default",
-        base_url="https://api.minimaxi.com/v1",
+        "primary",
+        base_url="https://api.example/v1",
         api_key="sk-real",
-        models=(ModelMapping("llm/flash", "MiniMax-M3.1-Flash"), ModelMapping("llm/pro", "Pro")),
+        models=(ModelMapping("primary/flash", "F"), ModelMapping("primary/pro", "P")),
     )
-    save_model_chain(["llm/flash"])
+    save_model_chain(["primary/pro", "primary/flash"])
 
-    settings = get_llm_settings()
-    assert settings.model_chain_ids() == ("llm/flash",)
-    # 链未配置时也回落到模型表第一项，而不是报“LLM_MODEL 未配置”
-    assert resolve_model("llm/default", settings) == "MiniMax-M3.1-Flash"
+    assert get_llm_settings().model_chain_ids() == ("primary/pro", "primary/flash")
+    assert read_model_chain() == ("primary/pro", "primary/flash")
 
 
 def test_保存或删除供应商会剪掉降级链里的失效模型(clean_env: None) -> None:
@@ -325,12 +342,20 @@ def test_保存或删除供应商会剪掉降级链里的失效模型(clean_env:
 
 
 def test_模型优先链的校验(clean_env: None) -> None:
+    save_provider(
+        "primary",
+        base_url="https://api.example/v1",
+        api_key="k",
+        models=(ModelMapping("primary/a", "A"),),
+    )
     with pytest.raises(ValueError, match="llm/default"):
         save_model_chain(["llm/default"])
+    with pytest.raises(ValueError, match="旧 llm/*"):
+        save_model_chain(["llm/a"])
     with pytest.raises(ValueError, match="不在任何供应商"):
         save_model_chain(["ghost/x"])
     with pytest.raises(ValueError, match="重复"):
-        save_model_chain(["llm/a", "llm/a"])
+        save_model_chain(["primary/a", "primary/a"])
     with pytest.raises(ValueError, match="不能为空"):
         save_model_chain([""])
 

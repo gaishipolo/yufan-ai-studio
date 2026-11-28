@@ -83,10 +83,10 @@ if payload.use_random_prompt:
 ### 2.4 LLM 能力层现状（`api/src/infra/llm/`）
 
 - 入口：`await complete(LlmRequest(model=..., messages=(LlmMessage(role, content),), params={...}))`，**async**、**不重试**。
-- 平台 id `llm/default` → **`LLM_MODEL_CHAIN` 首项**（`client.py:316`），不是单个 `LLM_MODEL`；链为空时保持旧语义：`llm/default` → `LLM_MODEL` → 当前供应商模型表第一项（`providers/openai_compatible.py::resolve_model`）。全空时 `BadRequest("LLM 没有可用模型：请先在 LLM 配置页配置默认模型与降级链，或设置 LLM_MODEL")`。
+- 平台 id `llm/default` → **`LLM_MODEL_CHAIN` 首项**；链为空直接 `BadRequest("LLM 没有可用模型：请先在 LLM 配置页设置默认模型与降级链")`。不再有 default 供应商回落。
 - 降级链最多 `MAX_CHAIN=20` 项；每个模型只调一次，仅 429/401/403/连接失败/5xx 降级，读写超时与 400/422 不降级（`client.py::_should_fallback`）。
 - 客户端超时是全局 `LLMSettings.timeout_sec`（默认 **120s**），没有 per-call 覆盖 —— 所以随机档的 20s / 45s 时限需要新加 seam（§4.3）。
-- 端点未配置时：`BadRequest("LLM 未配置：请设置 LLM_BASE_URL（OpenAI 兼容端点）")`（`client.py:118`）。
+- 具名供应商未配置时：`BadRequest("LLM 供应商 <name> 未配置：请设置 LLM_<NAME>_BASE_URL（OpenAI 兼容端点）")`。
 - 响应里有 `finish_reason`、`usage`、`platform_model`，随机档可直接用它们判截断与记日志。
 - 能力层的硬约定：**提示词模板永远由调用方拼**（infra 不含业务语义）。
 
@@ -164,7 +164,7 @@ if payload.use_random_prompt:
   - 整条链总预算 **45s**：超过后不再启动下一个模型，直接抛当前错误；
   - 前端编译请求单独设 **60s**（必须大于后端 45s 预算）。
   - 接口形状：`complete(request, *, timeout_sec=20.0, deadline=<monotonic 45s>)`。`deadline` 在每次降级前检查，不是「每个模型都重新给 45s」。
-- **输出预算按原文算，不写死 1200**（2026-11-28 P0）：`max_tokens = min(8000, max(800, ceil(总字符数 × 1.3) + 200))`；单格仍受 `MAX_SLOT_TEXT_OVERRIDE=2000` 约束，`maxChars = min(2000, max(len(原文) + 80, ceil(len(原文) × 1.25)))` 一并传给模型。提示词里写「每格不超过 maxChars」。`finish_reason` 为 `length/max_tokens` 必须单独报「模型输出被截断」，`content_filter` 报「内容被拦截」，不能笼统归到「格式不对」。总长最终仍由 `compile_for` 的**执行上限 7000** 兜底（现有 400 不改），所以 prompt 里同时要求「总长尽量不超过原文 1.15 倍」。
+- **输出上限默认 8000、可在调试台覆盖**（2026-11-28 调整）：`max_tokens` 只是模型输出上限，不强制生成长文本。默认 `DEFAULT_MAX_TOKENS=8000`；显式传 `null` 的内部调用才按原文回退到 `min(8000, max(800, ceil(总字符数 × 1.3) + 200))`。单格仍受 `MAX_SLOT_TEXT_OVERRIDE=2000` 约束，`maxChars = min(2000, max(len(原文) + 80, ceil(len(原文) × 1.25)))` 一并传给模型。提示词里写「每格不超过 maxChars」。`finish_reason` 为 `length/max_tokens` 必须单独报「模型输出被截断」，`content_filter` 报「内容被拦截」，不能笼统归到「格式不对」。总长最终仍由 `compile_for` 的**执行上限 7000** 兜底（现有 400 不改），所以 prompt 里同时要求「总长尽量不超过原文 1.15 倍」。
 - **输入总长上限 6000 字**（W2 已实施）：可改写原文合计超过 `MAX_REWRITE_SOURCE_CHARS=6000` 直接 400，不再发请求。原文再长，一次请求的输入/输出预算都不可控；正常模板远低于这个数。
 - **JSON 解析容错只做一层**（W2 已实施）：允许剥掉外层 ```` ```json ```` 围栏；剥完仍不是合法 JSON / 顶层不是对象 / 缺 `slots` 数组 / 键多/少/重复 → 各自 400。`content_filter` 与 `length/max_tokens` 分开报。
 - **形状**：一次调用，一问一答。
@@ -204,7 +204,7 @@ if payload.use_random_prompt:
 | 情况 | 行为 | 理由 |
 |---|---|---|
 | LLM 端点 / 模型未配置 | `BadRequest`：
-「LLM 供应商 default 未配置：请设置 LLM_BASE_URL（OpenAI 兼容端点）」/「LLM 没有可用模型：请先在 LLM 配置页配置默认模型与降级链，或设置 LLM_MODEL」 | 运维没配就说清楚，别静默 |
+「LLM 供应商 <name> 未配置：请设置 LLM_<NAME>_BASE_URL（OpenAI 兼容端点）」/「LLM 没有可用模型：请先在 LLM 配置页设置默认模型与降级链」 | 运维没配就说清楚，别静默 |
 | **上游 401 / 403** | **转成 `UpstreamError`（502/503）**：
 「LLM 供应商认证失败 / 无权访问：请检查 LLM 配置页的密钥与模型权限」 | **绝不能让 401/403 漏出业务端点**：前端拦截器会把 401 当会话失效，续期后**重放**原请求 —— 续期成功就再调一次 LLM、重复计费；续期失败直接把用户踢下线。403 也会被误报成「你没权限」 |
 | 上游 429 | `RateLimited`（429），消息写明是 **LLM 供应商限流** | 前端对 429 没有会话/重放逻辑；换模型由降级链负责 |
@@ -301,7 +301,7 @@ LLM 失败时没有任何写操作可回滚；第 3 步之后不得再碰 sessio
 | 包 | 内容 | 落点 | 验收 |
 |---|---|---|---|
 | **W1** | 必填引用口径收紧（§6.2）+ 前端预检 | `core/template_spec/rules.py`、`studio/src/features/template-specs/requiredRefs.ts` | 新守卫用例：必填槽位只在 `empty ∩ filled` → 必拦；在正文 → 必过 |
-| **W2** ✅ | 模型改写服务：拼提示词 → 调 LLM → 解析 JSON → 严格校验 → 回填规格。**含 P0**：`complete(..., timeout_sec=20, deadline=45s)` 时限 seam；上游 401/403 在边界转 `UpstreamError`；`max_tokens` 按原文动态算并识别截断；模型稿只认 `{{slot:key}}`、引用多重集合守恒；复用 `apply_slot_text_overrides`；`complete` 作为可注入依赖；记 model / 耗时 / usage / finish_reason（不记正文） | `api/src/modules/template_pack/randomness.py`（新）、`slot_text_overrides.py`（抽出共享闸门）、`api/src/infra/llm/client.py` | 已落地：`test_template_randomness.py` 26 条 + `test_llm_client.py` 新增 6 条；假 completer 下合法稿通过，违规稿 / 截断 / 非 JSON / 键对不上 / Mixed / 修饰符 / 401 / 403 / 传输错误均准确；不会把 401/403 抛给调用方；日志字段齐全 |
+| **W2** ✅ | 模型改写服务：拼提示词 → 调 LLM → 解析 JSON → 严格校验 → 回填规格。**含 P0**：`complete(..., timeout_sec=20, deadline=45s)` 时限 seam；上游 401/403 在边界转 `UpstreamError`；`max_tokens` 默认 8000、可配置覆盖并识别截断；模型稿只认 `{{slot:key}}`、引用多重集合守恒；复用 `apply_slot_text_overrides`；`complete` 作为可注入依赖；记 model / 耗时 / usage / finish_reason（不记正文） | `api/src/modules/template_pack/randomness.py`（新）、`slot_text_overrides.py`（抽出共享闸门）、`api/src/infra/llm/client.py` | 已落地：`test_template_randomness.py` 26 条 + `test_llm_client.py` 新增 6 条；假 completer 下合法稿通过，违规稿 / 截断 / 非 JSON / 键对不上 / Mixed / 修饰符 / 401 / 403 / 传输错误均准确；不会把 401/403 抛给调用方；日志字段齐全 |
 | **W3** ✅ | 接进 `compile_for`：随机档分支换成「模型改写」；**P0**：所有 DB 查询（含 `_fills`）在 LLM 前完成并结束只读事务；随机 + overrides / 可选素材 / 无可改写槽位在调用前 400；`random_prompt` 从全部校验、指纹、内联路径下线；**§10 P1**：K 报错拆分、`rewritable_slot_keys` 单一判据 | `api/src/modules/template_pack/spec_service.py`、`spec_gate.py`、`core/template_spec/rules.py`、`slot_text_overrides.py` | 已落地：`test_template_random_compile.py` 8 条（模型稿生效、三类冲突、401→502、事务顺序、死字段不参与、只改死字段不发版）；旧随机提示词用例按新语义改写；K 报错拆分用例通过 |
 | **W4** ✅ | 前端：档位闸门改成「有可改写的可选槽位」；随机档 `activePrompt` 用主提示词；编译请求单独 60s 超时并钉死 `version`；失败提示；老模板不可随机的置灰原因；随机说明改成「模型改写默认描述文案，不是素材随机」 | `studio/src/features/template-library/`、`studio/src/entities/template-spec/api/spec.api.ts` | 已落地：`randomness.test.ts` 18 条 + `SpecLibraryRandomness.test.tsx` 16 条 + `spec.api.test.ts` 1 条；提交带 `version=3`、不送可选素材/改写文案；60s 超时钉住；全量前端 `1445 passed` |
 | **W5** ✅ | 文档与记忆同步；封装页下线死字段；上线前盘点线上 `random_prompt` 非空但没有可改写兜底文案的模板 | `docs/TEMPLATE_SPEC.md` §10.4/§12、`studio/src/features/template-specs/SpecWorkspace.tsx`、`specDraft.ts`、`spec_gate.py` | 已落地：编辑框删除；草稿不再带 randomPrompt；新版本写空；TEMPLATE_SPEC 重写；盘点见 §11（31 个最新版本，5 个 random_prompt 非空，1 个不可改写且是已停用的空模板） |
@@ -390,3 +390,30 @@ W1 与 W2/W3 无耦合，可并行；W3 依赖 W2。**§10 的 P1 项优先并�
 结论：**没有在线模板会因为「缺可改写兜底文案」而失去随机档**。5 个旧版本的
 `random_prompt` 保留在历史行里；下次发布新版本时写入空串，前端与编译链路都已
 不再读取它。
+
+---
+
+## 12. LLM 调试台（2026-11-28）
+
+LLM 配置页（`page:llm`）下方新增「随机改写调试」面板，用来在**不创建任务、不执行生成**的前提下调 prompt：
+
+- **入口**：`GET /template-specs/debug/templates` 列出有发布版本的模板、可切模型与当前生产配置；
+  `POST /template-specs/debug/rewrite` 跑一次改写 + 编译预览；
+  `PUT /template-specs/debug/settings` 把当前 model / system prompt / temperature / max tokens /
+  额外参数保存为**生产随机改写配置**。
+- **权限**：路由归属模板模块（要读模板、跑 randomness、做 compile），但沿用
+  `llm_config:write` —— 它是 LLM 配置页的运维工具，不该额外要求模板编辑权限。
+- **可调参数**：平台模型（`llm/default` 走降级链，也可指定具体 id）、system prompt 原文、
+  temperature、max tokens（默认 8000，可覆盖）、额外 LLM params（top_p 等）。
+- **覆盖生产配置**：配置存 `app_meta.llm.random_rewrite`（带版本与写入历史），
+  编译随机档时读取；调试运行本身不写配置。
+- **页面回填与恢复**：打开页面就加载当前保存值到输入框（不是代码默认值）；
+  改乱后「恢复已保存」回到这份生产配置，只有「覆盖生产配置」才写回。
+- **返回**：模型原始输出、实际 system/user/params、改写后的槽位文案、编译后的最终
+  提示词、prompt 长度与执行上限、reference/text 素材 id、耗时与 token。
+- **编译预览的素材**：必填槽位用 `debug:` 前缀合成素材、固定槽位用版本里钉的 asset id；
+  只是为了让编号与段落展开成立，**不会物化、不会落库、不会调 task**。
+- **失败也可见**：模型稿格式/引用校验失败时返回 `ok=false` + 原始输出 + 错误，
+  方便调整 prompt；上游 401/403/传输错误同样在这里显示，不会伪装成会话失效。
+- **守卫**：`api/tests/test_template_rewrite_debug.py`（5 条，含「保存后生产编译使用新配置」）+
+  `studio/src/pages/llm/RewriteDebugPanel.test.tsx`（4 条，含模型切换与覆盖保存）。

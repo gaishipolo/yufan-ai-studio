@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { Download, Plus, Trash2, Zap, ChevronUp, ChevronDown } from 'lucide-react';
+import { Download, Plus, Trash2, Zap, ChevronUp, ChevronDown, Star } from 'lucide-react';
 import { llmConfigApi, type LlmModelOut, type LlmProviderOut } from '@/entities/llm/api/llm-config.api';
 import {
   Button,
@@ -10,10 +10,12 @@ import {
   Modal,
   Notice,
   PageHeader,
+  Tabs,
   TextInput,
 } from '@/shared/ui';
 import { ApiError } from '@/shared/api/types';
 import { useCan } from '@/shared/access/use-access';
+import { RewriteDebugPanel } from './RewriteDebugPanel';
 
 /**
  * LLM 供应商配置：增删供应商、维护「平台 id → 上游模型名」映射、
@@ -76,14 +78,12 @@ function ModelChainPanel({
     >
       <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h2 className="text-body font-medium text-ink">默认模型与降级顺序</h2>
-          <p className="mt-1 text-meta text-ink-soft">
-            第一项是默认模型；调用失败时按顺序尝试后面的模型。
-          </p>
-          <p className="mt-0.5 text-meta text-ink-mute">
-            只有 429 / 401 / 403 / 连接失败 / 5xx 会降级；400/422 与超时不降级
-            —— 超时可能已被上游受理，换模型会重复计费。
-          </p>
+          <h2
+            className="text-body font-medium text-ink"
+            title="第一项是默认模型；供应商不可用（缺 key / 模型不存在）、429 / 401 / 403 / 连接失败 / 5xx 会降级，通用 400/422 与超时不降级"
+          >
+            默认模型与降级顺序
+          </h2>
         </div>
         {canWrite && (
           <Button size="sm" onClick={onSave} disabled={saving}>
@@ -99,10 +99,7 @@ function ModelChainPanel({
       )}
 
       {chain.length === 0 ? (
-        <p className="mt-3 text-meta text-ink-mute">
-          未配置时 <code>llm/default</code> 使用 default 供应商的 LLM_MODEL
-          （或它的第一个模型映射），不做降级。
-        </p>
+        <p className="mt-3 text-meta text-ink-mute">未配置</p>
       ) : (
         <ol className="mt-3 flex flex-col gap-1.5">
           {chain.map((id, index) => {
@@ -150,8 +147,7 @@ function ModelChainPanel({
 
       {canWrite && available.length > 0 && (
         <div className="mt-3">
-          <p className="text-meta text-ink-soft">加进链里：</p>
-          <ul className="mt-1 flex flex-wrap gap-1.5">
+          <ul className="flex flex-wrap gap-1.5">
             {available.map((model) => (
               <li key={model.id}>
                 <button
@@ -190,7 +186,8 @@ function ProviderEditor({
   /** 从网关拉到的上游模型 id；点一下就加进下面的映射。 */
   candidates: string[];
   fetching: boolean;
-  onFetch: () => void;
+  /** 带上当前草稿：新供应商还没保存，拉取要用弹窗里的网关与密钥。 */
+  onFetch: (draft: Draft) => void;
   fetchError: string | null;
 }) {
   const [draft, setDraft] = useState<Draft>(initial);
@@ -203,8 +200,9 @@ function ProviderEditor({
       models: prev.models.map((m, i) => (i === index ? { ...m, ...patch } : m)),
     }));
   const addCandidate = (upstream: string) => {
-    // 平台 id 带供应商前缀：default 用 llm/*，具名供应商用 <name>/*。
-    const prefix = initial.name && initial.name !== 'default' ? initial.name : 'llm';
+    // 平台 id 带供应商前缀，前缀取当前草稿名（新供应商初始没有名字）。
+    const prefix = draft.name.trim().toLowerCase();
+    if (!prefix) return;
     return setDraft((prev) =>
       prev.models.some((m) => m.upstream === upstream)
         ? prev
@@ -217,6 +215,11 @@ function ProviderEditor({
           },
     );
   };
+
+  // 新供应商还没保存：名字、网关、密钥缺一项，服务端就无从发起请求。
+  const canFetch =
+    Boolean(draft.name.trim() && draft.baseUrl.trim()) &&
+    (Boolean(initial.name) || Boolean(draft.apiKey.trim()));
 
   return (
     <Modal open={open} onClose={onClose} title={initial.name ? '编辑供应商' : '新增供应商'} width={640}>
@@ -232,9 +235,8 @@ function ProviderEditor({
             id="llm-name"
             value={draft.name}
             onChange={(e) => setDraft({ ...draft, name: e.target.value })}
-            disabled={Boolean(initial.name)}
             placeholder="minimax"
-            title={initial.name ? '供应商名保存后不能改' : '小写字母、数字、下划线，字母开头'}
+            title="小写字母、数字、下划线，字母开头；改名会同步迁移模型 id 与降级链"
             aria-label="供应商名"
             required
           />
@@ -265,65 +267,52 @@ function ProviderEditor({
 
         <fieldset className="flex flex-col gap-2">
           <legend className="text-meta text-ink-soft">模型映射</legend>
-          <p className="text-meta text-ink-mute">
-            平台 id 要带供应商前缀：default 用 <code>llm/名字</code>，具名供应商用{' '}
-            <code>{initial.name && initial.name !== 'default' ? initial.name : '<供应商名>'}/名字</code>
-            。运行时按前缀选网关。
-          </p>
-          {/* 新供应商还没保存，服务端没有网关可拉；拉取只对已有供应商开放。 */}
-          {Boolean(initial.name) && (
-            <div className="flex flex-col gap-1.5 rounded-md border border-line-soft bg-panel-soft p-2">
-              <div className="flex items-center justify-between gap-2">
-                <span className="text-meta text-ink-soft">网关上的模型</span>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  onClick={onFetch}
-                  disabled={fetching}
-                >
-                  <Download size={13} /> {fetching ? '拉取中…' : '从网关拉取'}
-                </Button>
-              </div>
-              {fetchError && <p className="text-meta text-danger-deep">{fetchError}</p>}
-              {candidates.length > 0 ? (
-                <ul className="flex flex-wrap gap-1.5">
-                  {candidates.map((upstream) => {
-                    const added = draft.models.some((m) => m.upstream === upstream);
-                    return (
-                      <li key={upstream}>
-                        <button
-                          type="button"
-                          disabled={added}
-                          onClick={() => addCandidate(upstream)}
-                          title={added ? '已在下面的映射里' : `添加 ${upstream} 到映射`}
-                          className="rounded-md border border-line-soft bg-panel px-2 py-1 text-meta text-ink-soft transition-colors hover:border-primary-line hover:text-primary disabled:cursor-default disabled:opacity-50"
-                        >
-                          {added ? '✓ ' : '+ '}
-                          {upstream}
-                        </button>
-                      </li>
-                    );
-                  })}
-                </ul>
-              ) : (
-                !fetching && (
-                  <p className="text-meta text-ink-mute">
-                    点「从网关拉取」看这个端点实际有哪些模型，再点模型名加进映射。
-                  </p>
-                )
-              )}
+          <div className="flex flex-col gap-1.5 rounded-md border border-line-soft bg-panel-soft p-2">
+            <div className="flex items-center justify-between gap-2">
+              <span className="text-meta text-ink-soft">网关上的模型</span>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={() => onFetch(draft)}
+                disabled={fetching || !canFetch}
+                title="用上面填的网关与密钥拉取；新供应商不用先保存"
+              >
+                <Download size={13} /> {fetching ? '拉取中…' : '从网关拉取'}
+              </Button>
             </div>
-          )}
+            {fetchError && <p className="text-meta text-danger-deep">{fetchError}</p>}
+            {candidates.length > 0 ? (
+              <ul className="flex flex-wrap gap-1.5">
+                {candidates.map((upstream) => {
+                  const added = draft.models.some((m) => m.upstream === upstream);
+                  return (
+                    <li key={upstream}>
+                      <button
+                        type="button"
+                        disabled={added}
+                        onClick={() => addCandidate(upstream)}
+                        title={added ? '已在下面的映射里' : `添加 ${upstream} 到映射`}
+                        className="rounded-md border border-line-soft bg-panel px-2 py-1 text-meta text-ink-soft transition-colors hover:border-primary-line hover:text-primary disabled:cursor-default disabled:opacity-50"
+                      >
+                        {added ? '✓ ' : '+ '}
+                        {upstream}
+                      </button>
+                    </li>
+                  );
+                })}
+              </ul>
+            ) : null}
+          </div>
           {draft.models.map((model, index) => (
             <div key={index} className="flex items-center gap-2">
               <TextInput
                 value={model.id}
                 onChange={(e) => setModel(index, { id: e.target.value })}
                 placeholder={
-                  initial.name && initial.name !== 'default'
-                    ? `${initial.name}/flash`
-                    : 'llm/flash'
+                  draft.name.trim()
+                    ? `${draft.name.trim().toLowerCase()}/flash`
+                    : 'minimax/flash'
                 }
                 aria-label={`平台模型 id ${index + 1}`}
                 className="flex-1"
@@ -374,17 +363,23 @@ function ProviderEditor({
 function ProviderCard({
   provider,
   editable,
+  defaultModelId,
   onEdit,
   onDelete,
   onTest,
+  onSetDefault,
   busy,
+  settingDefault,
 }: {
   provider: LlmProviderOut;
   editable: boolean;
+  defaultModelId?: string;
   onEdit: () => void;
   onDelete: () => void;
   onTest: (modelId?: string) => void;
+  onSetDefault: (modelId: string) => void;
   busy: boolean;
+  settingDefault: boolean;
 }) {
   return (
     <section className="rounded-card border border-line-soft bg-panel p-4" aria-label={`供应商 ${provider.name}`}>
@@ -416,7 +411,11 @@ function ProviderCard({
         </div>
         <div className="flex gap-1.5">
           <dt className="text-ink-mute">来源</dt>
-          <dd className="text-ink">{provider.source === 'environment' ? '环境变量' : '配置文件'}</dd>
+          <dd className="text-ink">{provider.source === 'environment'
+              ? '环境变量'
+              : provider.source === 'none'
+                ? '未配置'
+                : '配置文件'}</dd>
         </div>
       </dl>
 
@@ -431,6 +430,23 @@ function ProviderCard({
               <code className="text-ink">{model.id}</code>
               <span className="text-ink-mute">→</span>
               <code className="text-ink-soft">{model.upstream}</code>
+              {model.id === defaultModelId ? (
+                <span className="rounded-xs bg-primary-soft px-1.5 py-[1px] text-micro font-medium text-primary ring-1 ring-inset ring-primary-line">
+                  默认
+                </span>
+              ) : (
+                editable && (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => onSetDefault(model.id)}
+                    disabled={settingDefault}
+                    aria-label={`将 ${model.id} 设为默认`}
+                  >
+                    <Star size={12} /> 设为默认
+                  </Button>
+                )
+              )}
               {editable && (
                 <Button
                   variant="ghost"
@@ -445,15 +461,16 @@ function ProviderCard({
             </li>
           ))}
         </ul>
-      ) : (
-        <p className="mt-3 text-meta text-ink-mute">还没有模型映射，点「编辑」添加或从网关拉取。</p>
-      )}
+      ) : null}
     </section>
   );
 }
 
+type LlmTab = 'chain' | 'providers' | 'debug';
+
 export default function LlmConfigPage() {
   const queryClient = useQueryClient();
+  const [tab, setTab] = useState<LlmTab>('providers');
   const canWrite = useCan('llm_config:write');
   const [editor, setEditor] = useState<{ initial: Draft; name: string } | null>(null);
   const [deleting, setDeleting] = useState<LlmProviderOut | null>(null);
@@ -484,13 +501,31 @@ export default function LlmConfigPage() {
     setNotice(err instanceof ApiError ? err.message : '操作失败，请查看后端日志');
 
   const saveMutation = useMutation({
-    mutationFn: (draft: Draft) =>
-      llmConfigApi.save({
-        name: draft.name,
+    mutationFn: async (draft: Draft) => {
+      const oldName = editor?.initial.name ?? '';
+      const newName = draft.name.trim().toLowerCase();
+      let models = draft.models;
+      if (oldName && newName !== oldName) {
+        await llmConfigApi.rename(oldName, newName);
+        const prefix = `${oldName}/`;
+        models = models.map(model => ({
+          ...model,
+          id: model.id.startsWith(prefix)
+            ? `${newName}/${model.id.slice(prefix.length)}`
+            : model.id,
+        }));
+        // 改名已成功：即使随后保存字段失败，重试也不应再走一次改名。
+        setEditor(current =>
+          current ? {...current, initial: {...current.initial, name: newName}} : current,
+        );
+      }
+      return llmConfigApi.save({
+        name: newName,
         baseUrl: draft.baseUrl,
         apiKey: draft.apiKey,
-        models: draft.models,
-      }),
+        models,
+      });
+    },
     onSuccess: () => {
       setEditor(null);
       setNotice(null);
@@ -509,7 +544,11 @@ export default function LlmConfigPage() {
   });
 
   const fetchMutation = useMutation({
-    mutationFn: (name: string) => llmConfigApi.fetchModels(name),
+    mutationFn: (draft: Pick<Draft, 'name' | 'baseUrl' | 'apiKey'>) =>
+      llmConfigApi.fetchModels(draft.name.trim().toLowerCase(), {
+        baseUrl: draft.baseUrl,
+        apiKey: draft.apiKey,
+      }),
     onSuccess: (result) => {
       // 结果直接进编辑弹窗的候选列表，不塞进一句会消失的提示。
       setCandidates(result.models?.map((m) => m.id).filter(Boolean) ?? []);
@@ -540,6 +579,18 @@ export default function LlmConfigPage() {
     onError: reportError,
   });
 
+  const setDefaultMutation = useMutation({
+    mutationFn: (models: string[]) => llmConfigApi.saveModelChain(models),
+    onSuccess: (_, models) => {
+      setNotice(`已将 ${models[0] ?? ''} 设为默认模型`);
+      invalidate();
+    },
+    onError: (err: unknown) => {
+      setChainDraft(data?.modelChain ?? []);
+      reportError(err);
+    },
+  });
+
   const moveChain = (index: number, delta: number) => {
     setChainDraft((prev) => {
       const next = [...prev];
@@ -550,6 +601,12 @@ export default function LlmConfigPage() {
       next.splice(target, 0, item);
       return next;
     });
+  };
+
+  const setDefaultModel = (modelId: string) => {
+    const next = [modelId, ...chainDraft.filter(id => id !== modelId)];
+    setChainDraft(next);
+    setDefaultMutation.mutate(next);
   };
 
   const openEditor = (provider?: LlmProviderOut) => {
@@ -575,58 +632,78 @@ export default function LlmConfigPage() {
     <>
       <PageHeader
         title="LLM 配置"
-        meta="OpenAI 兼容网关 · 平台 id 映射"
         actions={
-          canWrite && (
+          canWrite && tab === 'providers' ? (
             <Button onClick={() => openEditor()}>
               <Plus size={14} /> 新增供应商
             </Button>
-          )
+          ) : undefined
         }
       />
 
-      <p className="text-meta text-ink-mute">
-        写权限可修改网关并用已存密钥发起连通测试，请只授予运维；私网/本机网关需先在
-        <code className="mx-1">LLM_ALLOWED_HOSTS</code>里登记主机。
-      </p>
+      <Tabs
+        items={[
+          {value: 'chain', label: '默认模型与降级顺序'},
+          {value: 'providers', label: '供应商配置'},
+          ...(canWrite ? [{value: 'debug' as const, label: '随机改写调试'}] : []),
+        ]}
+        value={tab}
+        onChange={setTab}
+        className="mt-3 border-b border-line-soft"
+      />
 
-      {notice && (
+      {tab !== 'debug' && notice && (
         <Notice tone="info" title="操作结果" onClose={() => setNotice(null)}>
           {notice}
         </Notice>
       )}
-      {error instanceof Error && (
+      {tab !== 'debug' && error instanceof Error && (
         <Notice tone="error" title="加载失败">{error.message}</Notice>
       )}
-      {isLoading && <p className="text-meta text-ink-mute">加载中…</p>}
+      {tab !== 'debug' && isLoading && <p className="text-meta text-ink-mute">加载中…</p>}
 
       <div className="flex flex-col gap-3.5">
-        <ModelChainPanel
-          models={chainModels}
-          chain={chainDraft}
-          chainError={data?.modelChainError}
-          canWrite={canWrite}
-          saving={saveChainMutation.isPending}
-          onMove={moveChain}
-          onRemove={(id) => setChainDraft((prev) => prev.filter((item) => item !== id))}
-          onAdd={(id) => setChainDraft((prev) => (prev.includes(id) ? prev : [...prev, id]))}
-          onSave={() => saveChainMutation.mutate(chainDraft)}
-        />
-        {providers.map((provider) => (
-          <ProviderCard
-            key={provider.name}
-            provider={provider}
-            editable={canWrite}
-            onEdit={() => openEditor(provider)}
-            onDelete={() => setDeleting(provider)}
-            onTest={(modelId) => testMutation.mutate({ name: provider.name, modelId })}
-            busy={testMutation.isPending}
+        {tab === 'chain' && (
+          <ModelChainPanel
+            models={chainModels}
+            chain={chainDraft}
+            chainError={data?.modelChainError}
+            canWrite={canWrite}
+            saving={saveChainMutation.isPending}
+            onMove={moveChain}
+            onRemove={(id) => setChainDraft((prev) => prev.filter((item) => item !== id))}
+            onAdd={(id) => setChainDraft((prev) => (prev.includes(id) ? prev : [...prev, id]))}
+            onSave={() => saveChainMutation.mutate(chainDraft)}
           />
-        ))}
-        {!isLoading && providers.length === 0 && (
-          <Notice tone="info" title="还没有供应商">
-            新增一个 OpenAI 兼容网关，填上地址和密钥，再配置模型映射即可调用。
-          </Notice>
+        )}
+        {tab === 'providers' && (
+          <>
+            {providers.map(provider => (
+              <ProviderCard
+                key={provider.name}
+                provider={provider}
+                editable={canWrite}
+                defaultModelId={chainDraft[0]}
+                onEdit={() => openEditor(provider)}
+                onDelete={() => setDeleting(provider)}
+                onTest={modelId => testMutation.mutate({ name: provider.name, modelId })}
+                onSetDefault={setDefaultModel}
+                busy={testMutation.isPending}
+                settingDefault={setDefaultMutation.isPending}
+              />
+            ))}
+            {!isLoading && providers.length === 0 && (
+              <p className="text-meta text-ink-mute">还没有供应商</p>
+            )}
+          </>
+        )}
+        {tab === 'debug' && canWrite && (
+          <RewriteDebugPanel
+            models={chainModels.map(model => ({
+              id: model.id,
+              label: `${model.id} · ${model.upstream}`,
+            }))}
+          />
         )}
       </div>
 
@@ -639,7 +716,7 @@ export default function LlmConfigPage() {
           saving={saveMutation.isPending}
           candidates={candidates}
           fetching={fetchMutation.isPending}
-          onFetch={() => fetchMutation.mutate(editor.name)}
+          onFetch={(draft) => fetchMutation.mutate(draft)}
           fetchError={fetchError}
         />
       )}

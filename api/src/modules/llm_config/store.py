@@ -5,25 +5,18 @@
 ```
 LLM_<NAME>_BASE_URL=https://.../v1
 LLM_<NAME>_API_KEY=...
-LLM_<NAME>_MODELS=[{"id":"minimax/flash","upstream":"MiniMax-M3.1-Flash"}]
+LLM_<NAME>_MODELS=[{"id":"<name>/flash","upstream":"..."}]
 ```
 
-**`default` 是特例：它的键就是 `LLM_BASE_URL` / `LLM_API_KEY` / `LLM_MODELS`。**
-这不是"为了兼容旧形状"的权宜，而是必须如此 —— 运行时 `infra.llm.complete()`
-的 `LLMSettings` 前缀就是 `LLM_`。如果页面写 `LLM_DEFAULT_*` 而运行时读
-`LLM_*`，页面配好了调用却读空（2026-11-27 审查抓到的断链）。让 default
-直接写运行时读的键，两份真相就不会漂移。
+所有供应商都带名字，不再有特殊的 `default` 供应商。历史 `LLM_*` / `llm/*`
+通过一次性迁移命令转成具名供应商（默认 `primary`）。
 
-平台模型 id 带供应商前缀：default 用 `llm/*`，具名供应商用 `<name>/*`。
-运行时按前缀路由到 `LLM_<NAME>_*`，页面建的供应商才真的能调用。
-
-另有一个**全局**键 `LLM_MODEL_CHAIN`：平台模型 id 的有序数组，第一项为默认
-模型，`llm/default` 调用失败时按顺序降级。它不是供应商私有的，所以不套
-`LLM_<NAME>_` 前缀。
+平台模型 id 必须带供应商前缀：`<name>/*`。运行时按前缀路由到
+`LLM_<NAME>_*`。另有一个**全局**键 `LLM_MODEL_CHAIN`：平台模型 id 的有序
+数组，第一项为默认模型，`llm/default` 调用失败时按顺序降级。
 
 为什么不用一张 JSON 大键：`runtime_config.apply_updates` 的密钥脱敏、
-`.env.example` 对齐、运维页字段发现全按「一个键一个值」工作。一个供应商
-拆成三个标准键，就能继续用这套纪律；密钥不会混进模型表里被日志打出来。
+`.env.example` 对齐、运维页字段发现全按「一个键一个值」工作。
 
 读取逻辑在 `infra/llm/providers/source.py`：页面与运行时必须读同一份解析，
 否则就是又一次断链。本文件只负责**写**与页面侧校验。
@@ -121,10 +114,7 @@ def _parse_models(raw: str, provider_name: str) -> tuple[ModelMapping, ...]:
     if not raw.strip():
         return ()
     if not raw.lstrip().startswith("["):
-        # V1 旧形状：LLM_MODEL 是单个上游模型名。只有 default 有这种形状。
-        if provider_name != "default":
-            raise ValueError(f"供应商 {provider_name} 的模型列表必须是 JSON 数组")
-        return (ModelMapping("llm/default", raw.strip()),)
+        raise ValueError(f"供应商 {provider_name} 的模型列表必须是 JSON 数组")
     entries = parse_model_entries(raw)
     result: list[ModelMapping] = []
     seen: set[str] = set()
@@ -268,11 +258,17 @@ def _prune_chain(changes: dict[str, str], name: str, models: Sequence[ModelMappi
     if not chain:
         return
     available = {model.id for model in models}
-    remaining = tuple(
-        model_id
-        for model_id in chain
-        if not (provider_of(model_id) == name and model_id not in available)
-    )
+    kept: list[str] = []
+    for model_id in chain:
+        try:
+            owner = provider_of(model_id)
+        except ValueError:
+            # 旧 llm/* 等无效 id 不归本次保存处理；留给迁移命令统一处理。
+            kept.append(model_id)
+            continue
+        if not (owner == name and model_id not in available):
+            kept.append(model_id)
+    remaining = tuple(kept)
     if remaining != chain:
         changes[MODEL_CHAIN_KEY] = _encode_chain(remaining)
 
@@ -306,24 +302,12 @@ def _save_provider_locked(
 ) -> ProviderOut:
     lines = read_lines()
     before = read_file_values()
-    # `default` 直接写 LLM_* —— 与运行时 LLMSettings 前缀一致，不再"迁移"到
-    # LLM_DEFAULT_*（那正是断链的根源）。保存时顺手清掉早期版本留下的
-    # LLM_DEFAULT_*，避免两处都在、改一处不生效。
     url_key, key_key, models_key = keys_of(name)
-    # 早期形状：LLM_DEFAULT_* / LLM_MODEL（单值）
-    stale_keys = (
-        ("LLM_DEFAULT_BASE_URL", "LLM_DEFAULT_API_KEY", "LLM_DEFAULT_MODELS", "LLM_MODEL")
-        if name == "default"
-        else ()
-    )
 
     changes: dict[str, str] = {url_key: clean_url}
 
     if api_key.strip():
         changes[key_key] = _validate_value("密钥", api_key)
-    elif name == "default" and key_key not in before and "LLM_DEFAULT_API_KEY" in before:
-        # 早期 LLM_DEFAULT_* 形状：留空保存也要把旧密钥带过来，不能弄丢
-        changes[key_key] = before["LLM_DEFAULT_API_KEY"]
     elif key_key in before and not os.environ.get(key_key):
         # 留空 = 不改；但只有 .env 里有值、且不被环境变量覆盖时才成立
         pass
@@ -338,14 +322,7 @@ def _save_provider_locked(
     if overridden:
         raise ValueError("这些项由进程环境变量提供，不能在页面改：" + "、".join(sorted(overridden)))
 
-    # 清掉早期形状，避免两处都在、将来改一处不生效。
-    to_remove = set(stale_keys)
-    kept_lines = [
-        line
-        for line in lines
-        if not ((match := _LINE_RE.match(line)) is not None and match.group(1) in to_remove)
-    ]
-    _atomic_write(_replace_lines(kept_lines, changes))
+    _atomic_write(_replace_lines(lines, changes))
     from infra.env_settings import clear_cache
 
     clear_cache()
@@ -372,6 +349,8 @@ def _normalize_chain(models: Sequence[str]) -> tuple[str, ...]:
             raise ValueError("模型优先链里的 id 不能为空")
         if model_id == "llm/default":
             raise ValueError("模型优先链不能包含 llm/default：它表示整条链本身")
+        if model_id.startswith("llm/"):
+            raise ValueError(f"模型优先链里的旧 llm/* 模型 id 已停用：{model_id}")
         if model_id in seen:
             raise ValueError(f"模型优先链里模型重复：{model_id}")
         seen.add(model_id)
@@ -412,11 +391,6 @@ def save_model_chain(models: Sequence[str]) -> tuple[str, ...]:
 def delete_provider(name: str) -> None:
     name = normalize_name(name)
     keys = set(keys_of(name))
-    if name == "default":
-        # 早期形状一起清掉，否则删完页面刷新又"发现"一个 default。
-        keys.update(
-            ("LLM_DEFAULT_BASE_URL", "LLM_DEFAULT_API_KEY", "LLM_DEFAULT_MODELS", "LLM_MODEL")
-        )
     with env_write_lock():
         lines = read_lines()
         values = read_file_values()

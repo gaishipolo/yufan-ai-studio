@@ -37,11 +37,10 @@ class LLMSettings(DriverSettings):
     timeout_sec: float = 120.0
     # 上游模型名，如 qwen-plus / deepseek-v3。调用方用平台 id，这里翻译。
     model: str = ""
-    # 页面配的「平台 id → 上游模型名」映射（JSON 数组）。与 LLM_BASE_URL
-    # 同属 LLM_ 前缀：页面存 default 供应商时写这组键，运行时就在这里读。
+    # 当前供应商的「平台 id → 上游模型名」映射（JSON 数组）。
     models: str = ""
     # 全局模型优先/降级链（JSON 数组，第一项为默认模型）。只有 `llm/default`
-    # 走这条链；链项形如 `llm/qwen-plus` 或 `minimax/flash`。
+    # 走这条链；链项形如 `primary/qwen-plus` 或 `minimax/flash`。
     model_chain: str = ""
     # 页面保存网关时允许的私网/本机主机（逗号分隔）。空 = 只允许公网。
     allowed_hosts: str = ""
@@ -68,7 +67,7 @@ class LLMSettings(DriverSettings):
         return self.model.strip()
 
     def model_table(self) -> dict[str, str]:
-        """解析 ``LLM_MODELS``。坏 JSON 直接抛 ``ValueError``，不静默当空表。"""
+        """解析当前供应商的 models 字段。坏 JSON 直接抛 ``ValueError``。"""
         raw = self.models.strip()
         if not raw:
             return {}
@@ -96,8 +95,9 @@ MAX_CHAIN = 20
 def parse_model_chain(raw: str) -> tuple[str, ...]:
     """解析模型优先链（JSON 数组，第一项为默认模型）。
 
-    链项是**平台模型 id**（`llm/qwen-plus` / `minimax/flash`），不是上游名。
-    `llm/default` 不能出现在链里——它表示整条链本身，放进去会自我递归。
+    链项是**平台模型 id**（`primary/qwen-plus` / `minimax/flash`），不是上游名。
+    `llm/default` 不能出现在链里——它表示整条链本身，放进去会自我递归；
+    旧 `llm/*` 前缀也已停用。
     """
     text = raw.strip()
     if not text:
@@ -116,6 +116,8 @@ def parse_model_chain(raw: str) -> tuple[str, ...]:
         model_id = item.strip()
         if model_id == "llm/default":
             raise ValueError("LLM_MODEL_CHAIN 不能包含 llm/default")
+        if model_id.startswith("llm/"):
+            raise ValueError(f"LLM_MODEL_CHAIN 里的旧 llm/* 模型 id 已停用：{model_id}")
         if model_id in seen:
             raise ValueError(f"LLM_MODEL_CHAIN 里模型重复：{model_id}")
         seen.add(model_id)
@@ -160,13 +162,11 @@ def load_provider(name: str) -> ProviderRuntime:
         models=config.models,
     )
     try:
-        # 具名供应商的旧配置可能还是 llm/*；运行时也做一次归一，避免
-        # 页面已能调用、手工/环境变量配置却 400。
         table: dict[str, str] = {}
         for model_id, upstream in entries:
             normalized = normalize_model_id(config.name, model_id)
             if normalized in table:
-                raise ValueError(f"模型 id 迁移后重复：{normalized}")
+                raise ValueError(f"模型 id 重复：{normalized}")
             table[normalized] = upstream
     except ValueError as exc:
         raise BadRequest(
@@ -177,7 +177,7 @@ def load_provider(name: str) -> ProviderRuntime:
         settings=settings,
         model_map=table,
         api_key_env=config.api_key_env,
-        label="LLM" if config.name == "default" else f"LLM {config.name}",
+        label=f"LLM {config.name}",
     )
 
 
@@ -192,25 +192,14 @@ def resolve_model(
     页面存的映射）> 模块常量 `MODELS`。
 
     - 映射表里有 → 用映射值；
-    - `llm/default` → `LLM_MODEL`，再回落到当前供应商模型表的第一项
-      （页面只配了映射、没配 LLM_MODEL 时也能用）；
-    - `llm/<name>` → 直连上游名（V1 兼容）；
-    - `<provider>/<name>` → 必须在该供应商的映射表里，不猜。
+    - 其它 id 必须在该供应商的映射表里，不猜。
     """
     from_settings = settings.model_table() if settings else {}
     table = {**MODELS, **from_settings, **(model_map or {})}
     if platform_id in table:
         return table[platform_id]
     if platform_id == "llm/default":
-        if settings and settings.default_upstream_model():
-            return settings.default_upstream_model()
-        if table:
-            return next(iter(table.values()))
-        raise ValueError(
-            "LLM 没有可用模型：请先在 LLM 配置页配置默认模型与降级链，或设置 LLM_MODEL"
-        )
-    if platform_id.startswith("llm/") and platform_id[4:].strip():
-        return platform_id[4:]
+        raise ValueError("llm/default 只能由 complete() 走模型链解析")
     raise ValueError(f"未知的 LLM 模型 id：{platform_id}（未在供应商模型映射里登记）")
 
 

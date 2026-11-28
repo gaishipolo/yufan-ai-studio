@@ -5435,6 +5435,63 @@
         }
       }
     },
+    "/api/v1/llm-config/providers/{name}/rename": {
+      "post": {
+        "tags": [
+          "LLM 配置"
+        ],
+        "summary": "重命名供应商（同步迁移 env 键、模型前缀、降级链）",
+        "operationId": "rename_provider_endpoint_api_v1_llm_config_providers__name__rename_post",
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "name": "name",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Name"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RenameProviderIn"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_LlmProviderOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/v1/llm-config/model-chain": {
       "put": {
         "tags": [
@@ -5488,7 +5545,7 @@
           "LLM 配置"
         ],
         "summary": "从供应商网关拉取真实模型 id",
-        "description": "GET {base_url}/models，返回上游 id 列表。只读外网请求。",
+        "description": "GET {base_url}/models，返回上游 id 列表。只读外网请求。\n\n新供应商还没保存，网关/密钥由请求体带过来；已保存的可以省略请求体，\n或只带改过的字段。这样「填完 → 拉模型 → 勾选」不必先存一遍。",
         "operationId": "fetch_models_api_v1_llm_config_providers__name__models_fetch_post",
         "security": [
           {
@@ -5506,6 +5563,23 @@
             }
           }
         ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/FetchModelsIn"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "title": "Payload"
+              }
+            }
+          }
+        },
         "responses": {
           "200": {
             "description": "Successful Response",
@@ -6912,6 +6986,130 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ApiResponse_SpecValidateOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/template-specs/debug/templates": {
+      "get": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "LLM 调试台：可调试的模板与默认改写参数",
+        "description": "只读：列出有发布版本的模板，并给出默认 system prompt / 温度。",
+        "operationId": "debug_templates_api_v1_template_specs_debug_templates_get",
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RewriteDebugOptionsOut_"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/template-specs/debug/settings": {
+      "put": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "LLM 调试台：把当前 system prompt / 温度 / 模型保存为生产配置",
+        "description": "写入 `app_meta.llm.random_rewrite`；下一次随机档编译即生效。",
+        "operationId": "debug_save_settings_api_v1_template_specs_debug_settings_put",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RandomRewriteSettingsIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RandomRewriteSettingsOut_"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ]
+      }
+    },
+    "/api/v1/template-specs/debug/rewrite": {
+      "post": {
+        "tags": [
+          "模板封装",
+          "模板规格"
+        ],
+        "summary": "LLM 调试台：改写并预览生成提示词（不创建任务）",
+        "description": "调一次模型 + 纯函数编译；不落库、不调 task、不物化素材。",
+        "operationId": "debug_rewrite_api_v1_template_specs_debug_rewrite_post",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/RewriteDebugIn"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiResponse_RewriteDebugOut_"
                 }
               }
             }
@@ -9608,6 +9806,33 @@
         "type": "object",
         "title": "ApiResponse[PermissionTreeOut]"
       },
+      "ApiResponse_RandomRewriteSettingsOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RandomRewriteSettingsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RandomRewriteSettingsOut]"
+      },
       "ApiResponse_ReadyOut_": {
         "properties": {
           "code": {
@@ -9688,6 +9913,60 @@
         },
         "type": "object",
         "title": "ApiResponse[RevokedSessionsOut]"
+      },
+      "ApiResponse_RewriteDebugOptionsOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RewriteDebugOptionsOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RewriteDebugOptionsOut]"
+      },
+      "ApiResponse_RewriteDebugOut_": {
+        "properties": {
+          "code": {
+            "type": "integer",
+            "title": "Code",
+            "description": "0 表示成功，其余为业务错误码",
+            "default": 0
+          },
+          "message": {
+            "type": "string",
+            "title": "Message",
+            "default": "OK"
+          },
+          "data": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/RewriteDebugOut"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "title": "ApiResponse[RewriteDebugOut]"
       },
       "ApiResponse_RoleOut_": {
         "properties": {
@@ -11253,6 +11532,34 @@
         "title": "CreateTaskIn",
         "description": "创建任务入参。\n\n`model` / `durationSec` 不设默认值：合法取值来自模型目录（`GET /models`），\n由 service 按供应商声明的 `paramSchema` 校验，写死默认值会在换模型时变成错值。\n两者都可以不传：不传模型取该能力的默认模型，不传时长取模型 schema 的默认档位。"
       },
+      "DebugTemplateOut": {
+        "properties": {
+          "key": {
+            "type": "string",
+            "title": "Key"
+          },
+          "name": {
+            "type": "string",
+            "title": "Name"
+          },
+          "version": {
+            "type": "integer",
+            "title": "Version"
+          },
+          "status": {
+            "type": "string",
+            "title": "Status"
+          }
+        },
+        "type": "object",
+        "required": [
+          "key",
+          "name",
+          "version",
+          "status"
+        ],
+        "title": "DebugTemplateOut"
+      },
       "DeleteImagesIn": {
         "properties": {
           "ids": {
@@ -11997,6 +12304,23 @@
         ],
         "title": "ExportSourceOut",
         "description": "可导出的数据源。前端据此渲染下拉，不要硬编码数据源名单。\n\n这份列表来自运行时注册表（`core.ports.export_sources` + 内置源），\n新模块注册一个源之后这里自动多一项——前端不需要跟着发版。"
+      },
+      "FetchModelsIn": {
+        "properties": {
+          "baseUrl": {
+            "type": "string",
+            "title": "Baseurl",
+            "default": ""
+          },
+          "apiKey": {
+            "type": "string",
+            "title": "Apikey",
+            "default": ""
+          }
+        },
+        "type": "object",
+        "title": "FetchModelsIn",
+        "description": "拉取模型时的草稿覆盖：新供应商还没保存，只能把网关/密钥带过来。\n\n留空 = 用已保存的配置（编辑老供应商时不必重填密钥）。"
       },
       "FetchModelsOut": {
         "properties": {
@@ -14374,7 +14698,7 @@
           "source": {
             "type": "string",
             "title": "Source",
-            "default": "default"
+            "default": "none"
           },
           "configError": {
             "type": "string",
@@ -15333,6 +15657,94 @@
         "title": "ProfileUpdateIn",
         "description": "`PATCH /identity/me` 的自助可写字段。\n\n刻意**不含** `is_active`：停用是管理动作，用户误点一下就把自己锁在门外，\n而恢复只有管理员一个入口。自助路径能改的只有「展示信息」。"
       },
+      "RandomRewriteSettingsIn": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Model",
+            "default": "llm/default"
+          },
+          "systemPrompt": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Systemprompt"
+          },
+          "temperature": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Temperature",
+            "default": 1.0
+          },
+          "maxTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 32000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxtokens",
+            "default": 8000
+          },
+          "extraParams": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Extraparams"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "systemPrompt"
+        ],
+        "title": "RandomRewriteSettingsIn"
+      },
+      "RandomRewriteSettingsOut": {
+        "properties": {
+          "model": {
+            "type": "string",
+            "title": "Model"
+          },
+          "systemPrompt": {
+            "type": "string",
+            "title": "Systemprompt"
+          },
+          "temperature": {
+            "type": "number",
+            "title": "Temperature"
+          },
+          "maxTokens": {
+            "anyOf": [
+              {
+                "type": "integer"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxtokens"
+          },
+          "extraParams": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Extraparams"
+          }
+        },
+        "type": "object",
+        "required": [
+          "model",
+          "systemPrompt",
+          "temperature"
+        ],
+        "title": "RandomRewriteSettingsOut"
+      },
       "ReadyOut": {
         "properties": {
           "status": {
@@ -15455,6 +15867,19 @@
         "title": "RefreshOut",
         "description": "一次驱动刷新的结果。\n\n每一项都对应一个具体动作：哪些热生效了（`added`）、哪些要重启才生效\n（`changedFiles`）、哪里坏了（`errors`）。"
       },
+      "RenameProviderIn": {
+        "properties": {
+          "name": {
+            "type": "string",
+            "title": "Name"
+          }
+        },
+        "type": "object",
+        "required": [
+          "name"
+        ],
+        "title": "RenameProviderIn"
+      },
       "ResetPasswordIn": {
         "properties": {
           "newPassword": {
@@ -15485,6 +15910,253 @@
         ],
         "title": "RevokedSessionsOut",
         "description": "吊销会话的结果。两个「踢下线」类接口都返回这个形状。"
+      },
+      "RewriteDebugIn": {
+        "properties": {
+          "templateKey": {
+            "type": "string",
+            "maxLength": 40,
+            "minLength": 1,
+            "title": "Templatekey"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
+          },
+          "model": {
+            "type": "string",
+            "maxLength": 80,
+            "minLength": 1,
+            "title": "Model",
+            "default": "llm/default"
+          },
+          "systemPrompt": {
+            "type": "string",
+            "maxLength": 20000,
+            "minLength": 1,
+            "title": "Systemprompt"
+          },
+          "temperature": {
+            "type": "number",
+            "maximum": 2.0,
+            "minimum": 0.0,
+            "title": "Temperature",
+            "default": 1.0
+          },
+          "maxTokens": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 32000.0,
+                "minimum": 1.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Maxtokens",
+            "default": 8000
+          },
+          "extraParams": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Extraparams"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "templateKey",
+          "systemPrompt"
+        ],
+        "title": "RewriteDebugIn"
+      },
+      "RewriteDebugOptionsOut": {
+        "properties": {
+          "templates": {
+            "items": {
+              "$ref": "#/components/schemas/DebugTemplateOut"
+            },
+            "type": "array",
+            "title": "Templates"
+          },
+          "defaultSystemPrompt": {
+            "type": "string",
+            "title": "Defaultsystemprompt"
+          },
+          "defaultTemperature": {
+            "type": "number",
+            "title": "Defaulttemperature"
+          },
+          "maxSourceChars": {
+            "type": "integer",
+            "title": "Maxsourcechars"
+          },
+          "currentSettings": {
+            "$ref": "#/components/schemas/RandomRewriteSettingsOut"
+          },
+          "customized": {
+            "type": "boolean",
+            "title": "Customized",
+            "default": false
+          }
+        },
+        "type": "object",
+        "required": [
+          "defaultSystemPrompt",
+          "defaultTemperature",
+          "maxSourceChars",
+          "currentSettings"
+        ],
+        "title": "RewriteDebugOptionsOut"
+      },
+      "RewriteDebugOut": {
+        "properties": {
+          "ok": {
+            "type": "boolean",
+            "title": "Ok"
+          },
+          "error": {
+            "type": "string",
+            "title": "Error",
+            "default": ""
+          },
+          "requestedModel": {
+            "type": "string",
+            "title": "Requestedmodel",
+            "default": ""
+          },
+          "systemPrompt": {
+            "type": "string",
+            "title": "Systemprompt"
+          },
+          "userPayload": {
+            "type": "string",
+            "title": "Userpayload"
+          },
+          "requestParams": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Requestparams"
+          },
+          "rawOutput": {
+            "type": "string",
+            "title": "Rawoutput",
+            "default": ""
+          },
+          "rewrittenTexts": {
+            "additionalProperties": {
+              "type": "string"
+            },
+            "type": "object",
+            "title": "Rewrittentexts"
+          },
+          "finalPrompt": {
+            "type": "string",
+            "title": "Finalprompt",
+            "default": ""
+          },
+          "referenceLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Referencelibraryids"
+          },
+          "textLibraryIds": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Textlibraryids"
+          },
+          "compiledParams": {
+            "additionalProperties": true,
+            "type": "object",
+            "title": "Compiledparams"
+          },
+          "promptLength": {
+            "type": "integer",
+            "title": "Promptlength",
+            "default": 0
+          },
+          "promptLimit": {
+            "type": "integer",
+            "title": "Promptlimit",
+            "default": 0
+          },
+          "capability": {
+            "type": "string",
+            "title": "Capability",
+            "default": ""
+          },
+          "llmModel": {
+            "type": "string",
+            "title": "Llmmodel",
+            "default": ""
+          },
+          "llmPlatformModel": {
+            "type": "string",
+            "title": "Llmplatformmodel",
+            "default": ""
+          },
+          "finishReason": {
+            "type": "string",
+            "title": "Finishreason",
+            "default": ""
+          },
+          "usage": {
+            "$ref": "#/components/schemas/RewriteDebugUsageOut"
+          },
+          "latencyMs": {
+            "type": "integer",
+            "title": "Latencyms",
+            "default": 0
+          },
+          "syntheticSlots": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Syntheticslots"
+          }
+        },
+        "type": "object",
+        "required": [
+          "ok",
+          "systemPrompt",
+          "userPayload"
+        ],
+        "title": "RewriteDebugOut"
+      },
+      "RewriteDebugUsageOut": {
+        "properties": {
+          "promptTokens": {
+            "type": "integer",
+            "title": "Prompttokens",
+            "default": 0
+          },
+          "completionTokens": {
+            "type": "integer",
+            "title": "Completiontokens",
+            "default": 0
+          },
+          "totalTokens": {
+            "type": "integer",
+            "title": "Totaltokens",
+            "default": 0
+          }
+        },
+        "type": "object",
+        "title": "RewriteDebugUsageOut"
       },
       "RoleBriefOut": {
         "properties": {

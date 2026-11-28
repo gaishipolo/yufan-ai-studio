@@ -29,7 +29,7 @@ from core.exceptions import (
 )
 from core.logging import get_logger
 from infra.credentials import require_api_key
-from infra.http_errors import classify_http_error, extract_detail
+from infra.http_errors import classify_http_error, extract_code, extract_detail
 from infra.llm.base import (
     LlmMessage,
     LlmRequest,
@@ -61,6 +61,58 @@ _STATUS_MAP: dict[int, type[AppError]] = {
     403: Forbidden,
     429: RateLimited,
 }
+
+#: 400/422 里表示「该供应商没有这个模型」的业务码（各家命名不同）。
+_MODEL_MISSING_CODES = frozenset(
+    {
+        "model_not_found",
+        "modelnotfound",
+        "invalid_model",
+        "unknown_model",
+        "model_not_exist",
+        "modelnotexist",
+    }
+)
+
+#: 没有稳定业务码的网关（如 MiniMax 的 2013）只能看正文。只认明确指向
+#: 模型的关键词，避免把「温度越界」这类普通参数错当成「换一家就能成功」。
+_MODEL_MISSING_HINTS = (
+    "unknown model",
+    "model not exist",
+    "model does not exist",
+    "model not found",
+    "invalid model",
+    "model not supported",
+    "model is not supported",
+    "unsupported model",
+    "模型不存在",
+    "不支持的模型",
+)
+
+
+def _model_missing(status: int, detail: str, code: str) -> bool:
+    """这次失败是不是「该供应商没有这个模型 / 端点」。
+
+    这类失败由供应商的配置决定：请求没被受理、也没计费，换下一项是安全的。
+    通用的 400/422（参数非法、上下文超长等）不在此列 —— 换模型只会得到同样的错。
+    """
+    if status == 404:
+        return True
+    if status not in (400, 422):
+        return False
+    if (code or "").strip().lower() in _MODEL_MISSING_CODES:
+        return True
+    text = (detail or "").lower()
+    return any(hint in text for hint in _MODEL_MISSING_HINTS)
+
+
+def _provider_scoped(error: AppError) -> AppError:
+    """标记「这项配置在该供应商上不可用，换下一项可能就好了」。
+
+    `_should_fallback` 只认这个标记，不与「请求本身有错」的 4xx 混在一起。
+    """
+    error.provider_scoped = True
+    return error
 
 
 def _checked_params(params: Mapping[str, Any]) -> dict[str, Any]:
@@ -105,18 +157,24 @@ class OpenAICompatibleClient:
         )
 
     def _headers(self) -> dict[str, str]:
-        key = require_api_key(
-            self.settings.bearer_token(),
-            vendor=self.vendor,
-            env_name=self.api_key_env,
-            note="OpenAI 兼容端点",
-        )
+        try:
+            key = require_api_key(
+                self.settings.bearer_token(),
+                vendor=self.vendor,
+                env_name=self.api_key_env,
+                note="OpenAI 兼容端点",
+            )
+        except BadRequest as exc:
+            # 缺密钥是这一家没配好，不是这次请求有问题：链里可以换下一家。
+            raise _provider_scoped(exc) from None
         return {"Authorization": f"Bearer {key}"}
 
     def _url(self) -> str:
         if not self.settings.base_url.strip():
             # 与 require_api_key 同一口径：配置缺失是 4xx，不是 5xx。
-            raise BadRequest("LLM 未配置：请设置 LLM_BASE_URL（OpenAI 兼容端点）")
+            raise _provider_scoped(
+                BadRequest("LLM 未配置：请设置 LLM_BASE_URL（OpenAI 兼容端点）")
+            )
         return self.settings.chat_completions_url()
 
     def _wire_message(self, message: LlmMessage) -> dict[str, Any]:
@@ -246,7 +304,8 @@ class OpenAICompatibleClient:
         try:
             upstream_model = resolve_model(request.model, self.settings, self.model_map)
         except ValueError as exc:
-            raise BadRequest(str(exc)) from exc
+            # 平台 id 不在这一家的映射里：配置问题，链里可以跳过这项。
+            raise _provider_scoped(BadRequest(str(exc))) from exc
 
         payload: dict[str, Any] = {
             "model": upstream_model,
@@ -271,12 +330,18 @@ class OpenAICompatibleClient:
             if response.status_code >= 400:
                 # 上游错误正文可能回显 key；先脱敏再构造异常，args/message 都不带明文。
                 detail = self._redact(extract_detail(response))
-                raise classify_http_error(
+                error = classify_http_error(
                     response,
                     vendor=self.vendor,
                     status_map=_STATUS_MAP,
                     detail=detail,
                 )
+                if _model_missing(
+                    response.status_code, detail, extract_code(response)
+                ):
+                    # 404 或「模型不存在」的 400：换下一家是安全的。
+                    _provider_scoped(error)
+                raise error
             try:
                 body = response.json()
             except ValueError as exc:
@@ -292,12 +357,17 @@ def _should_fallback(exc: BaseException) -> bool:
 
     只降级「明确失败」：
 
+    - 供应商侧不可用（`provider_scoped`）：缺 key / 缺网关地址、平台 id 不在
+      该供应商映射里、上游 404 或「模型不存在」的 400 —— 请求没送出去或没被
+      受理，换下一项安全；
     - 429 / 401 / 403 / 5xx：上游明确拒绝或不可用；
     - 连接失败（``ConnectError`` / ``ConnectTimeout``）：请求根本没送出去。
 
-    不降级：400/422（参数/请求错，换模型只会得到同样的错）、408 与读写超时
-    （请求已发出，上游**可能已受理并计费**，再打一次是重复计费）。
+    不降级：通用 400/422（参数/请求错，换模型只会得到同样的错）、408 与读写
+    超时（请求已发出，上游**可能已受理并计费**，再打一次是重复计费）。
     """
+    if getattr(exc, "provider_scoped", False):
+        return True
     if isinstance(exc, (Unauthorized, Forbidden, RateLimited)):
         return True
     if isinstance(exc, UpstreamError):
@@ -358,7 +428,8 @@ async def complete(
     """默认入口：用运维页配置的 OpenAI 兼容端点发一次调用。
 
     只有 ``llm/default`` 会走 ``LLM_MODEL_CHAIN``（第一项为默认模型）并按
-    失败类型降级；显式模型 id 精确调用，不静默换模型。
+    失败类型降级；显式模型 id 精确调用，不静默换模型。链为空直接 400，
+    不再回落到某个名叫 default 的供应商。
 
     `timeout_sec` / `deadline` 是给「一次业务操作只能等 N 秒」的调用方用的：
     - `timeout_sec` 覆盖该次请求的客户端默认超时；
@@ -379,8 +450,9 @@ async def complete(
     except ValueError as exc:
         raise BadRequest(f"LLM 模型优先链配置有误：{exc}") from exc
     if not chain:
-        # 未配置链时保持旧语义：llm/default → LLM_MODEL / 模型表第一项。
-        chain = (DEFAULT_MODEL,)
+        raise BadRequest(
+            "LLM 没有可用模型：请先在 LLM 配置页设置默认模型与降级链"
+        )
 
     last_exc: BaseException | None = None
     for index, platform_id in enumerate(chain):

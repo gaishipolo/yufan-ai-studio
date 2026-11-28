@@ -49,6 +49,7 @@ from modules.template_pack.models import (
     TemplateSpecSlot,
     TemplateSpecVersion,
 )
+from modules.template_pack.random_settings import read_random_settings
 from modules.template_pack.randomness import rewritable_slot_keys, rewrite_slot_texts
 from modules.template_pack.slot_text_overrides import apply_slot_text_overrides
 from modules.template_pack.spec_catalog import (
@@ -707,6 +708,41 @@ def _check_random_request(spec: TemplateSpec, payload: SpecCompileIn) -> None:
         raise BadRequest("该模板没有可随机的槽位：请用均衡档，或给可选槽位写未选时文案")
 
 
+async def load_version_row(
+    session: AsyncSession, head: SpecRow, version_no: int
+) -> TemplateSpecVersion:
+    """取某个模板的指定发布版本；不存在就是 404。"""
+    row = await session.scalar(
+        select(TemplateSpecVersion).where(
+            TemplateSpecVersion.spec_id == head.id,
+            TemplateSpecVersion.version == version_no,
+        )
+    )
+    if row is None:
+        raise NotFound(f"配置 {head.spec_key} 没有第 {version_no} 版")
+    return row
+
+
+async def spec_of_version(
+    session: AsyncSession,
+    head: SpecRow,
+    row: TemplateSpecVersion,
+    *,
+    model: str,
+) -> TemplateSpec:
+    """把发布版本 + 槽位行组装成 core 规格（未归一）。"""
+    slots = await _slots(session, row.id)
+    return TemplateSpec(
+        key=head.spec_key,
+        name=head.name,
+        model=model,
+        allowed_models=tuple(row.allowed_models or ()),
+        params=dict(row.params or {}),
+        prompt=row.prompt,
+        slots=tuple(_slot_core(item) for item in slots),
+    )
+
+
 async def compile_for(
     session: AsyncSession, actor: CurrentUser, key: str, payload: SpecCompileIn
 ) -> SpecCompileOut:
@@ -722,15 +758,7 @@ async def compile_for(
     version_no = payload.version or head.current_version
     if version_no <= 0:
         raise Conflict(f"配置 {key} 还没有发布版本")
-    row = await session.scalar(
-        select(TemplateSpecVersion).where(
-            TemplateSpecVersion.spec_id == head.id,
-            TemplateSpecVersion.version == version_no,
-        )
-    )
-    if row is None:
-        raise NotFound(f"配置 {key} 没有第 {version_no} 版")
-    slots = await _slots(session, row.id)
+    row = await load_version_row(session, head, version_no)
     allowed = tuple(row.allowed_models or ())
     effective = effective_model_ids(row.model, allowed)
     # 使用者挑的模型必须在清单里：静默改成固定模型等于「用户选的东西没生效」，
@@ -738,23 +766,18 @@ async def compile_for(
     chosen = (payload.model or row.model).strip()
     if chosen not in effective:
         raise BadRequest(f"模型不在该模板允许的清单里：{chosen}；可选：{'、'.join(effective)}")
-    spec = TemplateSpec(
-        key=head.spec_key,
-        name=head.name,
-        model=chosen,
-        allowed_models=allowed,
-        params=dict(row.params or {}),
-        prompt=row.prompt,
-        slots=tuple(_slot_core(item) for item in slots),
-    )
+    spec = await spec_of_version(session, head, row, model=chosen)
     # 作者写的是 `{{Mixed N}}`，而下面「改文案要查插入点」只认 `{{slot:key}}`。
     # 换算做在入口一次（`rules.normalize_refs`，幂等），`compile_spec` 里还会
     # 再调一次。不换的话，「这一格在提示词里没有插入点」会把**所有**真实模板
     # 误判掉 —— 现存模板清一色写 `{{Mixed 1}}`，它们其实都有插入点。
     spec = normalize_refs(spec)
 
+    random_settings = None
     if payload.use_random_prompt:
         _check_random_request(spec, payload)
+        # 配置是 app_meta 里的运行期状态：必须在结束只读事务之前读出来。
+        random_settings = (await read_random_settings(session)).settings
     else:
         # 使用者改写的「未选时文案」：编译前换进 spec。
         spec = apply_slot_text_overrides(
@@ -768,7 +791,7 @@ async def compile_for(
         # 随机档要等一次外部模型调用（最长 45s）。先结束只读事务，
         # 别让一条 DB 连接在整个请求期间被占着。
         await session.commit()
-        overrides = await rewrite_slot_texts(spec)
+        overrides = await rewrite_slot_texts(spec, settings=random_settings)
         # 随机档没有可选素材，slot_values 传空；模型稿仍走同一条覆盖闸门。
         spec = apply_slot_text_overrides(spec, overrides, {})
 

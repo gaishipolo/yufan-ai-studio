@@ -144,6 +144,9 @@ class AppError(Exception):
     #: 保留它是因为有些决策要看原始状态码而不是平台异常类：例如 LLM 降级链
     #: 只对 5xx 降级，但 408 也被归到 UpstreamError —— 408 可能已受理，不能降级。
     upstream_status: int | None = None
+    #: 这次失败由「当前供应商 / 端点」引起（缺 key、模型不存在、404 等），
+    #: 请求没被受理也没计费；LLM 降级链据此换下一项。默认 False。
+    provider_scoped: bool = False
 
     def __init__(
         self,

@@ -12,7 +12,7 @@ import httpx
 from fastapi import APIRouter, Depends, Query
 from starlette.concurrency import run_in_threadpool
 
-from api.deps import rate_limit, require
+from api.deps import SessionDep, rate_limit, require
 from core.audit import record as audit
 from core.config import settings
 from core.context import CurrentUser
@@ -20,13 +20,16 @@ from core.exceptions import AppError, BadRequest
 from core.response import ApiResponse
 from infra.llm import LlmMessage, LlmRequest, OpenAICompatibleClient
 from infra.llm.providers.openai_compatible import LLMSettings
-from infra.llm.providers.source import provider_config
+from infra.llm.providers.source import normalize_provider_name, provider_config
+from modules.llm_config.migration import rename_provider, sync_random_settings_after_rename
 from modules.llm_config.schema import (
+    FetchModelsIn,
     FetchModelsOut,
     LlmModelOut,
     LlmProviderOut,
     LlmProvidersOut,
     ModelChainIn,
+    RenameProviderIn,
     SaveProviderIn,
     UpstreamModelOut,
 )
@@ -34,6 +37,8 @@ from modules.llm_config.store import (
     ModelMapping,
     ProviderListOut,
     ProviderOut,
+    _validate_base_url,
+    _validate_value,
     credentials_of,
     delete_provider,
     list_providers,
@@ -66,6 +71,33 @@ def _select_model(provider: ProviderOut, model_id: str) -> ModelMapping:
         options = "、".join(model.id for model in provider.models)
         raise BadRequest(f"模型不在该供应商的映射里：{wanted}；可选：{options}")
     return mapping
+
+
+def _fetch_target(
+    saved: ProviderOut | None,
+    saved_key: str,
+    base_url: str,
+    api_key: str,
+) -> tuple[str, str]:
+    """拉取模型用哪一套网关/密钥：草稿值优先，留空才用已保存的。
+
+    新供应商还没有落盘配置，必须把网关与密钥一起带过来；编辑老供应商时
+    改了网关也能先拉、再保存。草稿网关与保存走同一套 SSRF 校验，不因为
+    「只是拉列表」就放宽。
+    """
+    draft_url = base_url.strip()
+    draft_key = api_key.strip()
+    if draft_url:
+        try:
+            draft_url = _validate_base_url(_validate_value("网关地址", draft_url))
+            draft_key = _validate_value("密钥", draft_key)
+        except ValueError as exc:
+            raise BadRequest(str(exc)) from exc
+    url = draft_url or (saved.base_url if saved else "")
+    key = draft_key or saved_key
+    if not url or not key:
+        raise BadRequest("请先填好网关地址和密钥，再拉取模型")
+    return url, key
 
 
 def _providers_out(result: ProviderListOut) -> LlmProvidersOut:
@@ -153,6 +185,39 @@ async def remove_provider(
     return ApiResponse.ok(_providers_out(result))
 
 
+@router.post(
+    "/providers/{name}/rename",
+    summary="重命名供应商（同步迁移 env 键、模型前缀、降级链）",
+)
+async def rename_provider_endpoint(
+    name: str,
+    payload: RenameProviderIn,
+    session: SessionDep,
+    actor: WriteDep,
+    _: None = Depends(rate_limit("llm_config.write", limit=settings.rate_limit_default_per_min)),
+) -> ApiResponse[LlmProviderOut]:
+    try:
+        result = await run_in_threadpool(rename_provider, name, payload.name)
+    except ValueError as exc:
+        raise BadRequest(str(exc)) from exc
+    # 运行期随机改写配置里可能存着 old/* 的模型 id；一并跟着改名。
+    await sync_random_settings_after_rename(
+        session, name, result, actor=actor.id
+    )
+    await audit(
+        "llm_config.provider.rename",
+        actor_id=actor.id,
+        target_type="llm_provider",
+        target_id=result.provider.name,
+        detail={
+            "from": name,
+            "to": result.provider.name,
+            "models": len(result.provider.models),
+        },
+    )
+    return ApiResponse.ok(_provider_out(result.provider))
+
+
 @router.put("/model-chain", summary="保存默认模型与降级顺序（第一项为默认）")
 async def put_model_chain(
     payload: ModelChainIn,
@@ -183,24 +248,34 @@ async def put_model_chain(
 async def fetch_models(
     name: str,
     actor: WriteDep,
+    payload: FetchModelsIn | None = None,
     _: None = Depends(rate_limit("llm_config.write", limit=settings.rate_limit_default_per_min)),
 ) -> ApiResponse[FetchModelsOut]:
-    """GET {base_url}/models，返回上游 id 列表。只读外网请求。"""
+    """GET {base_url}/models，返回上游 id 列表。只读外网请求。
+
+    新供应商还没保存，网关/密钥由请求体带过来；已保存的可以省略请求体，
+    或只带改过的字段。这样「填完 → 拉模型 → 勾选」不必先存一遍。
+    """
     result = await run_in_threadpool(list_providers)
     provider = next((p for p in result.providers if p.name == name), None)
     if provider is None:
-        raise BadRequest(f"供应商 {name} 不存在")
-    if not provider.base_url or not provider.api_key_configured:
-        raise BadRequest("请先填好网关地址和密钥，再拉取模型")
+        try:
+            name = normalize_provider_name(name)
+        except ValueError as exc:
+            raise BadRequest(str(exc)) from exc
 
     # 明文只在服务端内部流转：ProviderOut 刻意不回显密钥。
-    # 不能用 `_, api_key = ...`：本函数的 `_` 是 rate_limit 依赖参数，
-    # 类型是 None，把 str 赋给它会被 mypy 判 Incompatible types in assignment。
-    api_key = credentials_of(name)[1]
+    saved_key = credentials_of(name)[1] if provider is not None else ""
+    base_url, api_key = _fetch_target(
+        provider,
+        saved_key,
+        payload.base_url if payload else "",
+        payload.api_key if payload else "",
+    )
     try:
         async with httpx.AsyncClient(timeout=20, trust_env=False) as client:
             response = await client.get(
-                provider.base_url.rstrip("/") + "/models",
+                base_url.rstrip("/") + "/models",
                 headers={"Authorization": f"Bearer {api_key}"},
             )
             if response.status_code >= 400:
@@ -222,7 +297,7 @@ async def fetch_models(
         target_type="llm_provider",
         target_id=name,
         # 只记数量与网关；模型名不是密钥，网关是管理员可见的配置
-        detail={"models": len(ids), "base_url": provider.base_url},
+        detail={"models": len(ids), "base_url": base_url},
     )
     return ApiResponse.ok(FetchModelsOut(models=ids))
 
@@ -264,7 +339,7 @@ async def test_provider(
         settings_for_test,
         model_map=model_map,
         api_key_env=config.api_key_env,
-        vendor="LLM" if name == "default" else f"LLM {name}",
+        vendor=f"LLM {name}",
     )
     try:
         answer = await client.complete(

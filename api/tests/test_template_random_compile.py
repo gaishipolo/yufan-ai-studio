@@ -30,7 +30,7 @@ def _patch_rewrite(
 ) -> list[Any]:
     calls: list[Any] = []
 
-    async def fake(spec: Any) -> dict[str, str]:
+    async def fake(spec: Any, **_: Any) -> dict[str, str]:
         calls.append(spec)
         return texts or {"note": "雨夜的霓虹街道"}
 
@@ -145,11 +145,11 @@ def test_random_upstream_401_does_not_leak_as_401(
     _save(client, headers, draft)
     _publish(client, headers, draft)
 
-    async def failing(spec: Any) -> dict[str, str]:
+    async def failing(spec: Any, **kwargs: Any) -> dict[str, str]:
         async def completer(request: Any, *, timeout_sec: Any = None, deadline: Any = None) -> Any:
             raise Unauthorized("bad key")
 
-        return await real_rewrite(spec, complete=completer)
+        return await real_rewrite(spec, complete=completer, settings=kwargs.get("settings"))
 
     monkeypatch.setattr(spec_service, "rewrite_slot_texts", failing)
 
@@ -183,7 +183,7 @@ def test_random_ends_read_transaction_before_calling_model(
         events.append("fills")
         return await original_fills(*args, **kwargs)
 
-    async def rewrite(spec: Any) -> dict[str, str]:
+    async def rewrite(spec: Any, **_: Any) -> dict[str, str]:
         events.append("llm")
         return {"note": "雨夜的霓虹街道"}
 

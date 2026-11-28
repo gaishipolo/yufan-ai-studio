@@ -231,6 +231,14 @@ export interface CreateTaskIn {
   templateName?: string | null;
 }
 
+/** DebugTemplateOut */
+export interface DebugTemplateOut {
+  key: string;
+  name: string;
+  version: number;
+  status: string;
+}
+
 /** DeleteImagesIn */
 export interface DeleteImagesIn {
   /** 要删除的生图记录 ID 列表 */
@@ -409,6 +417,14 @@ export interface ExportSourceOut {
   columns: string[];
   /** 导出该源额外需要的权限码；null 表示只需 export:read */
   permission?: string | null;
+}
+
+/** 拉取模型时的草稿覆盖：新供应商还没保存，只能把网关/密钥带过来。
+
+留空 = 用已保存的配置（编辑老供应商时不必重填密钥）。 */
+export interface FetchModelsIn {
+  baseUrl?: string;
+  apiKey?: string;
 }
 
 /** FetchModelsOut */
@@ -1253,6 +1269,24 @@ export interface ProfileUpdateIn {
   position?: string | null;
 }
 
+/** RandomRewriteSettingsIn */
+export interface RandomRewriteSettingsIn {
+  model?: string;
+  systemPrompt: string;
+  temperature?: number;
+  maxTokens?: number | null;
+  extraParams?: Record<string, unknown>;
+}
+
+/** RandomRewriteSettingsOut */
+export interface RandomRewriteSettingsOut {
+  model: string;
+  systemPrompt: string;
+  temperature: number;
+  maxTokens?: number | null;
+  extraParams?: Record<string, unknown>;
+}
+
 /** 就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。 */
 export interface ReadyOut {
   status: string;
@@ -1294,6 +1328,11 @@ export interface RefreshOut {
   refreshedAt?: string;
 }
 
+/** RenameProviderIn */
+export interface RenameProviderIn {
+  name: string;
+}
+
 /** ResetPasswordIn */
 export interface ResetPasswordIn {
   /** 管理员设置的新密码；至少 10 位，不能是纯数字 */
@@ -1304,6 +1343,59 @@ export interface ResetPasswordIn {
 export interface RevokedSessionsOut {
   /** 本次吊销的会话数；已经失效的会话不计入 */
   revoked: number;
+}
+
+/** RewriteDebugIn */
+export interface RewriteDebugIn {
+  templateKey: string;
+  version?: number | null;
+  model?: string;
+  systemPrompt: string;
+  temperature?: number;
+  maxTokens?: number | null;
+  extraParams?: Record<string, unknown>;
+}
+
+/** RewriteDebugOptionsOut */
+export interface RewriteDebugOptionsOut {
+  templates?: DebugTemplateOut[];
+  defaultSystemPrompt: string;
+  defaultTemperature: number;
+  maxSourceChars: number;
+  currentSettings: RandomRewriteSettingsOut;
+  customized?: boolean;
+}
+
+/** RewriteDebugOut */
+export interface RewriteDebugOut {
+  ok: boolean;
+  error?: string;
+  requestedModel?: string;
+  systemPrompt: string;
+  userPayload: string;
+  requestParams?: Record<string, unknown>;
+  rawOutput?: string;
+  rewrittenTexts?: Record<string, string>;
+  finalPrompt?: string;
+  referenceLibraryIds?: string[];
+  textLibraryIds?: string[];
+  compiledParams?: Record<string, unknown>;
+  promptLength?: number;
+  promptLimit?: number;
+  capability?: string;
+  llmModel?: string;
+  llmPlatformModel?: string;
+  finishReason?: string;
+  usage?: RewriteDebugUsageOut;
+  latencyMs?: number;
+  syntheticSlots?: string[];
+}
+
+/** RewriteDebugUsageOut */
+export interface RewriteDebugUsageOut {
+  promptTokens?: number;
+  completionTokens?: number;
+  totalTokens?: number;
 }
 
 /** 用户出参里内嵌的角色摘要。 */
@@ -2577,6 +2669,8 @@ export interface EndpointData {
   "DELETE /api/v1/llm-config/providers/{name}": LlmProvidersOut;
   /** 从供应商网关拉取真实模型 id */
   "POST /api/v1/llm-config/providers/{name}/models:fetch": FetchModelsOut;
+  /** 重命名供应商（同步迁移 env 键、模型前缀、降级链） */
+  "POST /api/v1/llm-config/providers/{name}/rename": LlmProviderOut;
   /** 对供应商发一次真实最小请求 */
   "POST /api/v1/llm-config/providers/{name}/test": Record<string, unknown>;
   /** 运行时配置清单（密钥脱敏） */
@@ -2649,6 +2743,12 @@ export interface EndpointData {
   "GET /api/v1/template-specs": TemplateSpecListOut;
   /** 保存草稿（同内容幂等，revision 冲突 409） */
   "POST /api/v1/template-specs": TemplateSpecOut;
+  /** LLM 调试台：改写并预览生成提示词（不创建任务） */
+  "POST /api/v1/template-specs/debug/rewrite": RewriteDebugOut;
+  /** LLM 调试台：把当前 system prompt / 温度 / 模型保存为生产配置 */
+  "PUT /api/v1/template-specs/debug/settings": RandomRewriteSettingsOut;
+  /** LLM 调试台：可调试的模板与默认改写参数 */
+  "GET /api/v1/template-specs/debug/templates": RewriteDebugOptionsOut;
   /** 编辑页要显示的上限（存草稿 / 可发布） */
   "GET /api/v1/template-specs/limits": SpecLimitsOut;
   /** 模板库：已发布的规格卡片 */

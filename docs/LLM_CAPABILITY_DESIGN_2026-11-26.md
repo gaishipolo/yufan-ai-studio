@@ -17,7 +17,11 @@
 | 2026-11-26 | 补：agent 必然是业务模块 → 循环归 `generation/`、业务归 `modules/agent/`；据此定出三条硬约束 | §6 |
 | 2026-11-26 | 实施前复核：`LLMSettings` 改成 `DriverSettings` 子类（§5.2）；`get_http()` 不复用、LLM 自建 client（§2.2/§7）；`LlmMessage` 补 `tool_call_id`、`params` 改 `default_factory`（§4） | §2.2、§4、§5.2、§7 |
 | 2026-11-27 | 审查修断链：多供应商页的 `default` 直接写 `LLM_*`（与运行时 LLMSettings 同前缀），不再"迁移"到 `LLM_DEFAULT_*`；`LLM_MODELS` 映射表由运行时解析 | §5.2、§8 |
-| 2026-11-27 | 多供应商运行时闭环：平台 id 带供应商前缀（default 用 `llm/*`，具名用 `<name>/*`），按前缀路由到 `LLM_<NAME>_*`；新增全局 `LLM_MODEL_CHAIN`（首项默认，400/422 与超时不降级），配置页可排序 | §5.2、§5.3、§5.4、§7 |
+| 2026-11-27 | 多供应商运行时闭环：平台 id 带供应商前缀，按前缀路由到 `LLM_<NAME>_*`；新增全局 `LLM_MODEL_CHAIN`（首项默认，400/422 与超时不降级），配置页可排序 | §5.2、§5.3、§5.4、§7 |
+| 2026-11-28 | **移除 `default` 供应商**：所有供应商都必须具名（`<name>/*` + `LLM_<NAME>_*`）；`llm/default` 只作为模型链别名。旧配置用 `app llm-migrate-default --name primary` 一次迁移；供应商支持改名并同步迁移 env 键、模型 id 与降级链 | §5.2–§5.4 |
+| 2026-11-28 | 降级判定补齐「供应商不可用」：缺 key / 缺网关地址、平台 id 不在该供应商映射里、上游 404 或明确「模型不存在」的 400/422 都降级；通用 400/422 与超时仍不降级 | §5.4 |
+| 2026-11-28 | 新增供应商可直接从网关拉模型：`models:fetch` 接受草稿网关/密钥，不必先保存 | §5.6 |
+| 2026-11-28 | 迁移命令兼容旧 `LLM_MODELS` 里的 `llm/default`：按上游名派生 `<name>/<slug>`；`llm/default` 作为链别名不收窄成具体模型；空链回落到第一项 | §5.4 |
 | 2026-11-27 | 请求/响应硬化：保留键不可从 `params` 覆盖；200 假成功/缺 choices 报 `UpstreamError`；content 片段只取文本；上游错误正文脱敏密钥 | §4.1 |
 | 2026-11-27 | 配置校验一致性：坏模型表按供应商隔离为 `configError`、坏链为 `modelChainError`；运行时明确 400；100 个模型上限与 32 KiB 行长对齐 | §5.5 |
 | 2026-11-27 | 运维端点：`test` 未知模型 400、超时用供应商配置；`fetch`/`test` 成功写审计 | §5.6 |
@@ -246,7 +250,7 @@ default 用 `LLM_*`，具名供应商用 `LLM_<NAME>_*`。平台模型 id 带供
 
 照百炼驱动的 `_real_model()` 做法：**未知 id 直接 400**，不静默回落。这样「换供应商不改业务代码」才成立——业务侧永远只认平台 id。
 
-具名供应商的模型 id 必须是 `<name>/<上游名>`（default 仍然用 `llm/<上游名>`）。运行时按 id 前缀选网关：`minimax/flash` 读 `LLM_MINIMAX_*`，`llm/qwen` 读 `LLM_*`。早期页面把具名供应商的模型写成 `llm/*`，读取与运行时会迁移到 `<name>/*`；否则会拿 default 的凭据去调具名供应商的模型。
+所有供应商的模型 id 必须是 `<name>/<上游名>`，运行时按 id 前缀选网关：`minimax/flash` 读 `LLM_MINIMAX_*`。旧 `llm/*` 已停用；历史配置通过迁移命令转成 `<name>/*`。`llm/default` 只表示“模型链首项”，不是供应商。
 
 ### 5.4 默认模型与降级链
 
@@ -259,8 +263,12 @@ LLM_MODEL_CHAIN=["minimax/flash","llm/qwen-plus","bailian/deepseek-v3"]
 - 只有 `llm/default` 走这条链；显式模型 id（`minimax/flash`）精确调用，不静默换模型。
 - 每次只调用**一个**模型；失败时按链顺序尝试下一个，不做同模型重试（避免重复计费）。
 - 只对**明确失败**降级：429、401/403、连接失败（`ConnectError`/`ConnectTimeout`）、5xx。
-  400/422（参数/请求错）与 408/读写超时**不降级** —— 超时可能已被上游受理，换模型会重复计费。
-- 链为空时保持旧语义：`llm/default` → `LLM_MODEL`，再回落到 default 供应商模型表的第一项。
+- **供应商侧不可用也降级**：缺 key / 缺网关地址、平台 id 不在该供应商映射里、上游 404
+  或明确「模型不存在」的 400/422（如 qwen 的 `Model not exist.`、MiniMax 的
+  `unknown model (2013)`）。这些请求没被受理、也没计费，换下一家安全。
+  通用 400/422（参数非法、上下文超长）与 408/读写超时**不降级** —— 前者换模型
+  会得到同样的错，后者可能已被上游受理，换模型会重复计费。
+- 链为空时 `llm/default` 直接 400：默认模型完全由模型链决定，不再回落到某个名叫 default 的供应商。
 - 链里每个 id 必须已存在于某个供应商的模型映射里；保存供应商或删除供应商时，会自动把失效模型从链里剪掉。
 - 配置页「默认模型与降级顺序」可加/删/上下移动；`LLM_MODEL_CHAIN` 也可由环境变量提供（此时页面只读，写入会被拒绝）。
 
@@ -276,6 +284,8 @@ LLM_MODEL_CHAIN=["minimax/flash","llm/qwen-plus","bailian/deepseek-v3"]
 - `POST /providers/{name}/test` 的 `modelId` 留空取该供应商第一个模型；显式传了但不在映射里一律 400，不静默回落。
 - 连通测试的超时与正式调用同源：default 用 `LLM_TIMEOUT_SEC`，具名用 `LLM_<NAME>_TIMEOUT_SEC`；不再写死 30s，避免推理模型被误判为连不通。
 - `models:fetch` 与 `provider/test` 成功后写审计：只记供应商、模型 id、结果与 token 用量，不记密钥与回复正文。
+- `POST /providers/{name}/models:fetch` 可带草稿 `baseUrl` / `apiKey`（2026-11-28）：
+  新供应商不必先保存就能拉模型；草稿网关走与保存相同的 SSRF 校验，密钥留空则用已保存的。
 
 ### 5.7 部署与权限边界（2026-11-27）
 
@@ -321,7 +331,7 @@ LLM_MODEL_CHAIN=["minimax/flash","llm/qwen-plus","bailian/deepseek-v3"]
 ## 7. 三条不能省的纪律
 
 1. **不自动重试**——`infra/http.py` 注释写死「POST 重复提交等于重复计费」，LLM chat 同理。只在 4xx 明确拒收时可重试。
-   降级链**不是重试**：每个模型只调用一次，且 408/读写超时（可能已受理）与 400/422 不降级，见 §5.4。
+   降级链**不是重试**：每个模型只调用一次，且 408/读写超时（可能已受理）与通用 400/422 不降级；供应商不可用的 4xx 例外，见 §5.4。
 2. **超时单独给 —— LLM 自建 client，不复用 `get_http()`**。
    这不是"给共享 client 换个超时"的问题，查代码后的实情：
    - `get_http()` 的 `timeout=HttpSettings.timeout_sec`（默认 30s）是 **client 级默认值**，

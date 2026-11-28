@@ -2,7 +2,7 @@
 
 > 此文件由 `app export-openapi` 自动生成，请勿手工编辑。
 >
-> 版本 `0.2.0`｜共 **160** 个接口 / **13** 个模块
+> 版本 `0.2.0`｜共 **164** 个接口 / **13** 个模块
 >
 > 重新生成：`cd api && .venv/Scripts/python -m cli export-openapi`
 
@@ -271,9 +271,9 @@ Authorization: Bearer <accessToken>
 | 系统 | 2 | 见下方 `4.7` |
 | 导出 | 6 | 见下方 `4.8` |
 | 资产库 | 47 | 见下方 `4.9` |
-| LLM 配置 | 6 | 见下方 `4.10` |
+| LLM 配置 | 7 | 见下方 `4.10` |
 | 模型驱动 | 12 | 见下方 `4.11` |
-| 模板封装 | 26 | 见下方 `4.12` |
+| 模板封装 | 29 | 见下方 `4.12` |
 | 用量看板 | 2 | 见下方 `4.13` |
 
 ### 4.1 身份（42 个）
@@ -3128,7 +3128,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `rejectReason` | `string \| null` | 否 |  |
 | `trashedFromState` | `string \| null` | 否 |  |
 
-### 4.10 LLM 配置（6 个）
+### 4.10 LLM 配置（7 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3137,6 +3137,7 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 | `PUT` | `/api/v1/llm-config/providers` | 新增或更新 LLM 供应商，下一次请求即生效 | 🔒 |
 | `DELETE` | `/api/v1/llm-config/providers/{name}` | 删除 LLM 供应商配置 | 🔒 |
 | `POST` | `/api/v1/llm-config/providers/{name}/models:fetch` | 从供应商网关拉取真实模型 id | 🔒 |
+| `POST` | `/api/v1/llm-config/providers/{name}/rename` | 重命名供应商（同步迁移 env 键、模型前缀、降级链） | 🔒 |
 | `POST` | `/api/v1/llm-config/providers/{name}/test` | 对供应商发一次真实最小请求 | 🔒 |
 
 #### `PUT /api/v1/llm-config/model-chain`
@@ -3222,15 +3223,47 @@ k8s 都会把这台实例继续留在 Service 后面——判定了却没人执�
 
 GET {base_url}/models，返回上游 id 列表。只读外网请求。
 
+新供应商还没保存，网关/密钥由请求体带过来；已保存的可以省略请求体，
+或只带改过的字段。这样「填完 → 拉模型 → 勾选」不必先存一遍。
+
 | 参数 | 位置 | 类型 | 必填 | 说明 |
 |---|---|---|---|---|
 | `name` | path | `string` | 是 |  |
+
+**请求体**（内联结构）
 
 **响应** `ApiResponse<FetchModelsOut>`（前端取 `res.data`）
 
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `models` | `UpstreamModelOut[]` | 否 |  |
+
+#### `POST /api/v1/llm-config/providers/{name}/rename`
+
+**重命名供应商（同步迁移 env 键、模型前缀、降级链）**
+
+| 参数 | 位置 | 类型 | 必填 | 说明 |
+|---|---|---|---|---|
+| `name` | path | `string` | 是 |  |
+
+**请求体** `RenameProviderIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+
+**响应** `ApiResponse<LlmProviderOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+| `baseUrl` | `string` | 是 |  |
+| `apiKeyConfigured` | `boolean` | 否 |  |
+| `apiKeyMasked` | `string` | 否 |  |
+| `apiKeyFingerprint` | `string` | 否 |  |
+| `models` | `LlmModelOut[]` | 否 |  |
+| `source` | `string` | 否 |  |
+| `configError` | `string` | 否 |  |
 
 #### `POST /api/v1/llm-config/providers/{name}/test`
 
@@ -3482,7 +3515,7 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `message` | `string` | 否 |  |
 | `data` | `modules__model_driver__schema__TaskOut \| null` | 否 |  |
 
-### 4.12 模板封装（26 个）
+### 4.12 模板封装（29 个）
 
 | 方法 | 路径 | 说明 | 鉴权 |
 |---|---|---|---|
@@ -3496,6 +3529,9 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `POST` | `/api/v1/template-cases/{case_id}/restore` | 从回收站恢复案例 | 🔒 |
 | `POST` | `/api/v1/template-specs` | 保存草稿（同内容幂等，revision 冲突 409） | 🔒 |
 | `GET` | `/api/v1/template-specs` | 本人可见的规格列表 | 🔒 |
+| `POST` | `/api/v1/template-specs/debug/rewrite` | LLM 调试台：改写并预览生成提示词（不创建任务） | 🔒 |
+| `PUT` | `/api/v1/template-specs/debug/settings` | LLM 调试台：把当前 system prompt / 温度 / 模型保存为生产配置 | 🔒 |
+| `GET` | `/api/v1/template-specs/debug/templates` | LLM 调试台：可调试的模板与默认改写参数 | 🔒 |
 | `GET` | `/api/v1/template-specs/limits` | 编辑页要显示的上限（存草稿 / 可发布） | 🔒 |
 | `GET` | `/api/v1/template-specs/published` | 模板库：已发布的规格卡片 | 🔒 |
 | `GET` | `/api/v1/template-specs/tags` | 模板标签词表（两级平铺，含每个标签的模板数） | 🔒 |
@@ -3821,6 +3857,93 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 |---|---|---|---|
 | `items` | `TemplateSpecOut[]` | 否 |  |
 | `total` | `number` | 否 |  |
+
+#### `POST /api/v1/template-specs/debug/rewrite`
+
+**LLM 调试台：改写并预览生成提示词（不创建任务）**
+
+调一次模型 + 纯函数编译；不落库、不调 task、不物化素材。
+
+**请求体** `RewriteDebugIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `templateKey` | `string` | 是 |  |
+| `version` | `number \| null` | 否 |  |
+| `model` | `string` | 否 |  |
+| `systemPrompt` | `string` | 是 |  |
+| `temperature` | `number` | 否 |  |
+| `maxTokens` | `number \| null` | 否 |  |
+| `extraParams` | `Record<string, unknown>` | 否 |  |
+
+**响应** `ApiResponse<RewriteDebugOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `ok` | `boolean` | 是 |  |
+| `error` | `string` | 否 |  |
+| `requestedModel` | `string` | 否 |  |
+| `systemPrompt` | `string` | 是 |  |
+| `userPayload` | `string` | 是 |  |
+| `requestParams` | `Record<string, unknown>` | 否 |  |
+| `rawOutput` | `string` | 否 |  |
+| `rewrittenTexts` | `Record<string, string>` | 否 |  |
+| `finalPrompt` | `string` | 否 |  |
+| `referenceLibraryIds` | `string[]` | 否 |  |
+| `textLibraryIds` | `string[]` | 否 |  |
+| `compiledParams` | `Record<string, unknown>` | 否 |  |
+| `promptLength` | `number` | 否 |  |
+| `promptLimit` | `number` | 否 |  |
+| `capability` | `string` | 否 |  |
+| `llmModel` | `string` | 否 |  |
+| `llmPlatformModel` | `string` | 否 |  |
+| `finishReason` | `string` | 否 |  |
+| `usage` | `RewriteDebugUsageOut` | 否 |  |
+| `latencyMs` | `number` | 否 |  |
+| `syntheticSlots` | `string[]` | 否 |  |
+
+#### `PUT /api/v1/template-specs/debug/settings`
+
+**LLM 调试台：把当前 system prompt / 温度 / 模型保存为生产配置**
+
+写入 `app_meta.llm.random_rewrite`；下一次随机档编译即生效。
+
+**请求体** `RandomRewriteSettingsIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `model` | `string` | 否 |  |
+| `systemPrompt` | `string` | 是 |  |
+| `temperature` | `number` | 否 |  |
+| `maxTokens` | `number \| null` | 否 |  |
+| `extraParams` | `Record<string, unknown>` | 否 |  |
+
+**响应** `ApiResponse<RandomRewriteSettingsOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `model` | `string` | 是 |  |
+| `systemPrompt` | `string` | 是 |  |
+| `temperature` | `number` | 是 |  |
+| `maxTokens` | `number \| null` | 否 |  |
+| `extraParams` | `Record<string, unknown>` | 否 |  |
+
+#### `GET /api/v1/template-specs/debug/templates`
+
+**LLM 调试台：可调试的模板与默认改写参数**
+
+只读：列出有发布版本的模板，并给出默认 system prompt / 温度。
+
+**响应** `ApiResponse<RewriteDebugOptionsOut>`（前端取 `res.data`）
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `templates` | `DebugTemplateOut[]` | 否 |  |
+| `defaultSystemPrompt` | `string` | 是 |  |
+| `defaultTemperature` | `number` | 是 |  |
+| `maxSourceChars` | `number` | 是 |  |
+| `currentSettings` | `RandomRewriteSettingsOut` | 是 |  |
+| `customized` | `boolean` | 否 |  |
 
 #### `GET /api/v1/template-specs/limits`
 
@@ -4425,6 +4548,15 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `templateVersion` | `number \| null` | 否 | 本次使用的模板发布版本号（仅统计） |
 | `templateName` | `string \| null` | 否 | 提交时的模板名快照（仅展示） |
 
+### `DebugTemplateOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `key` | `string` | 是 |  |
+| `name` | `string` | 是 |  |
+| `version` | `number` | 是 |  |
+| `status` | `string` | 是 |  |
+
 ### `DeleteImagesIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -4613,6 +4745,17 @@ GET {base_url}/models，返回上游 id 列表。只读外网请求。
 | `label` | `string` | 是 |  |
 | `columns` | `string[]` | 是 | CSV 列，同时也是列顺序 |
 | `permission` | `string \| null` | 否 | 导出该源额外需要的权限码；null 表示只需 export:read |
+
+### `FetchModelsIn`
+
+拉取模型时的草稿覆盖：新供应商还没保存，只能把网关/密钥带过来。
+
+留空 = 用已保存的配置（编辑老供应商时不必重填密钥）。
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `baseUrl` | `string` | 否 |  |
+| `apiKey` | `string` | 否 |  |
 
 ### `FetchModelsOut`
 
@@ -5464,6 +5607,26 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `phone` | `string \| null` | 否 | 手机号；传 null 清空 |
 | `position` | `string \| null` | 否 | 职务；传 null 清空 |
 
+### `RandomRewriteSettingsIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `model` | `string` | 否 |  |
+| `systemPrompt` | `string` | 是 |  |
+| `temperature` | `number` | 否 |  |
+| `maxTokens` | `number \| null` | 否 |  |
+| `extraParams` | `Record<string, unknown>` | 否 |  |
+
+### `RandomRewriteSettingsOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `model` | `string` | 是 |  |
+| `systemPrompt` | `string` | 是 |  |
+| `temperature` | `number` | 是 |  |
+| `maxTokens` | `number \| null` | 否 |  |
+| `extraParams` | `Record<string, unknown>` | 否 |  |
+
 ### `ReadyOut`
 
 就绪状态。`checks` 说明每一项依赖的结论，status ∈ ok / degraded / down。
@@ -5514,6 +5677,12 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | `operator` | `string` | 否 |  |
 | `refreshedAt` | `string` | 否 |  |
 
+### `RenameProviderIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `name` | `string` | 是 |  |
+
 ### `ResetPasswordIn`
 
 | 字段 | 类型 | 必填 | 说明 |
@@ -5527,6 +5696,63 @@ M3 补齐详情页六个区的数据源（设计 §7.2）：
 | 字段 | 类型 | 必填 | 说明 |
 |---|---|---|---|
 | `revoked` | `number` | 是 | 本次吊销的会话数；已经失效的会话不计入 |
+
+### `RewriteDebugIn`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `templateKey` | `string` | 是 |  |
+| `version` | `number \| null` | 否 |  |
+| `model` | `string` | 否 |  |
+| `systemPrompt` | `string` | 是 |  |
+| `temperature` | `number` | 否 |  |
+| `maxTokens` | `number \| null` | 否 |  |
+| `extraParams` | `Record<string, unknown>` | 否 |  |
+
+### `RewriteDebugOptionsOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `templates` | `DebugTemplateOut[]` | 否 |  |
+| `defaultSystemPrompt` | `string` | 是 |  |
+| `defaultTemperature` | `number` | 是 |  |
+| `maxSourceChars` | `number` | 是 |  |
+| `currentSettings` | `RandomRewriteSettingsOut` | 是 |  |
+| `customized` | `boolean` | 否 |  |
+
+### `RewriteDebugOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `ok` | `boolean` | 是 |  |
+| `error` | `string` | 否 |  |
+| `requestedModel` | `string` | 否 |  |
+| `systemPrompt` | `string` | 是 |  |
+| `userPayload` | `string` | 是 |  |
+| `requestParams` | `Record<string, unknown>` | 否 |  |
+| `rawOutput` | `string` | 否 |  |
+| `rewrittenTexts` | `Record<string, string>` | 否 |  |
+| `finalPrompt` | `string` | 否 |  |
+| `referenceLibraryIds` | `string[]` | 否 |  |
+| `textLibraryIds` | `string[]` | 否 |  |
+| `compiledParams` | `Record<string, unknown>` | 否 |  |
+| `promptLength` | `number` | 否 |  |
+| `promptLimit` | `number` | 否 |  |
+| `capability` | `string` | 否 |  |
+| `llmModel` | `string` | 否 |  |
+| `llmPlatformModel` | `string` | 否 |  |
+| `finishReason` | `string` | 否 |  |
+| `usage` | `RewriteDebugUsageOut` | 否 |  |
+| `latencyMs` | `number` | 否 |  |
+| `syntheticSlots` | `string[]` | 否 |  |
+
+### `RewriteDebugUsageOut`
+
+| 字段 | 类型 | 必填 | 说明 |
+|---|---|---|---|
+| `promptTokens` | `number` | 否 |  |
+| `completionTokens` | `number` | 否 |  |
+| `totalTokens` | `number` | 否 |  |
 
 ### `RoleBriefOut`
 

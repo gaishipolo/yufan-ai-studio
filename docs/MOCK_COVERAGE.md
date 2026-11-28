@@ -2,7 +2,7 @@
 
 # Mock 覆盖率（只记录，不作门禁）
 
-后端端点 160 条（来自 `schema.ts` 的 `EndpointData`），
+后端端点 164 条（来自 `schema.ts` 的 `EndpointData`），
 已注册 mock 路由 80 条（来自 `mockRouteTable()`），
 按「同方法 + 正则能匹配」判定疑似覆盖 83 条。
 
@@ -75,6 +75,7 @@
 | PUT | `/api/v1/llm-config/providers` |
 | DELETE | `/api/v1/llm-config/providers/{}` |
 | POST | `/api/v1/llm-config/providers/{}/models:fetch` |
+| POST | `/api/v1/llm-config/providers/{}/rename` |
 | POST | `/api/v1/llm-config/providers/{}/test` |
 | GET | `/api/v1/model-driver/config` |
 | PUT | `/api/v1/model-driver/config` |
@@ -106,6 +107,9 @@
 | POST | `/api/v1/template-specs/{}/publish` |
 | POST | `/api/v1/template-specs/{}/restore` |
 | PATCH | `/api/v1/template-specs/{}/tags` |
+| POST | `/api/v1/template-specs/debug/rewrite` |
+| PUT | `/api/v1/template-specs/debug/settings` |
+| GET | `/api/v1/template-specs/debug/templates` |
 | GET | `/api/v1/template-specs/limits` |
 | GET | `/api/v1/template-specs/published` |
 | GET | `/api/v1/template-specs/tags` |
@@ -116,4 +120,4 @@
 | GET | `/api/v1/template-specs/trash` |
 | POST | `/api/v1/template-specs/validate` |
 
-（未命中 77 条；已命中 83 条不在本表重复列出。）
+（未命中 81 条；已命中 83 条不在本表重复列出。）
