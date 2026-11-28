@@ -3,10 +3,11 @@ import type {SpecSlotOut} from '@/shared/api/schema';
 import {
   DEFAULT_RANDOMNESS,
   displaySlotValues,
-  hasRandomPrompt,
+  hasRewritableSlots,
   isOptionalSlot,
   mergeSlotValues,
   resolveRandomness,
+  rewritableSlotKeys,
   suppressedSlotKeys,
   visibleSlots,
 } from './randomness';
@@ -82,34 +83,71 @@ describe('randomness · 抑制传素材的槽位', () => {
   });
 });
 
-describe('randomness · 随机档是否可选', () => {
-  it('已发布版本配了随机档提示词 → 可选', () => {
-    expect(hasRandomPrompt({randomPrompt: '夜景版提示词'})).toBe(true);
+const VERSION = {
+  prompt: '主图 {{slot:hero}}，参考 {{slot:copy}}',
+  slots: SLOTS,
+};
+
+describe('randomness · 可改写的可选槽位', () => {
+  it('可选、有插入点、有兜底文案 → 可改写', () => {
+    expect(rewritableSlotKeys(VERSION)).toEqual(['copy']);
+    expect(hasRewritableSlots(VERSION)).toBe(true);
   });
 
-  it('没配 / 只有空白 → 不可选（空白等于没写，后端也不认）', () => {
-    expect(hasRandomPrompt({randomPrompt: ''})).toBe(false);
-    expect(hasRandomPrompt({randomPrompt: '   \n '})).toBe(false);
-    expect(hasRandomPrompt({})).toBe(false);
-    expect(hasRandomPrompt(null)).toBe(false);
-    expect(hasRandomPrompt(undefined)).toBe(false);
+  it('作者写法 {{Mixed N}} 也能识别插入点', () => {
+    expect(
+      rewritableSlotKeys({prompt: '主图 {{Mixed 1}}，参考 {{Mixed 2}}', slots: SLOTS}),
+    ).toEqual(['copy']);
+  });
+
+  it('没有插入点 / 没有兜底文案 / 不是 mixed / 被固定 → 不进入集合', () => {
+    expect(hasRewritableSlots({prompt: '主图 {{slot:hero}}', slots: SLOTS})).toBe(false);
+
+    const noText = {
+      prompt: VERSION.prompt,
+      slots: SLOTS.map(slot => (slot.key === 'copy' ? {...slot, emptyText: ''} : slot)),
+    };
+    expect(hasRewritableSlots(noText)).toBe(false);
+
+    const attachment = {
+      prompt: VERSION.prompt,
+      slots: SLOTS.map(slot =>
+        slot.key === 'copy' ? {...slot, refMode: 'attachment' as const} : slot,
+      ),
+    };
+    expect(hasRewritableSlots(attachment)).toBe(false);
+
+    const fixed = {
+      prompt: VERSION.prompt,
+      slots: SLOTS.map(slot =>
+        slot.key === 'copy' ? {...slot, binding: 'fixed' as const} : slot,
+      ),
+    };
+    expect(hasRewritableSlots(fixed)).toBe(false);
+  });
+
+  it('没有版本 / 空版本 → 不可用', () => {
+    expect(hasRewritableSlots(null)).toBe(false);
+    expect(hasRewritableSlots(undefined)).toBe(false);
+    expect(hasRewritableSlots({prompt: '', slots: []})).toBe(false);
   });
 });
 
 describe('randomness · 档位回落到实际生效的那一档', () => {
-  /* 换模板后 state 可能还停在 `random`，而新模板没配那一段。派生写法让
+  /* 换模板后 state 可能还停在 `random`，而新模板没有可改写槽位。派生写法让
      「选中的档」与「提交标记」永远一致 —— 用 effect 同步会漏一个渲染窗口，
      那期间提交会被后端 400。 */
-  it('选了随机、但模板没配 → 按默认档（均衡）走', () => {
-    expect(resolveRandomness('random', {randomPrompt: ''})).toBe('balanced');
-    expect(resolveRandomness('random', {})).toBe('balanced');
+  it('选了随机、但没有可改写槽位 → 按默认档（均衡）走', () => {
+    expect(resolveRandomness('random', {prompt: '主图 {{slot:hero}}', slots: SLOTS}))
+      .toBe('balanced');
+    expect(resolveRandomness('random', {prompt: '', slots: []})).toBe('balanced');
     expect(resolveRandomness('random', null)).toBe('balanced');
   });
 
-  it('配了就是随机；另外两档不受影响', () => {
-    expect(resolveRandomness('random', {randomPrompt: '夜景版'})).toBe('random');
-    expect(resolveRandomness('balanced', {randomPrompt: ''})).toBe('balanced');
-    expect(resolveRandomness('custom', {randomPrompt: ''})).toBe('custom');
+  it('有可改写槽位就是随机；另外两档不受影响', () => {
+    expect(resolveRandomness('random', VERSION)).toBe('random');
+    expect(resolveRandomness('balanced', VERSION)).toBe('balanced');
+    expect(resolveRandomness('custom', VERSION)).toBe('custom');
   });
 });
 

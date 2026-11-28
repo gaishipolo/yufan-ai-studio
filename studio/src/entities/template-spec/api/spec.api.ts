@@ -24,6 +24,12 @@ import type {
 /** 数组查询参数序列化成 `tagIds=a&tagIds=b`（axios 默认带 [] 会静默不筛选）。 */
 const REPEATED_ARRAY = { indexes: null } as const;
 
+/**
+ * 编译请求的单独超时：随机档会在后端调一次大模型（总预算 45s），
+ * 全局 axios 的 20s 会让浏览器先断、后端继续跑完并计费。
+ */
+export const COMPILE_TIMEOUT_MS = 60_000;
+
 export const specApi = {
   list: (params: {status?: string; keyword?: string; tagIds?: string[]; page?: number; pageSize?: number}) =>
     api.get<TemplateSpecListOut>('/template-specs', params, { paramsSerializer: REPEATED_ARRAY }),
@@ -43,7 +49,9 @@ export const specApi = {
   remove: (key: string) => api.delete<TemplateSpecOut>(`/template-specs/${key}`),
   restore: (key: string) => api.post<TemplateSpecOut>(`/template-specs/${key}/restore`),
   compile: (key: string, payload: SpecCompileIn) =>
-    api.post<SpecCompileOut>(`/template-specs/${key}/compile`, payload),
+    api.post<SpecCompileOut>(`/template-specs/${key}/compile`, payload, {
+      timeout: COMPILE_TIMEOUT_MS,
+    }),
 
   /** 模板独立标签词表（与素材库词表互不影响）；计数口径随入口收窄。 */
   tags: (scope: 'all' | 'mine' | 'published' = 'all') =>

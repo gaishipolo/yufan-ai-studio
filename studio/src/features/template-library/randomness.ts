@@ -1,33 +1,31 @@
 /**
  * 模板库右栏的「随机性」三档。
  *
- * | 档 | 可选槽位 | 提示词用哪一段 |
+ * | 档 | 可选槽位 | 兜底文案由谁写 |
  * |---|---|---|
- * | **随机** | 不显示、不传素材 | 作者在封装页另写的**随机档提示词**（整段替换） |
- * | **均衡**（默认） | **不显示** | 主提示词，可选槽位用「未选时文案」（让给模型） |
- * | **自定义** | 显示 | 主提示词，使用者自己挑素材 |
+ * | **随机** | 不显示、不传素材 | 模型改写每个可选槽位的「未选时文案」 |
+ * | **均衡**（默认） | **不显示** | 作者写好的「未选时文案」 |
+ * | **自定义** | 显示 | 使用者挑素材，或自己改写那一格文案 |
  *
  * **必填槽位在三档下都显示、都要使用者自己填** —— 必填意味着「不给素材
  * 就生成不了」，任何一档把它藏起来都等于让人卡死在界面上。三档的差别
  * **只在可选槽位**。
  *
- * ## 「随机」与「均衡」的差别只在用哪段提示词
+ * ## 随机档改的是「文案」，不是「素材」
  *
- * 两档的可选槽位都**不显示、不传素材**（使用者没有可挑的）—— 差别是：
- * 均衡用主提示词，随机整段换成作者写的随机档提示词（场景描述完全不同，
- * 视频才不千篇一律）。
+ * 随机 / 均衡两档都不显示、不传可选素材 —— 差别只在兜底文案是谁写的：
+ * 均衡用作者原文，随机由后端调模型改写同一段原文（每次点生成重写一次）。
+ * 所以「随机」不会换人物 / 服装 / 场景的素材，只换描述它们的说法。
  *
- * 切换发生在后端：前端只传 `useRandomPrompt`。**选哪一段**是使用者的决定，
- * 但两段都是**确定的文字**，所以 `compile` 仍然是纯函数（同一入参同一输出）。
- *
- * 模板没配随机档提示词时这一档不可选 —— 判据见 `hasRandomPrompt`。
+ * 模板没有「可改写的可选槽位」时这一档不可用 —— 判据见
+ * `rewritableSlotKeys`（与后端 `randomness.rewritable_slot_keys` 同五条）。
  *
  * ## 判据只有一处：`minCount === 0` 就是可选
  *
  * 与封装页的开关、后端 `compile.py` 的 `slot.min_count == 0` 同一口径。
  */
 import type {SpecSlotOut, SpecVersionOut} from '@/shared/api/schema';
-import {balancedPinnedKeys} from './slotIndexRefs';
+import {balancedPinnedKeys, slotRefModes} from './slotIndexRefs';
 
 export type RandomnessMode = 'random' | 'balanced' | 'custom';
 
@@ -48,22 +46,20 @@ export const RANDOMNESS_LABEL: Record<RandomnessMode, string> = {
  * 三档各自「用这一档生成，出来会是什么样」的一句话，显示在控件下面。
  *
  * 与上面的 `RANDOMNESS_LABEL` 分开记：档名是这套功能自己的名字（不能改），
- * 这句话是**写给用模板的人**的解释（2026-11-22 用户给的原文，照抄）。
+ * 2026-11-28 用户要求改口径：随机档改的是「默认描述文案」，不是素材本身。
+ * 旧文案「随机的人物、服装、场景」会让人以为素材随机，必须避免。
  *
- * 也**不是** `Segmented` 的 `hints`（那句挂在 `title` 上，讲的是机制：
- * 用哪段提示词、传不传素材）。这句讲的是结果 —— 界面和 title 都表达不了
- * 「人物会变但台词不变」这种差别，只能写出来。
- *
- * 三句都在 28 字以内，400px 的右栏（内容区约 360px）一行放得下，
- * 所以不用预留两行高度，切换时不会把下面的槽位顶下去。
+ * 也**不是** `Segmented` 的 `hints`（那句挂在 `title` 上，讲的是机制）。
+ * 这句讲的是结果，三句都在 28 字以内，400px 的右栏一行放得下。
  */
 export const RANDOMNESS_DESCRIPTION: Record<RandomnessMode, string> = {
-  random: '随机的人物、服装、场景等，脚本核心人物动作、台词固定不变',
+  random: '可选槽位没挑素材时，模型改写默认描述文案',
   balanced: '每次生成和演示案例相似的内容',
   custom: '通过参考图和提示词精准控制人物、服装、场景等元素',
 };
 
-/** 槽位是不是可选的（使用者可以不填）。判据只有 `minCount === 0`。 */export function isOptionalSlot(slot: SpecSlotOut): boolean {
+/** 槽位是不是可选的（使用者可以不填）。判据只有 `minCount === 0`。 */
+export function isOptionalSlot(slot: SpecSlotOut): boolean {
   return (slot.minCount ?? 1) === 0;
 }
 
@@ -83,7 +79,7 @@ export type SlotFillMode = 'pick' | 'text';
  * 固定槽位三档都不出现 —— 作者选死的，填表人不能换也用不着知道。
  *
  * @param prompt 模板的提示词。均衡/随机档下有些可选槽位**不能**被让给模型
- *   （提示词里按「第 N 张」引用了它），那些要照常显示。见 `slotIndexRefs`。
+ *   （被单张引用却没写未选时文案），那些要照常显示。见 `slotIndexRefs`。
  */
 export function visibleSlots(
   slots: SpecSlotOut[],
@@ -102,7 +98,8 @@ export function visibleSlots(
  * 随机 / 均衡 = 可选槽位一律不传（连同它们在界面上的消失）；
  * 自定义 = 不抑制任何槽位。
  *
- * @param prompt 提示词。被「第 N 张」引用钉住的可选槽位不抑制 —— 抑制了编译期就 400。
+ * @param prompt 提示词。被单张引用且没写未选时文案的可选槽位不抑制 ——
+ * 抑制了编译期就 400。
  */
 export function suppressedSlotKeys(
   slots: SpecSlotOut[],
@@ -119,33 +116,60 @@ export function suppressedSlotKeys(
 /** 手动挑的素材：`undefined` = 使用者没动过（随机/均衡档下由系统决定）。 */
 export type ManualSlotValues = Record<string, string[] | undefined>;
 
+type RandomnessVersion = Pick<SpecVersionOut, 'prompt' | 'slots'>;
+
 /**
- * 这个模板能不能选「随机」档。
+ * 这份已发布版本里**能被模型改写**的可选槽位。
  *
- * 只看**已发布版本**有没有那一段：草稿里写了但没发版，使用者拿到的仍是旧
- * 版本，选随机档会被后端 400。前端据此把档位置灰并说明原因 —— 让用户点得到
- * 一个必然失败的档，比不给这个档更糟。
+ * 五条与后端 `randomness.rewritable_slot_keys` 同源：
+ * 1. `refMode === 'mixed'`（只有图 / 成片参与槽位引用）；
+ * 2. `minCount === 0`（可选）；
+ * 3. 不是 `binding=fixed`；
+ * 4. 提示词里有单张插入点 `{{slot:key}}`；
+ * 5. `emptyText` 非空（模型要有原文才能「语义不变、措辞不同」地改写）。
+ *
+ * 只用**已发布版本**：草稿里改了没发版，使用者拿到的仍是旧版本。
  */
-export function hasRandomPrompt(
-  version: Pick<SpecVersionOut, 'randomPrompt'> | null | undefined,
+export function rewritableSlotKeys(
+  version: RandomnessVersion | null | undefined,
+): string[] {
+  if (!version) return [];
+  const slots = version.slots ?? [];
+  const modes = slotRefModes(version.prompt ?? '', slots);
+  return slots
+    .filter(slot => {
+      if ((slot.refMode ?? 'mixed') !== 'mixed') return false;
+      if (!isOptionalSlot(slot)) return false;
+      if ((slot.binding ?? 'user') === 'fixed') return false;
+      if (!modes[slot.key]?.has('')) return false;
+      return Boolean((slot.emptyText ?? '').trim());
+    })
+    .map(slot => slot.key);
+}
+
+/** 这个模板能不能选「随机」档：至少要有一个可改写槽位。 */
+export function hasRewritableSlots(
+  version: RandomnessVersion | null | undefined,
 ): boolean {
-  return Boolean(version?.randomPrompt?.trim());
+  return rewritableSlotKeys(version).length > 0;
 }
 
 /**
  * 使用者选的档位 → **实际生效**的档位。
  *
- * 唯一的分支：选了随机档、但这个模板没配那一段 → 按默认档走。
+ * 唯一的分支：选了随机档、但这份模板没有可改写槽位 → 按默认档走。
  *
  * 为什么用派生而不是在 effect 里改 state：换模板时 state 可能还停在 `random`，
- * 而新模板没配。effect 同步中间有一个渲染窗口，那期间界面显示「随机」、
- * 提交也会带上那个标记，后端 400；派生让两者永远一致。
+ * 而新模板没有可改写槽位。effect 同步中间有一个渲染窗口，那期间界面显示
+ * 「随机」、提交也会带上那个标记，后端 400；派生让两者永远一致。
  */
 export function resolveRandomness(
   chosen: RandomnessMode,
-  version: Pick<SpecVersionOut, 'randomPrompt'> | null | undefined,
+  version: RandomnessVersion | null | undefined,
 ): RandomnessMode {
-  return chosen === 'random' && !hasRandomPrompt(version) ? DEFAULT_RANDOMNESS : chosen;
+  return chosen === 'random' && !hasRewritableSlots(version)
+    ? DEFAULT_RANDOMNESS
+    : chosen;
 }
 
 /**

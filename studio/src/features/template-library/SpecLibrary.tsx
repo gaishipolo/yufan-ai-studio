@@ -59,7 +59,7 @@ import {
   RANDOMNESS_DESCRIPTION,
   RANDOMNESS_LABEL,
   displaySlotValues,
-  hasRandomPrompt,
+  hasRewritableSlots,
   isOptionalSlot,
   mergeSlotValues,
   resolveRandomness,
@@ -269,10 +269,8 @@ export function SpecLibrary() {
 
   const [keyword, setKeyword] = useState('');
   const [selectedKey, setSelectedKey] = useState<string | null>(null);
-  /* 使用者手动挑的素材。**值的 `undefined` 有含义**：「没动过这个槽位」。
-     随机档下系统会替使用者填可选槽位，如果用 `[]` 当「没动过」，
-     那「我不要系统挑的这张」就永远删不掉 —— 手动挑过的（哪怕挑空）
-     必须能盖掉系统填的。 */
+  /* 使用者手动挑的素材。值的 `undefined` = 「没动过这个槽位」；
+     `[]` = 明确挑空。两种状态不能混（清空操作要能盖掉旧值）。 */
   const [values, setValues] = useState<ManualSlotValues>({});
   /* 使用者对「运行时参数」的选择（计费模式等）。跟素材选择分开存：
      素材是这次填的，计费模式是这次选的 —— 换模板时两者都要重来。 */
@@ -289,9 +287,9 @@ export function SpecLibrary() {
   const [chosenModel, setChosenModel] = useState('');
   const [note, setNote] = useState('');
   const [error, setError] = useState('');
-  /* 随机性三档：随机（整段换成作者的随机档提示词）/ 均衡（可选槽位用未选时文案）/
-     自定义（使用者全权挑）。默认均衡 —— 这是「我只给关键素材」的常见用法，
-     而且均衡档下右栏最干净（不摆一堆填不了的槽位）。 */
+  /* 随机性三档：随机（模型改写可选槽位的默认描述文案）/ 均衡（作者写好的兜底文案）/
+     自定义（使用者自己挑素材或改写那一格）。默认均衡 —— 这是「我只给关键素材」
+     的常见用法，而且均衡档下右栏最干净（不摆一堆填不了的槽位）。 */
   const [randomness, setRandomness] = useState<RandomnessMode>(DEFAULT_RANDOMNESS);
   /* 二次确认：生成是要花钱的动作（积分加速更甚），按下之前先把这次会发生
      什么摊开写清楚 —— 「确定吗？」等于让人盲按。 */
@@ -335,12 +333,12 @@ export function SpecLibrary() {
   const slots = slotsOf(spec);
   const version = spec?.latest;
   const focused = spec?.key ?? null;
-  /* 这个模板有没有配随机档提示词：只看**已发布版本**。草稿里写了但没发版，
+  /* 这个模板有没有**可改写的可选槽位**：只看已发布版本。草稿里改了但没发版，
      使用者拿到的仍是旧版本，选随机档会被后端 400。 */
-  const randomAvailable = hasRandomPrompt(version);
+  const randomAvailable = hasRewritableSlots(version);
   /* 档位用**派生值**而不是在 effect 里改 state：换模板后 state 可能还停在
-     `random`，而新模板没配那一段。派生让「选中的档」与「实际生效的档」永远
-     一致；用 effect 同步会有一个渲染窗口，那期间提交会带上错的标记。 */
+     `random`，而新模板没有可改写槽位。派生让「选中的档」与「实际生效的档」
+     永远一致；用 effect 同步会有一个渲染窗口，那期间提交会带上错的标记。 */
   /* 自定义档的意义是「每张素材都由使用者亲自挑」—— 没有可选槽位时它和均衡档
      等价（可选的那张本来就不出现），这一档就该像随机档那样**置灰**：
      显示但点不动 + 说清原因，别让用户以为是自己挑错了。 */
@@ -348,21 +346,15 @@ export function SpecLibrary() {
   const resolvedRandomness = resolveRandomness(randomness, version);
   const effectiveRandomness: RandomnessMode =
     resolvedRandomness === 'custom' && !customAvailable ? 'balanced' : resolvedRandomness;
-  /* 这一档真正发出去的那段提示词：均衡/自定义用主的，随机用随机档那段。
-     下面「哪些槽位必须显示」的判据（提示词里 `{{slot:x.N}}` 把可选槽位钉住）
-     要按**实际用的那段**算 —— 拿主提示词去判随机档，会把随机档钉住的槽位
-     误当成可以省掉。 */
-  const activePrompt =
-    effectiveRandomness === 'random'
-      ? (version?.randomPrompt ?? '')
-      : (version?.prompt ?? '');
+  /* 三档都用主提示词。随机档只换「可选槽位的兜底文案」，不换提示词骨架。 */
+  const activePrompt = version?.prompt ?? '';
   /* 这一档下右栏显示哪些槽位：**必填的三档都显示**，可选的按档位处理
      （均衡 = 整个让给模型，不出现）。固定槽位在三种档位下都不出现 ——
      那是作者在封装页选死的，填表的人既不能换也用不着知道它长什么样
      （一排只读的 chip 只会让人以为这里还能点）。
 
      **提示词要一起传进去**：均衡档下有些可选槽位不能被让给模型
-     （提示词里按「第 N 张」引用了它，省掉就会 400）。见 `slotIndexRefs`。 */
+     （被单张引用且没写兜底文案，省掉就会 400）。见 `slotIndexRefs`。 */
   const fillSlots = visibleSlots(slots, effectiveRandomness, activePrompt);
   /* 胶囊上显示的槽位名：用**全部**槽位算 —— 均衡档会隐掉可选槽位，
      但作者写的那段话里可能正引用着它。 */
@@ -442,15 +434,10 @@ export function SpecLibrary() {
     [videoModels, imageModels],
   );
 
-  /* 每个槽位**实际**最少要几张。
-     提示词里写了「第 2 张」的槽位实际至少要 2 张（后端取 `owned[index - 1]`，
-     越界就 400）。只看 `minCount` 的话，界面显示「不缺料」，用户一点生成
-     就收到一句「第 2 张不存在」—— 那不像界面问题，像模板坏了。 */
+  /* 每个槽位**实际**最少要几张：被单张引用却没写兜底文案时，缺了会 400。 */
   const requiredCounts = useMemo(() => {
     const map: Record<string, number> = {};
     for (const slot of slots) {
-      // 按**实际生效的那段**提示词算：随机档用 randomPrompt，
-      // 它的「第 N 张」与主提示词未必一致。
       map[slot.key] = requiredSlotCount(slot, activePrompt, slots);
     }
     return map;
@@ -458,9 +445,9 @@ export function SpecLibrary() {
 
   /* 这一格能不能「改提示词」。三条缺一不可：
      - 作者标了可选（必填没有「没选」这个状态）；
-     - 提示词里真有插入点（单张 / 整组引用，见 `hasFallbackSlotRef`）——
+     - 提示词里真有单张插入点（见 `hasFallbackSlotRef`）——
        没有插入点，敲的字一个也进不了提示词；
-     - 提示词没按「第 N 张」把它钉住（钉住了就必须交素材，`requiredCount > 0`）。 */
+     - 这一格没被「必须交素材」钉住（`requiredCount > 0`）。 */
   const canEditText = (slot: SpecSlotOut): boolean =>
     isOptionalSlot(slot) &&
     (requiredCounts[slot.key] ?? 0) === 0 &&
@@ -481,7 +468,7 @@ export function SpecLibrary() {
   const textOfKey = (key: string): string => slotTexts[key] ?? emptyTextOf[key] ?? '';
 
   /* **真正提交给后端的素材**：使用者手动挑的，剔除这一档不该传的槽位。
-     随机档的可选槽位不传素材（提示词用作者的随机档那一段）。
+     随机档的可选槽位不传素材（由模型改写那一格的默认描述）。
 
      改成文案的格子同样不传素材：这一格说的是文字，存的旧素材只是
      「切回来时还在」的那一份。 */
@@ -500,9 +487,9 @@ export function SpecLibrary() {
     return (submitValues[slot.key] ?? []).length < (requiredCounts[slot.key] ?? 0);
   });
 
-  /* 切档位：随机档不传素材、整段换提示词，所以不必「接管/交还」素材 ——
-     使用者在自定义档挑的素材留在 `values` 里，切到随机档时被 suppressed
-     不提交，切回自定义档又原样回来。 */
+  /* 切档位：随机档不传可选素材、由模型改写兜底文案，所以不必「接管/交还」
+     素材 —— 使用者在自定义档挑的素材留在 `values` 里，切到随机档时被
+     suppressed 不提交，切回自定义档又原样回来。 */
   const changeRandomness = (next: RandomnessMode) => {
     if (next === randomness) return;
     setRandomness(next);
@@ -752,8 +739,8 @@ export function SpecLibrary() {
 
   /* 选择器的语义是 `onToggle`（点已选的等于取消），多选槽位不关弹层：
      一次挑三张比反复开关三次省事；单选槽位选一张就替换掉原来的。
-     「已选」的基准就是**使用者亲手挑的那份** —— 随机档不填素材，
-     界面上显示的也只有手动值，不会再有「系统挑的」混在里面。 */
+     「已选」的基准就是使用者亲手挑的那份；随机/均衡档不显示可选槽位，
+     界面上也只有手动值。 */
   const togglePick = (asset: PickedAsset) => {
     if (!pickerSlot) return;
     const key = pickerSlot.key;
@@ -789,10 +776,12 @@ export function SpecLibrary() {
         payload: {
           /* 真正会提交的那份：随机/均衡档的可选槽位已剔除，不传素材。 */
           slotValues: submitValues,
-          /* 随机档：让后端把提示词**整段**换成作者的随机档那一段。
-             其它档不传（走主提示词）。用派生档位 —— state 里残留的 `random`
-             在没配的模板上不算数。 */
+          /* 随机档：让后端调模型改写可选槽位的兜底文案。用派生档位 ——
+             state 里残留的 `random` 在没有可改写槽位的模板上不算数。 */
           useRandomPrompt: effectiveRandomness === 'random',
+          /* 钉死使用者看到的这一版：填表期间作者发了新版本，也不该换一版槽位
+             集合去编译（随机档的改写集合尤其依赖同一版）。 */
+          ...(version ? {version: version.version} : {}),
           // 选中的模型：清单里挑的那款。不传则用模板的固定模型。
           model: modelId,
           ...(Object.keys(slotTextOverrides).length ? {slotTextOverrides} : {}),
@@ -994,7 +983,7 @@ export function SpecLibrary() {
                   差 6px，否则那行字看起来像另一个区块的标题。 */}
               <div>
                 <div className="flex items-center gap-2">
-                  {/* 没配随机档提示词的模板：这一档**显示但点不动** —— 直接不渲染
+                  {/* 没有可改写槽位的模板：随机档**显示但点不动** —— 直接不渲染
                       等于这个能力不存在，用户不会想到去问；显示了才需要对一句原因。 */}
                   <Segmented
                     aria-label="随机性"
@@ -1007,8 +996,8 @@ export function SpecLibrary() {
                     ]}
                     hints={{
                       random: randomAvailable
-                        ? '整段换成作者写的随机档提示词，场景描述不固定'
-                        : '该模板未配置随机档提示词',
+                        ? '模型改写未选素材时的默认描述，不换素材'
+                        : '该模板没有可改写的可选槽位',
                       balanced: '可选的那张不传素材，用固定文案',
                       custom: customAvailable
                         ? '每张素材都由你亲自挑'
@@ -1032,7 +1021,7 @@ export function SpecLibrary() {
               </div>
               {!randomAvailable && (
                 <p className="mt-1 text-micro text-ink-mute">
-                  该模板未配置随机档提示词，随机档不可用
+                  该模板没有可改写的可选槽位，随机档不可用
                 </p>
               )}
               {!customAvailable && (

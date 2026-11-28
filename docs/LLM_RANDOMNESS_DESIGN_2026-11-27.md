@@ -1,6 +1,6 @@
 # 随机档 = 模型改写（设计方案）
 
-> 状态：**设计已闭环**；W1（必填引用口径收紧）**已于 2026-11-27 实施**；**W2（随机改写服务 + LLM 时限 seam）与 W3（编译接入 + 事务顺序 + 死字段下线）已于 2026-11-28 实施**；**2026-11-28 按 P0 复核修订**（独立时限 / 上游 401 不泄漏 / 不占 DB 会话 / 动态输出预算 / 冲突前置 / 模型引用写法），并按当前代码校正现状、新增 §10 可优化空间；W4–W5 待实施
+> 状态：**设计已闭环**；W1（必填引用口径收紧）**已于 2026-11-27 实施**；**W2（随机改写服务 + LLM 时限 seam）、W3（编译接入 + 事务顺序 + 死字段下线）与 W4（前端判据/文案/版本钉死/60s 超时）已于 2026-11-28 实施**；**2026-11-28 按 P0 复核修订**（独立时限 / 上游 401 不泄漏 / 不占 DB 会话 / 动态输出预算 / 冲突前置 / 模型引用写法），并按当前代码校正现状、新增 §10 可优化空间；W5 待实施
 > 日期：2026-11-27（2026-11-28 修订）
 > 关联文档：`docs/LLM_CAPABILITY_DESIGN_2026-11-26.md`（LLM 能力层）、`docs/TEMPLATE_SPEC.md`（模板规格）、`docs/TEMPLATE_SLOT_TEXT_REFERENCE_2026-11-26.md`（槽位引用规则）
 > 拍板结论（2026-11-27）：随机档 = **模型替使用者改写各可选槽位的「未选时文案」**；模型稿使用者**不可再改**（想自己写就切「自定义」档）；**点「生成」时才调模型**，每次点击都重新生成；用**平台全局默认模型**（平台 id `llm/default`）；老模板的 `random_prompt` **保留字段、但不再参与编译**（也不再参与校验 / 指纹 / 内联，见 §5）。
@@ -16,6 +16,7 @@
 | 2026-11-27 | **W1 已实施**：后端判据收紧为「只认正文」；前端新增 `template-specs/requiredRefs.ts`（同口径预检，只提示不拦）；守卫用例 `test_ref_in_both_texts_is_rejected` 等三条 + 前端 `requiredRefs.test.ts` 七条，判别力自检均做过 | §6、§7 |
 | 2026-11-27 | `llm/default` 现在解析为 `LLM_MODEL_CHAIN` 首项，并在明确失败（429/401/403/连接失败/5xx）时按链降级；W2 的调用形状不变，仍传 `llm/default` | §4.3、§4.5 |
 | 2026-11-28 | **P0 复核修订**：随机调用独立时限（每模型 20s、总预算 45s）；上游 401/403 在业务边界转 502/503，绝不让前端当成会话失效而重放；LLM 调用前结束只读事务；输出预算按原文动态算并识别截断；随机档与素材 / 改写文案 / 无可改写槽位的冲突在调用前拒；模型稿只认 `{{slot:key}}`，不归一 `{{Mixed N}}`。**同时按当前代码校正 §2 现状与行号，新增 §10 可优化空间** | §2–§5、§7–§10 |
+| 2026-11-28 | **W4 已实施**：前端判据改为「有可改写的可选槽位」（与后端五条同源）；随机档 `activePrompt` 改主提示词；编译请求钉死 `version` 并单独 60s 超时；界面说明改成「模型改写默认描述文案，不是素材随机」 | §2.1、§3、§4.1、§7、§8、§10 |
 | 2026-11-28 | **W3 已实施**：`compile_for` 随机档改为模型改写；随机 + overrides / 可选素材 / 无可改写槽位在调用前 400；`_fills` 后结束只读事务再调模型；`random_prompt` 从编译、校验、指纹、内联、幂等比较中下线（历史行保留）；K 报错拆分「不存在」与「存在但可选」；新增编译链路与事务顺序守卫 | §4.6、§5、§7、§8 |
 | 2026-11-28 | **W2 已实施**：`infra.llm.complete` 增加 `timeout_sec/deadline`；新文件 `modules/template_pack/randomness.py` 完成可改写集合、提示词、解析、引用守恒、错误归一、日志；`apply_slot_text_overrides` 抽到 `slot_text_overrides.py` 供 W3 复用；新增 26 条服务守卫 + 6 条 LLM 时限守卫 | §4.3–§4.5、§7、§8 |
 
@@ -44,19 +45,21 @@
 
 ## 2. 现状核实（2026-11-27 读代码 + 实测；2026-11-28 按当前代码复核）
 
-### 2.1 三档现状（前端 `studio/src/features/template-library/randomness.ts`）
+### 2.1 三档现状（W4 之后，前端 `randomness.ts`）
 
-| 档 | 可选槽位 | 提示词用哪一段 |
+| 档 | 可选槽位 | 主提示词里的兜底文案 |
 |---|---|---|
-| 随机 | 不显示、不传素材 | 作者另写的 `randomPrompt`，**整段替换**主提示词 |
-| 均衡 | 不显示 | 主提示词，可选槽位用「未选时文案」 |
-| 自定义 | 显示 | 主提示词，使用者挑素材或自己改写「未选时文案」 |
+| 随机 | 不显示、不传素材 | **模型改写**每个可选槽位的「未选时文案」 |
+| 均衡 | 不显示 | 作者写好的「未选时文案」 |
+| 自定义 | 显示 | 使用者挑素材，或自己改写那一格文案 |
 
-「随机 / 均衡」两档抑制可选槽位的前端判据是 `suppressedSlotKeys()`；可改写的槽位在「自定义」档通过 `slot_text_overrides` 提交（后端 `apply_slot_text_overrides`）。
+「随机 / 均衡」两档抑制可选槽位仍用 `suppressedSlotKeys()`；可改写的槽位在「自定义」档通过 `slot_text_overrides` 提交（后端 `apply_slot_text_overrides`）。
 
-**这是现状，不是目标态**：随机档的 `activePrompt` 现在也取 `randomPrompt`（`SpecLibrary.tsx:355`），可用性由 `hasRandomPrompt()` 判。新语义下随机档改用主提示词，可用性改成 §4.2 的可改写集合；这两处都在 W4 改。
+随机档可用性判据是 `hasRewritableSlots(version)`（与后端 §4.2 五条同源）；随机档的 `activePrompt` 也是**主提示词**。`randomPrompt` 已不参与前端判据与后端编译。
 
-### 2.2 随机档现状 = 整段替换（不是随机）
+### 2.2 改造前（W3 前）：随机档 = 整段替换
+
+> 下面是旧实现，仅保留作来龙去脉。W3 已改为模型改写，当前代码见 §4。
 
 `api/src/modules/template_pack/spec_service.py::compile_for`（`spec_service.py:839` 附近）：
 
@@ -123,13 +126,15 @@ if payload.use_random_prompt:
 
 **随机档与均衡档的差别，现在只剩「兜底文案是谁写的」**。这正是用户要的语义：「随机档只是把『用户改写所有可选插槽提示词』这个动作交给大模型完成」。
 
+**界面说明必须按这个口径写**（2026-11-28 用户明确要求）：「可选槽位没挑素材时，模型改写默认描述文案」。不要写「随机的人物、服装、场景」——那会让人以为素材随机，实际素材完全不变。
+
 ---
 
 ## 4. 机制设计
 
 ### 4.1 触发点：点「生成」时
 
-前端 `SpecLibrary.tsx` 的 `submit()` 里，`compile.mutateAsync` **只在点「生成」时调用**（`SpecLibrary.tsx:787`），没有「进页面就编译」的预览调用。因此模型调用天然落在生成时刻，不需要新增端点、不需要前端预取。
+前端 `SpecLibrary.tsx` 的 `submit()` 里，`compile.mutateAsync` **只在点「生成」时调用**（`SpecLibrary.tsx:774`），没有「进页面就编译」的预览调用。因此模型调用天然落在生成时刻，不需要新增端点、不需要前端预取。
 
 「每次点击都重新生成」= 每次 `compile`（随机档）都重新调一次模型。代价是同一次填表里点两次「生成」会得到两版不同的文案 —— 这是「随机」的语义，不是缺陷。
 
@@ -297,7 +302,7 @@ LLM 失败时没有任何写操作可回滚；第 3 步之后不得再碰 sessio
 | **W1** | 必填引用口径收紧（§6.2）+ 前端预检 | `core/template_spec/rules.py`、`studio/src/features/template-specs/requiredRefs.ts` | 新守卫用例：必填槽位只在 `empty ∩ filled` → 必拦；在正文 → 必过 |
 | **W2** ✅ | 模型改写服务：拼提示词 → 调 LLM → 解析 JSON → 严格校验 → 回填规格。**含 P0**：`complete(..., timeout_sec=20, deadline=45s)` 时限 seam；上游 401/403 在边界转 `UpstreamError`；`max_tokens` 按原文动态算并识别截断；模型稿只认 `{{slot:key}}`、引用多重集合守恒；复用 `apply_slot_text_overrides`；`complete` 作为可注入依赖；记 model / 耗时 / usage / finish_reason（不记正文） | `api/src/modules/template_pack/randomness.py`（新）、`slot_text_overrides.py`（抽出共享闸门）、`api/src/infra/llm/client.py` | 已落地：`test_template_randomness.py` 26 条 + `test_llm_client.py` 新增 6 条；假 completer 下合法稿通过，违规稿 / 截断 / 非 JSON / 键对不上 / Mixed / 修饰符 / 401 / 403 / 传输错误均准确；不会把 401/403 抛给调用方；日志字段齐全 |
 | **W3** ✅ | 接进 `compile_for`：随机档分支换成「模型改写」；**P0**：所有 DB 查询（含 `_fills`）在 LLM 前完成并结束只读事务；随机 + overrides / 可选素材 / 无可改写槽位在调用前 400；`random_prompt` 从全部校验、指纹、内联路径下线；**§10 P1**：K 报错拆分、`rewritable_slot_keys` 单一判据 | `api/src/modules/template_pack/spec_service.py`、`spec_gate.py`、`core/template_spec/rules.py`、`slot_text_overrides.py` | 已落地：`test_template_random_compile.py` 8 条（模型稿生效、三类冲突、401→502、事务顺序、死字段不参与、只改死字段不发版）；旧随机提示词用例按新语义改写；K 报错拆分用例通过 |
-| **W4** | 前端：档位闸门改成「有可改写的可选槽位」；随机档 `activePrompt` 用主提示词；编译请求单独 60s 超时并钉死 `version`；失败提示；老模板不可随机的置灰原因 | `studio/src/features/template-library/`、`studio/src/entities/template-spec/api/spec.api.ts` | 随机档可用判据与后端同源；提交不送 `slotTextOverrides` / 可选素材；编译请求超时为 60s；填 v1 时发布 v2，提交仍按 v1 |
+| **W4** ✅ | 前端：档位闸门改成「有可改写的可选槽位」；随机档 `activePrompt` 用主提示词；编译请求单独 60s 超时并钉死 `version`；失败提示；老模板不可随机的置灰原因；随机说明改成「模型改写默认描述文案，不是素材随机」 | `studio/src/features/template-library/`、`studio/src/entities/template-spec/api/spec.api.ts` | 已落地：`randomness.test.ts` 18 条 + `SpecLibraryRandomness.test.tsx` 16 条 + `spec.api.test.ts` 1 条；提交带 `version=3`、不送可选素材/改写文案；60s 超时钉住；全量前端 `1445 passed` |
 | **W5** | 文档与记忆同步；上线前盘点线上 `random_prompt` 非空但没有可改写兜底文案的模板 | `docs/TEMPLATE_SPEC.md` §10.4/§12、`.workbuddy/memory/` | 口径与代码一致（三档语义、引用写法、删除死字段）；盘点结果有清单 |
 
 W1 与 W2/W3 无耦合，可并行；W3 依赖 W2。**§10 的 P1 项优先并入对应工作包**（版本钉死进 W4、K 报错与判据同源进 W3、死字段下线进 W3/W5）。
@@ -313,10 +318,10 @@ W1 与 W2/W3 无耦合，可并行；W3 依赖 W2。**§10 的 P1 项优先并�
 | `api/tests/test_template_randomness.py`（新，W2 已实施，26 条） | 随机档：合法稿通过；造引用 / 自引用 / 越界编号 / `{{Mixed N}}` / 修饰符 / 锚点 / 非 JSON / 键对不上 / 截断 / content_filter / LLM 未配置 / 上游 401-403 / 传输错误 / 无槽位 / 超长输入 各自的错误准确；引用多重集合守恒；动态预算与时限参数 |
 | `api/tests/test_llm_client.py`（已改，新增 6 条） | per-request timeout 真落到请求；`timeout_sec<=0` 400；总预算用尽不再发请求 / 不再降级；每次降级拿到不超过剩余预算的超时 |
 | `api/tests/test_template_random_compile.py`（新，W3 已实施，8 条） | 随机档用模型稿 + 主提示词；overrides / 可选素材 / 无可改写槽位在调模型前 400；401→502；`_fills` → commit → LLM 的顺序；`random_prompt` 不参与校验/内联；只改死字段不发新版本 |
-| `api/tests/test_template_spec_version_pin.py`（W4 新） | 编译传 `version` 时按该版本编译；填 v1 期间发布 v2，提交仍按 v1 |
-| `studio/src/features/template-library/randomness.test.ts`（W4 改） | 档位闸门 = 有可改写的可选槽位；不再看 `randomPrompt` |
-| `studio/src/features/template-library/SpecLibraryRandomness.test.tsx`（W4 改） | 随机档提交不送 `slotTextOverrides` / 可选素材；切档清空改写内容；编译请求 60s 超时 |
-| 判别力自检 | 每一处改动都要「还原后守卫变红」验证过一次；W2/W3 的每条错误分支都对应一条用例 |
+| `studio/src/features/template-library/randomness.test.ts`（W4 已改，18 条） | 档位闸门 = 有可改写的可选槽位（五条判据）；`{{Mixed N}}` 也能识别；不再看 `randomPrompt` |
+| `studio/src/features/template-library/SpecLibraryRandomness.test.tsx`（W4 已改，16 条） | 随机档提交不送可选素材、带版本；无改写槽位/死字段时随机置灰；新说明文案逐字钉住 |
+| `studio/src/entities/template-spec/api/spec.api.test.ts`（W4 新） | compile 单独使用 60s 超时，不吃全局 20s |
+| 判别力自检 | 每一处改动都要「还原后守卫变红」验证过一次；W2/W3/W4 的每条错误/判据分支都对应一条用例 |
 
 不跑全量 CI；按 `api/scripts/select_tests.py` 定级，加跑轻量公共面（`test_architecture` / `test_internal_models` / `test_openapi_contract` / ruff / mypy）。
 
@@ -345,9 +350,9 @@ W1 与 W2/W3 无耦合，可并行；W3 依赖 W2。**§10 的 P1 项优先并�
 
 | 优先级 | 项 | 当前实际情况 | 建议 |
 |---|---|---|---|
-| **P1** | **编译请求钉死版本** | 前端提交编译时**不传 `version`**（`SpecLibrary.tsx:787`），后端用 `payload.version or head.current_version`；作者在用户填表期间发布新版本，编译会用新版本的槽位集合，而界面/随机改写集合还是旧的 | W4 传 `version: version.version`；后端按该版本编译。这与随机档无关，但随机档会让「看到的槽位」和「改写的槽位」错位更明显。加一条「填 v1 时发布 v2，提交仍按 v1」的回归 |
+| **P1（W4 已做）** | **编译请求钉死版本** | 前端提交编译时带 `version: version.version`（`SpecLibrary.tsx`），后端按 `payload.version` 编译 | 保持；后续如做填表期间发版提示，再补体验层 |
 | **P1（W3 已做）** | **K 场景报错拆开** | `apply_slot_text_overrides` 先按 `by_key` 判存在：`{{slot:ghost}}` →「不存在的槽位」；存在但不是必定有素材 →「只能引用必定有素材的槽位」 | 保持两条消息分开，作者改写与模型稿共用 |
-| **P1** | **可改写判据前后端同源** | 后端已加 `randomness.rewritable_slot_keys`（W2 完成）；前端仍要按同一套算「随机档是否可用」，两边各写一遍必然漂移 | 前端 `randomness.ts` 用同形状函数，测试用同一张 fixture 表逐条对齐（W4）；后端 `randomness.py` 与 compile 冲突检查都只调 `rewritable_slot_keys` |
+| **P1（W2/W4 已做）** | **可改写判据前后端同源** | 后端 `randomness.rewritable_slot_keys`、前端 `randomness.rewritableSlotKeys` 均按五条判据；前端测试覆盖 Mixed、无插入点、无兜底、attachment、fixed | 后续只改一处时必须同时更新另一处与两侧测试 |
 | **P1** | **随机调用可观测性**（W2 已做） | `randomness.py` 已记 `platform_model`、耗时、`usage`、`finish_reason`、槽位数，不记正文 | W3 接入 compile 后观察真实调用；如需要再加指标，仍不加正文 |
 | **P1（后端 W3 已做 / 前端 W5）** | **死字段彻底下线** | 后端已不参与编译、校验、指纹、内联与幂等比较（W3）；封装页仍有「随机档提示词」编辑框（`SpecWorkspace.tsx:1749`） | W5 删编辑框；历史行保留不删；新版本是否继续写 raw random_prompt 可一并决定 |
 | **P2** | **随机档独立限频** | 编译路由按 `template_pack.create` 限流 60 次/分钟；降级链最多 20 个模型，最坏一次点击可产生多次上游调用 | 随机档单独限频（按用户/分钟）或按 token 预算；普通均衡/自定义编译不受影响 |
